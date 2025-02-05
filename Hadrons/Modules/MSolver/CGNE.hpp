@@ -97,7 +97,7 @@ std::vector<std::string> TCGNE<FImpl>::getInput(void)
 template <typename FImpl>
 std::vector<std::string> TCGNE<FImpl>::getOutput(void)
 {
-    std::vector<std::string> out = {getName()};
+    std::vector<std::string> out = {getName(), getName() + "_subtract"};
     
     return out;
 }
