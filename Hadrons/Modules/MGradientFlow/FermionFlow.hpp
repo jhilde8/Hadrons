@@ -51,16 +51,13 @@ public:
                                     int, bc,
                                     int, steps,
                                     double, step_size,
-                                    int, meas_interval,
-                                    std::string, maxTau);
+                                    int, meas_interval);
 };
 
 template <typename FImpl,typename GImpl,typename FlowAction>
 class TFermionFlow: public Module<FermionFlowPar>
 {
 public:
-    /*FERM_TYPE_ALIASES(FImpl,);
-    INHERIT_GIMPL_TYPES(GImpl);*/
     BASIC_TYPE_ALIASES(FImpl,);
     GAUGE_TYPE_ALIASES(GImpl,);
     class GaugeResult : Serializable
@@ -117,6 +114,8 @@ template <typename FImpl,typename GImpl,typename FlowAction>
 std::vector<std::string> TFermionFlow<FImpl,GImpl,FlowAction>::getOutput(void)
 {
     std::vector<std::string> out = {getName(),getName()+"_U"};
+
+    // output flowed propagator fields at measurement intervals
     for (int i = 1; i <= par().steps; i++) 
     {
         if ((i % par().meas_interval == 0) || (i == par().steps)) {
@@ -136,11 +135,13 @@ void TFermionFlow<FImpl,GImpl,FlowAction>::setup(void)
 {
     envCreateLat(GaugeField, getName()+"_U");
 
+    // create tmp propagator fields
     for (int j = 0; j < par().props.size(); j++) {
         std::stringstream qt; qt << j;
         envTmpLat(PropagatorField, "q"+qt.str()+"wf");
     }
 
+    // create output propagators
     for (int i = 1; i <= par().steps; i++) 
     {
         if ((i % par().meas_interval == 0) || (i == par().steps)) {
@@ -172,15 +173,10 @@ void TFermionFlow<FImpl,GImpl,FlowAction>::execute(void)
                  << "with ppp" << ((par().bc < 0) ? "a" : "p") << " boundary conditions and "
                  << par().steps << " step" << ((par().steps > 1) ? "s." : ".") << std::endl;
 
+    // set boundary conditions for gauge field
     std::vector<int> bc = {1,1,1};
     if (par().bc < 0) bc.push_back(-1);
     else bc.push_back(1);
-
-    double mTau = -1.0;
-    if(!par().maxTau.empty()) {
-        LOG(Message) << "Using adaptive algorithm with maxTau = " << par().maxTau << std::endl;
-        mTau = (double)std::stoi(par().maxTau);
-    }
 
     auto &out     = envGet(HadronsSerializable, getName());
     auto &Uresult = out.template hold<GaugeResult>();
@@ -203,46 +199,29 @@ void TFermionFlow<FImpl,GImpl,FlowAction>::execute(void)
         qjwf = qj;
     }
     
+    // apply flow equations
     double time = 0;
-    Evolution<FlowAction> evolve(3.0, par().step_size, mTau, par().step_size);
-    if (mTau > 0) {
-        unsigned int step = 0;
-        do {
-            step++;
-            startTimer("gauge field step");
-            std::vector<GaugeField> Wi = evolve.template evolve_gaugeFF_adaptive<GImpl,GaugeField,GaugeLinkField>(Uwf,bc);
-            stopTimer("gauge field step");
-            evolve.template gauge_status<GImpl,GaugeField,ComplexField,GaugeLinkField,GaugeResult>(Uwf,Uresult,step-1);
-            if (step % par().meas_interval == 0) {
-                std::stringstream st; st << step;
-                for (int j = 0; j < par().props.size(); j++) {
-                    std::stringstream jt; jt << j;
-                    PropagatorField &qjwf = *env().template getObject<PropagatorField>(getName()+"_tmp_q"+jt.str()+"wf");
-                    startTimer("fermion field "+jt.str()+" step");
-                    evolve.template laplace_flow<PropagatorField,GImpl,GaugeField,GaugeLinkField>(Wi[0],Wi[1],Wi[2],qjwf);
-                    stopTimer("fermion field "+jt.str()+" step");
-                    auto &qji = envGet(PropagatorField, getName()+"_q"+jt.str()+"_"+st.str());
-                    qji = qjwf;
-                }
-            }
-        } while (evolve.taus < mTau);
-    } else {
-        for (unsigned int step = 1; step <= par().steps; step++) {
-            startTimer("gauge field step");
-            std::vector<GaugeField> Wi = evolve.template evolve_gaugeFF<GImpl,GaugeField,GaugeLinkField>(Uwf,bc);
-            stopTimer("gauge field step");
-            evolve.template gauge_status<GImpl,GaugeField,ComplexField,GaugeLinkField,GaugeResult>(Uwf,Uresult,step-1);
-            if ((step % par().meas_interval == 0) || (step == par().steps)) {
-                std::stringstream st; st << step;
-                for (int j = 0; j < par().props.size(); j++) {
-                    std::stringstream jt; jt << j;
-                    PropagatorField &qjwf = *env().template getObject<PropagatorField>(getName()+"_tmp_q"+jt.str()+"wf");
-                    startTimer("fermion field "+jt.str()+" step");
-                    evolve.template laplace_flow<PropagatorField,GImpl,GaugeField,GaugeLinkField>(Wi[0],Wi[1],Wi[2],qjwf);
-                    stopTimer("fermion field "+jt.str()+" step");
-                    auto &qji = envGet(PropagatorField, getName()+"_q"+jt.str()+"_"+st.str());
-                    qji = qjwf;
-                }
+    Evolution<FlowAction> evolve(3.0, par().step_size, -1.0, par().step_size);
+    for (unsigned int step = 1; step <= par().steps; step++) {
+        // evolve gauge field 
+        startTimer("gauge field flow");
+        std::vector<GaugeField> Wi = evolve.template evolve_gaugeFF<GImpl,GaugeField,GaugeLinkField>(Uwf,bc);
+        stopTimer("gauge field flow");
+
+        // measure gauge observables
+        evolve.template gauge_status<GImpl,GaugeField,ComplexField,GaugeLinkField,GaugeResult>(Uwf,Uresult,step-1);
+
+        // evolve propagators
+        if ((step % par().meas_interval == 0) || (step == par().steps)) {
+            std::stringstream st; st << step;
+            for (int j = 0; j < par().props.size(); j++) {
+                std::stringstream jt; jt << j;
+                PropagatorField &qjwf = *env().template getObject<PropagatorField>(getName()+"_tmp_q"+jt.str()+"wf");
+                startTimer("fermion field "+jt.str()+" flow");
+                evolve.template laplace_flow<PropagatorField,GImpl,GaugeField,GaugeLinkField>(Wi[0],Wi[1],Wi[2],qjwf);
+                stopTimer("fermion field "+jt.str()+" flow");
+                auto &qji = envGet(PropagatorField, getName()+"_q"+jt.str()+"_"+st.str());
+                qji = qjwf;
             }
         }
     }

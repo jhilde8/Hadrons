@@ -152,7 +152,8 @@ void TGaugeFlow<GImpl,FlowAction>::execute(void)
     double time = 0;
 
     Evolution<FlowAction> evolve(3.0, par().step_size, mTau, par().step_size);
-    if (par().steps == 0) { // if steps = 0, give the status of gauge field without flowing
+    if (par().steps == 0) { 
+        // if steps = 0, give the status of gauge field without flowing
         result.plaquette.resize(1);
         result.rectangle.resize(1);
         result.clover.resize(1);

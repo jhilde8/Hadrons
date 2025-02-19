@@ -271,20 +271,6 @@ class Evolution {
             return Wi;
         };
 
-        template <typename GImpl,typename GaugeField,typename GaugeLinkField>
-        std::vector<GaugeField> evolve_gaugeFF_adaptive(GaugeField &U, std::vector<int> &bc) {
-            std::vector<GaugeField> Wi = gauge_RK_adaptive<GImpl,GaugeField>(U);
-            U = 1.0*Wi[3];
-
-            gauge_apply_boundary<GaugeField,GaugeLinkField>(Wi[0],bc);
-            gauge_apply_boundary<GaugeField,GaugeLinkField>(Wi[1],bc);
-            gauge_apply_boundary<GaugeField,GaugeLinkField>(Wi[2],bc);
-            
-            adaptive_eps(Wi[3],Wi[4]);
-
-            return Wi;
-        };
-        
         // gauge field status //////////////////////////////////////////////////////////
         template <typename GImpl,typename GaugeField,typename ComplexField,typename GaugeLinkField,typename Result>
         void gauge_status(GaugeField &Umu, Result &result, int index)
