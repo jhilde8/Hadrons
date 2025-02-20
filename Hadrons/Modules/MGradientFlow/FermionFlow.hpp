@@ -147,7 +147,7 @@ void TFermionFlow<FImpl,GImpl,FlowAction>::setup(void)
         if ((i % par().meas_interval == 0) || (i == par().steps)) {
             double ft = par().step_size * i;
             std::stringstream ftt; ftt << ft;
-            for (std::string q : par().props()) {
+            for (std::string q : par().props) {
                 envCreateLat(PropagatorField, q+"_t"+ftt.str());
             }
         }
