@@ -76,7 +76,7 @@ public:
     // destructor
     virtual ~TGaugeFlow(void) {};
     // run flow
-    virtual void runGaugeFlow(Evolution<FlowAction> &evolve);
+    virtual void runGaugeFlow(Evolution<FlowAction> &evolve, double &mTau);
     virtual void setupGaugeFlow(FlowAction &SG);
     // dependency relation
     virtual std::vector<std::string> getInput(void);
@@ -128,7 +128,7 @@ void TGaugeFlow<GImpl,FlowAction>::setup(void)
 
 // run flow ////////////////////////////////////////////////////////////////////
 template <typename GImpl,typename FlowAction>
-void TGaugeFlow<GImpl,FlowAction>::runGaugeFlow(Evolution<FlowAction> &evolve)
+void TGaugeFlow<GImpl,FlowAction>::runGaugeFlow(Evolution<FlowAction> &evolve, double &mTau)
 {
     auto &out    = envGet(HadronsSerializable, getName());
     auto &result = out.template hold<Result>();
@@ -189,10 +189,10 @@ void TGaugeFlow<GImpl,FlowAction>::setupGaugeFlow(FlowAction &SG)
 
     if constexpr (std::is_same_v<FlowAction, PlaqPlusRectangleAction<GImpl>>) {
         Evolution<FlowAction> evolve(std::stod(par().c_plaq), std::stod(par().c_rect), par().step_size, mTau, par().step_size);
-        runGaugeFlow(evolve);
+        runGaugeFlow(evolve,mTau);
     } else {
         Evolution<FlowAction> evolve(3.0, par().step_size, mTau, par().step_size);
-        runGaugeFlow(evolve);
+        runGaugeFlow(evolve,mTau);
     }
 }
 
