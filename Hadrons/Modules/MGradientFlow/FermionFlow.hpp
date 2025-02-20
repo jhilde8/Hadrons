@@ -121,12 +121,13 @@ std::vector<std::string> TFermionFlow<FImpl,GImpl,FlowAction>::getOutput(void)
     {
         if ((i % par().meas_interval == 0) || (i == par().steps)) {
             double ft = par().step_size * i;
-            std::stringstream ftt; ftt << ft;
+            std::stringstream ftt; ftt << std::fixed << std::setprecision(2) << ft;
             for (std::string q : par().props) {
                 out.push_back(q+"_t"+ftt.str());
             }
         }
     }
+
     return out;
 }
 
@@ -144,9 +145,9 @@ void TFermionFlow<FImpl,GImpl,FlowAction>::setup(void)
     // create output propagators
     for (int i = 1; i <= par().steps; i++) 
     {
-        if ((i % par().meas_interval == 0) || (i == par().steps)) {
+        if (( i % par().meas_interval == 0) || (i == par().steps)) {
             double ft = par().step_size * i;
-            std::stringstream ftt; ftt << ft;
+            std::stringstream ftt; ftt << std::fixed << std::setprecision(2) << ft;
             for (std::string q : par().props) {
                 envCreateLat(PropagatorField, q+"_t"+ftt.str());
             }
@@ -207,24 +208,25 @@ void TFermionFlow<FImpl,GImpl,FlowAction>::execute(void)
     // apply flow equations
     Evolution<FlowAction> evolve(3.0, par().step_size, -1.0, par().step_size);
     for (unsigned int step = 1; step <= par().steps; step++) {
+        double ft = par().step_size * step;
+        std::stringstream ftt; ftt << std::fixed << std::setprecision(2) << ft;
+
         // evolve gauge field 
-        startTimer("gauge field flow");
+        startTimer("gauge field flow time "+ftt.str());
         std::vector<GaugeField> Wi = evolve.template evolve_gaugeFF<GImpl,GaugeField,GaugeLinkField>(Uwf,bc);
-        stopTimer("gauge field flow");
+        stopTimer("gauge field flow time "+ftt.str());
 
         // measure gauge observables
         evolve.template gauge_status<GImpl,GaugeField,ComplexField,GaugeLinkField,GaugeResult>(Uwf,Uresult,step-1);
 
         // evolve propagators
-        if ((step % par().meas_interval == 0) || (step == par().steps)) {
-            double ft = par().step_size * i;
-            std::stringstream ftt; ftt << ft;
-            for (std::string q : par().props) {
-                PropagatorField &qjwf = *env().template getObject<PropagatorField>(getName()+"_tmp_"+q+"_wf");
-                startTimer("propagator "+q+" flow");
-                evolve.template laplace_flow<PropagatorField,GImpl,GaugeField,GaugeLinkField>(Wi[0],Wi[1],Wi[2],qjwf);
-                stopTimer("propagator "+q+" flow");
-                auto &qji = envGet(PropagatorField, getName()+q+"_t"+ftt.str());
+        for (std::string q : par().props) {
+            PropagatorField &qjwf = *env().template getObject<PropagatorField>(getName()+"_tmp_"+q+"_wf");
+            startTimer("propagator "+q+" flow time "+ftt.str());
+            evolve.template laplace_flow<PropagatorField,GImpl,GaugeField,GaugeLinkField>(Wi[0],Wi[1],Wi[2],qjwf);
+            stopTimer("propagator "+q+" flow time "+ftt.str());
+            if (( step % par().meas_interval == 0) || (step == par().steps)) {
+                auto &qji = envGet(PropagatorField, q+"_t"+ftt.str());
                 qji = qjwf;
             }
         }
