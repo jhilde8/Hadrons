@@ -42,7 +42,7 @@ int main(int argc, char *argv[])
     MSource::Point::Par ptPar;
     ptPar.position = "0 0 0 0";
     std:: string srcName  = "pt_0";
-    application.createModule<MSource::Point>(srcName, z2Par);
+    application.createModule<MSource::Point>(srcName, ptPar);
 
     // point sink
     MSink::Point::Par sinkPar;
@@ -93,16 +93,16 @@ int main(int argc, char *argv[])
     wfPar.props = qName;                  // provide a list of propagators to be flowed
     wfPar.bc = -1;                        // set boundary conditions to anti-periodic in time (bc = 1 will keep periodic)
     //wfPar.output = "GaugeFlow";         // option to output gauge flow data separately
-    application.createModule<MGradientFlow::WilsonFermionFlow>("FermionFlow",gfPar);
+    application.createModule<MGradientFlow::WilsonFermionFlow>("FermionFlow",wfPar);
     // ///////////////////////////////////////////////////////////////////////
     
     // positive flow contractions
-    MContraction::Meson::Par mesPar;
-    mesPar.q1     = "FermionFlow_q0_10";
-    mesPar.q2     = "FermionFlow_q0_10";
-    mesPar.gammas = "all";
-    mesPar.sink   = "sink";
-    application.createModule<MContraction::Meson>("meson_t0.10",mesPar);
+    MContraction::Meson::Par mesflowPar;
+    mesflowPar.q1     = "FermionFlow_q0_10";
+    mesflowPar.q2     = "FermionFlow_q0_10";
+    mesflowPar.gammas = "all";
+    mesflowPar.sink   = "sink";
+    application.createModule<MContraction::Meson>("meson_t0.10",mesflowPar);
     results.push_back("meson_t0.10");
 
     // save data
