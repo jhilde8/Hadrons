@@ -121,7 +121,7 @@ double avgClover(const GaugeLorentz &Umu)
 // polyakov loop in mu direction  //////////////////////////////////////////////
 template <typename GImpl, typename GaugeField, typename GaugeLinkField>
 ComplexD avgPolyakovLoopMu(const GaugeField &Umu, int mu) { // assuming Nd=4
-    GaugeLinkField Ut(Umu.Grid()), P(Umu.Grid);
+    GaugeLinkField Ut(Umu.Grid()), P(Umu.Grid());
     ComplexD out;
 
     double vol = Umu.Grid()->gSites();
