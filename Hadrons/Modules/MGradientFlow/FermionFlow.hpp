@@ -201,7 +201,6 @@ void TFermionFlow<FImpl,GImpl,FlowAction>::execute(void)
     }
     
     // apply flow equations
-    double time = 0;
     Evolution<FlowAction> evolve(3.0, par().step_size, -1.0, par().step_size);
     for (unsigned int step = 1; step <= par().steps; step++) {
         // evolve gauge field 
