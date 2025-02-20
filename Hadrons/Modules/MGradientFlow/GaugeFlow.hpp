@@ -129,15 +129,16 @@ void TGaugeFlow<GImpl,FlowAction>::execute(void)
 {
     // create action -> if c_plaq and c_rect are used, called PlaqPlusRectangleAction
     FlowAction SG;
-    if (par().c_plaq.empty() && par().c_rect.empty()) {
-        SG = createFlowAction(3.0);
-    } else {
+    if constexpr (std::is_same_v<FlowAction, PlaqPlusRectangleAction<GImpl>>) {
         if (par().c_plaq.empty() || par().c_plaq.empty()) {
             std::cerr << "Error: to use PlaqPlusRectangleAction (CustomFlow), pass some value to both c_plaq and c_rect." << std::endl;
             std::exit(EXIT_FAILURE);
         }
-        SG = createFlowAction(std::stod(c_plaq),std::stod(c_rect));
+        SG = FlowAction(std::stod(par().c_plaq),std::stod(par().c_rect));
         LOG(Message) << SG.LogParameters();
+    } else {
+        SG = FlowAction(3.0);
+
     }
 
     std::string type = SG.action_name();
