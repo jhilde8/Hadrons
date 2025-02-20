@@ -75,6 +75,8 @@ public:
     TGaugeFlow(const std::string name);
     // destructor
     virtual ~TGaugeFlow(void) {};
+    // run flow
+    virtual void runGaugeFlow(FlowAction SG);
     // dependency relation
     virtual std::vector<std::string> getInput(void);
     virtual std::vector<std::string> getOutput(void);
@@ -123,26 +125,11 @@ void TGaugeFlow<GImpl,FlowAction>::setup(void)
     envCreate(HadronsSerializable, getName(), 1, 0);
 }
 
-// execution ///////////////////////////////////////////////////////////////////
+// run flow ////////////////////////////////////////////////////////////////////
 template <typename GImpl,typename FlowAction>
-void TGaugeFlow<GImpl,FlowAction>::execute(void)
+void TGaugeFlow<GImpl,FlowAction>::runGaugeFlow(FlowAction SG)
 {
-    // create action -> if c_plaq and c_rect are used, called PlaqPlusRectangleAction
-    FlowAction SG;
-    if constexpr (std::is_same_v<FlowAction, PlaqPlusRectangleAction<GImpl>>) {
-        if (par().c_plaq.empty() || par().c_plaq.empty()) {
-            std::cerr << "Error: to use PlaqPlusRectangleAction (CustomFlow), pass some value to both c_plaq and c_rect." << std::endl;
-            std::exit(EXIT_FAILURE);
-        }
-        SG = FlowAction(std::stod(par().c_plaq),std::stod(par().c_rect));
-        LOG(Message) << SG.LogParameters();
-    } else {
-        SG = FlowAction(3.0);
-
-    }
-
     std::string type = SG.action_name();
-
     LOG(Message) << "Setting up " << type << " Flow on '" << par().gauge << "' with " << par().steps
                  << " step" << ((par().steps != 1) ? "s." : ".") << std::endl;
 
@@ -157,11 +144,13 @@ void TGaugeFlow<GImpl,FlowAction>::execute(void)
 
     auto &U   = envGet(GaugeField, par().gauge);
     auto &Uwf = envGet(GaugeField, getName()+"_U");
-
     Uwf = U;
-    double time = 0;
 
-    Evolution<FlowAction> evolve(3.0, par().step_size, mTau, par().step_size);
+    if constexpr (std::is_same_v<FlowAction, PlaqPlusRectangleAction<GImpl>>) {
+        Evolution<FlowAction> evolve(std::stod(par().c_plaq), std::stod(par().c_rect), par().step_size, mTau, par().step_size);
+    } else {
+        Evolution<FlowAction> evolve(3.0, par().step_size, mTau, par().step_size);
+    }
     if (par().steps == 0) { 
         // if steps = 0, give the status of gauge field without flowing
         result.plaquette.resize(1);
@@ -197,6 +186,25 @@ void TGaugeFlow<GImpl,FlowAction>::execute(void)
         }
     }
     saveResult(par().output,"gauge_obs",result);
+}
+
+// execution ///////////////////////////////////////////////////////////////////
+template <typename GImpl,typename FlowAction>
+void TGaugeFlow<GImpl,FlowAction>::execute(void)
+{
+    // create action -> if c_plaq and c_rect are used, called PlaqPlusRectangleAction
+    if constexpr (std::is_same_v<FlowAction, PlaqPlusRectangleAction<GImpl>>) {
+        if (par().c_plaq.empty() || par().c_plaq.empty()) {
+            std::cerr << "Error: to use PlaqPlusRectangleAction (CustomFlow), pass some value to both c_plaq and c_rect." << std::endl;
+            std::exit(EXIT_FAILURE);
+        }
+        FlowAction SG = FlowAction(std::stod(par().c_plaq),std::stod(par().c_rect));
+        LOG(Message) << SG.LogParameters();
+        runGaugeFlow(SG);
+    } else {
+        FlowAction SG = FlowAction(3.0);
+        runGaugeFlow(SG);
+    }
 }
 
 END_MODULE_NAMESPACE
