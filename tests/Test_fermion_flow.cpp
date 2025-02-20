@@ -98,8 +98,8 @@ int main(int argc, char *argv[])
     
     // positive flow contractions
     MContraction::Meson::Par mesflowPar;
-    mesflowPar.q1     = "FermionFlow_q0_10";
-    mesflowPar.q2     = "FermionFlow_q0_10";
+    mesflowPar.q1     = qName[0]+"_t1.00";
+    mesflowPar.q2     = qName[0]+"_t1.00";
     mesflowPar.gammas = "all";
     mesflowPar.sink   = "sink";
     application.createModule<MContraction::Meson>("meson_t0.10",mesflowPar);

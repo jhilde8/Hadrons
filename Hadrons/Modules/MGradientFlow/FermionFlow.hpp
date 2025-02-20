@@ -120,10 +120,10 @@ std::vector<std::string> TFermionFlow<FImpl,GImpl,FlowAction>::getOutput(void)
     for (int i = 1; i <= par().steps; i++) 
     {
         if ((i % par().meas_interval == 0) || (i == par().steps)) {
-            std::stringstream st; st << i;
-            for (int j = 0; j < par().props.size(); j++) {
-                std::stringstream qt; qt << j;
-                out.push_back(getName()+"_q"+qt.str()+"_"+st.str());
+            double ft = par().step_size * i;
+            std::stringstream ftt; ftt << ft;
+            for (std::string q : par().props) {
+                out.push_back(q+"_t"+ftt.str());
             }
         }
     }
@@ -137,19 +137,18 @@ void TFermionFlow<FImpl,GImpl,FlowAction>::setup(void)
     envCreateLat(GaugeField, getName()+"_U");
 
     // create tmp propagator fields
-    for (int j = 0; j < par().props.size(); j++) {
-        std::stringstream qt; qt << j;
-        envTmpLat(PropagatorField, "q"+qt.str()+"wf");
+    for (std::string q : par().props) {
+        envTmpLat(PropagatorField, q+"_wf");
     }
 
     // create output propagators
     for (int i = 1; i <= par().steps; i++) 
     {
         if ((i % par().meas_interval == 0) || (i == par().steps)) {
-            std::stringstream st; st << i;
-            for (int j = 0; j < par().props.size(); j++) {
-                std::stringstream qt; qt << j;
-                envCreateLat(PropagatorField, getName()+"_q"+qt.str()+"_"+st.str());
+            double ft = par().step_size * i;
+            std::stringstream ftt; ftt << ft;
+            for (std::string q : par().props()) {
+                envCreateLat(PropagatorField, q+"_t"+ftt.str());
             }
         }
     }
@@ -199,10 +198,9 @@ void TFermionFlow<FImpl,GImpl,FlowAction>::execute(void)
     auto &Uwf = envGet(GaugeField, getName()+"_U");
     Uwf = U;
 
-    for (int j = 0; j < par().props.size(); j++) {
-        auto &qj = envGet(PropagatorField, par().props[j]);
-        std::stringstream jt; jt << j;
-        PropagatorField &qjwf = *env().template getObject<PropagatorField>(getName()+"_tmp_q"+jt.str()+"wf");
+    for (std::string q : par().props) {
+        auto &qj = envGet(PropagatorField, q);
+        PropagatorField &qjwf = *env().template getObject<PropagatorField>(getName()+"_tmp_"+q+"_wf");
         qjwf = qj;
     }
     
@@ -219,14 +217,14 @@ void TFermionFlow<FImpl,GImpl,FlowAction>::execute(void)
 
         // evolve propagators
         if ((step % par().meas_interval == 0) || (step == par().steps)) {
-            std::stringstream st; st << step;
-            for (int j = 0; j < par().props.size(); j++) {
-                std::stringstream jt; jt << j;
-                PropagatorField &qjwf = *env().template getObject<PropagatorField>(getName()+"_tmp_q"+jt.str()+"wf");
-                startTimer("fermion field "+jt.str()+" flow");
+            double ft = par().step_size * i;
+            std::stringstream ftt; ftt << ft;
+            for (std::string q : par().props) {
+                PropagatorField &qjwf = *env().template getObject<PropagatorField>(getName()+"_tmp_"+q+"_wf");
+                startTimer("propagator "+q+" flow");
                 evolve.template laplace_flow<PropagatorField,GImpl,GaugeField,GaugeLinkField>(Wi[0],Wi[1],Wi[2],qjwf);
-                stopTimer("fermion field "+jt.str()+" flow");
-                auto &qji = envGet(PropagatorField, getName()+"_q"+jt.str()+"_"+st.str());
+                stopTimer("propagator "+q+" flow");
+                auto &qji = envGet(PropagatorField, getName()+q+"_t"+ftt.str());
                 qji = qjwf;
             }
         }
