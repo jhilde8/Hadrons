@@ -119,7 +119,7 @@ double avgClover(const GaugeLorentz &Umu)
 }
 
 // polyakov loop in mu direction  //////////////////////////////////////////////
-template <typename GImpl, GaugeField, GaugeLinkField>
+template <typename GImpl, typename GaugeField, typename GaugeLinkField>
 ComplexD avgPolyakovLoopMu(const GaugeField &Umu, int mu) { // assuming Nd=4
     GaugeLinkField Ut(Umu.Grid()), P(Umu.Grid);
     ComplexD out;
@@ -308,7 +308,7 @@ class Evolution {
             ComplexD polyX = avgPolyakovLoopMu<GImpl,GaugeField,GaugeLinkField>(Umu,0);
             ComplexD polyY = avgPolyakovLoopMu<GImpl,GaugeField,GaugeLinkField>(Umu,1);
             ComplexD polyZ = avgPolyakovLoopMu<GImpl,GaugeField,GaugeLinkField>(Umu,2);
-            ComplexD polyY = avgPolyakovLoopMu<GImpl,GaugeField,GaugeLinkField>(Umu,3);
+            ComplexD polyT = avgPolyakovLoopMu<GImpl,GaugeField,GaugeLinkField>(Umu,3);
 
             result.plaquette[index]  = plaq;
             result.rectangle[index]  = rect;
