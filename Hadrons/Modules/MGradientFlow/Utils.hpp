@@ -118,6 +118,24 @@ double avgClover(const GaugeLorentz &Umu)
     return c.real() / vol;
 }
 
+// polyakov loop in mu direction  //////////////////////////////////////////////
+template <typename GImpl, GaugeField, GaugeLinkField>
+ComplexD avgPolyakovLoopMu(const GaugeField &Umu, int mu) { // assuming Nd=4
+    GaugeLinkField Ut(Umu.Grid()), P(Umu.Grid);
+    ComplexD out;
+
+    double vol = Umu.Grid()->gSites();
+
+    Ut = peekLorentz(Umu,mu);
+    P = Ut;
+    for (int t=1; t < Umu.Grid()->GlobalDimensions()[mu]; t++) {
+        P = GImpl::CovShiftForward(Ut,mu,P);
+    }
+    RealD norm = 1.0/(Nc*vol);
+    out = sum(trace(P))*norm;
+    return out;
+}
+
 // field evolution /////////////////////////////////////////////////////////////
 template <typename FlowAction>
 class Evolution {
@@ -287,14 +305,20 @@ class Evolution {
             double rect = WilsonLoops<GImpl>::avgRectangle(Umu);
             double clov = avgClover<GImpl,ComplexField,GaugeField,GaugeLinkField>(Umu);
             double act = SG.S(Umu);
-            ComplexD poly = WilsonLoops<GImpl>::avgPolyakovLoop(Umu);
+            ComplexD polyX = avgPolyakovLoopMu<GImpl,GaugeField,GaugeLinkField>(Umu,0);
+            ComplexD polyY = avgPolyakovLoopMu<GImpl,GaugeField,GaugeLinkField>(Umu,1);
+            ComplexD polyZ = avgPolyakovLoopMu<GImpl,GaugeField,GaugeLinkField>(Umu,2);
+            ComplexD polyY = avgPolyakovLoopMu<GImpl,GaugeField,GaugeLinkField>(Umu,3);
 
-            result.plaquette[index] = plaq;
-            result.rectangle[index] = rect;
-            result.clover[index]    = clov;
-            result.topcharge[index] =    Q;
-            result.action[index]    =  act;
-            result.polyakov[index]  = poly;
+            result.plaquette[index]  = plaq;
+            result.rectangle[index]  = rect;
+            result.clover[index]     = clov;
+            result.topcharge[index]  =    Q;
+            result.action[index]     =  act;
+            result.polyakovX[index]  = polyX;
+            result.polyakovY[index]  = polyY;
+            result.polyakovZ[index]  = polyZ;
+            result.polyakovT[index]  = polyT;
         };
 };
 

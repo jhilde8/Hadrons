@@ -69,7 +69,10 @@ public:
                                         std::vector<double>,    clover,
                                         std::vector<double>,    topcharge,
                                         std::vector<double>,    action,
-                                        std::vector<ComplexD>,  polyakov);
+                                        std::vector<ComplexD>,  polyakovX,
+                                        std::vector<ComplexD>,  polyakovY,
+                                        std::vector<ComplexD>,  polyakovZ,
+                                        std::vector<ComplexD>,  polyakovT);
     };
 public:
     // constructor
@@ -187,7 +190,10 @@ void TFermionFlow<FImpl,GImpl,FlowAction>::execute(void)
     Uresult.clover.resize(par().steps);
     Uresult.topcharge.resize(par().steps);
     Uresult.action.resize(par().steps);
-    Uresult.polyakov.resize(par().steps);
+    Uresult.polyakovX.resize(par().steps);
+    Uresult.polyakovY.resize(par().steps);
+    Uresult.polyakovZ.resize(par().steps);
+    Uresult.polyakovT.resize(par().steps);
 
     auto &U   = envGet(GaugeField, par().gauge);
     auto &Uwf = envGet(GaugeField, getName()+"_U");

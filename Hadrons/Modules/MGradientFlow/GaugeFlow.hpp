@@ -68,7 +68,10 @@ public:
                                         std::vector<double>,    clover,
                                         std::vector<double>,    topcharge,
                                         std::vector<double>,    action,
-                                        std::vector<ComplexD>,  polyakov);
+                                        std::vector<ComplexD>,  polyakovX,
+                                        std::vector<ComplexD>,  polyakovY,
+                                        std::vector<ComplexD>,  polyakovZ,
+                                        std::vector<ComplexD>,  polyakovT);
     };
 public:
     // constructor
@@ -144,7 +147,10 @@ void TGaugeFlow<GImpl,FlowAction>::runGaugeFlow(Evolution<FlowAction> &evolve, d
         result.clover.resize(1);
         result.topcharge.resize(1);
         result.action.resize(1);
-        result.polyakov.resize(1);
+        result.polyakovX.resize(1);
+        result.polyakovY.resize(1);
+        result.polyakovZ.resize(1);
+        result.polyakovT.resize(1);
         evolve.template gauge_status<GImpl,GaugeField,ComplexField,GaugeLinkField,Result>(Uwf,result,0); 
     } else {
         result.plaquette.resize(par().steps);
@@ -152,7 +158,10 @@ void TGaugeFlow<GImpl,FlowAction>::runGaugeFlow(Evolution<FlowAction> &evolve, d
         result.clover.resize(par().steps);
         result.topcharge.resize(par().steps);
         result.action.resize(par().steps);
-        result.polyakov.resize(par().steps);
+        result.polyakovX.resize(par().steps);
+        result.polyakovY.resize(par().steps);
+        result.polyakovZ.resize(par().steps);
+        result.polyakovT.resize(par().steps);
         if (mTau > 0) {
             unsigned int step = 0;
             do {
