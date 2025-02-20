@@ -34,6 +34,17 @@ BEGIN_HADRONS_NAMESPACE
 
 BEGIN_MODULE_NAMESPACE(MGradientFlow)
 
+// handle actions with different args ///////////////////////////////////////
+template <typename FlowAction, typename Arg1, typename Arg2>
+FlowAction createFlowAction(Arg1&& a, Arg2&& b) {
+    if constexpr (std::is_constructible_v<FlowAction, Arg1, Arg2>) {
+        // FlowAction can be constructed with two arguments for PlaqPlusRectangle : c_plaq, c_rect
+        return FlowAction(std::forward<Arg1>(a), std::forward<Arg2>(b));
+    } else { // other actions use only beta as arg
+        return FlowAction(std::forward<Arg1>(a));
+    }
+}
+
 // additional action(s) /////////////////////////////////////////////////////
 template <class GImpl>
 class ZeuthenGaugeAction {
@@ -124,8 +135,15 @@ class Evolution {
     public:
         double epsilon, maxTau, taus;
         FlowAction SG;
+
+        // constructor with beta
         Evolution(double beta, double step, double mTau, double ts) : 
             SG(FlowAction(beta)), epsilon(step), maxTau(mTau), taus(ts) {};
+
+        // constructor with c_plaq, c_rect
+        Evolution(double c_plaq, double c_rect, double step, double mTau, double ts) : 
+            SG(FlowAction(c_plaq, c_rect)), epsilon(step), maxTau(mTau), taus(ts) {};
+
 
         template <typename GImpl,typename GaugeField>
         std::vector<GaugeField> gauge_RK(GaugeField U) {

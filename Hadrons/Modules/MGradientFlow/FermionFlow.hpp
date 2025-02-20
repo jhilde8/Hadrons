@@ -81,8 +81,6 @@ public:
     virtual std::vector<std::string> getOutput(void);
     // setup
     virtual void setup(void);
-    // action
-    FlowAction SG = FlowAction(3.0);
     // execution
     virtual void execute(void);
 };
@@ -159,6 +157,9 @@ void TFermionFlow<FImpl,GImpl,FlowAction>::setup(void)
 template <typename FImpl,typename GImpl,typename FlowAction>
 void TFermionFlow<FImpl,GImpl,FlowAction>::execute(void)
 {
+    // action
+    FlowAction SG = FlowAction(3.0);
+
     std::string type = SG.action_name();
     std::string ga = "GaugeAction";
     std::string::size_type i = type.find(ga);

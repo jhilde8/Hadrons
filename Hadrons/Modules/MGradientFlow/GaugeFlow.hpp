@@ -49,7 +49,9 @@ public:
                                     int, steps,
                                     double, step_size,
                                     int, meas_interval,
-                                    std::string, maxTau); 
+                                    std::string, maxTau,
+                                    std::string, c_plaq,
+                                    std::string, c_rect); 
 };
 
 template <typename GImpl,typename FlowAction>
@@ -78,8 +80,6 @@ public:
     virtual std::vector<std::string> getOutput(void);
     // setup
     virtual void setup(void);
-    // action
-    FlowAction SG = FlowAction(3.0);
     // execution
     virtual void execute(void);
 };
@@ -87,6 +87,7 @@ public:
 MODULE_REGISTER_TMP(WilsonFlow, ARG(TGaugeFlow<GIMPL,WilsonGaugeAction<GIMPL>>), MGradientFlow);
 MODULE_REGISTER_TMP(SymanzikFlow, ARG(TGaugeFlow<GIMPL,SymanzikGaugeAction<GIMPL>>), MGradientFlow);
 MODULE_REGISTER_TMP(ZeuthenFlow, ARG(TGaugeFlow<GIMPL,ZeuthenGaugeAction<GIMPL>>), MGradientFlow);
+MODULE_REGISTER_TMP(CustomFlow, ARG(TGaugeFlow<GIMPL,PlaqPlusRectangleAction<GIMPL>>), MGradientFlow);
 
 /******************************************************************************
  *                     TGaugeFlow implementation                          *
@@ -126,12 +127,20 @@ void TGaugeFlow<GImpl,FlowAction>::setup(void)
 template <typename GImpl,typename FlowAction>
 void TGaugeFlow<GImpl,FlowAction>::execute(void)
 {
-    std::string type = SG.action_name();
-    std::string ga = "GaugeAction";
-    std::string::size_type i = type.find(ga);
-    if (i != std::string::npos) {
-        type.erase(i, ga.length());
+    // create action -> if c_plaq and c_rect are used, called PlaqPlusRectangleAction
+    FlowAction SG;
+    if (par().c_plaq.empty() && par().c_rect.empty()) {
+        SG = createFlowAction(3.0);
+    } else {
+        if (par().c_plaq.empty() || par().c_plaq.empty()) {
+            std::cerr << "Error: to use PlaqPlusRectangleAction (CustomFlow), pass some value to both c_plaq and c_rect." << std::endl;
+            std::exit(EXIT_FAILURE);
+        }
+        SG = createFlowAction(std::stod(c_plaq),std::stod(c_rect));
+        LOG(Message) << SG.LogParameters();
     }
+
+    std::string type = SG.action_name();
 
     LOG(Message) << "Setting up " << type << " Flow on '" << par().gauge << "' with " << par().steps
                  << " step" << ((par().steps != 1) ? "s." : ".") << std::endl;
@@ -139,7 +148,7 @@ void TGaugeFlow<GImpl,FlowAction>::execute(void)
     double mTau = -1.0;
     if(!par().maxTau.empty()) {
         LOG(Message) << "Using adaptive algorithm with maxTau = " << par().maxTau << std::endl;
-        mTau = (double)std::stoi(par().maxTau);
+        mTau = std::stod(par().maxTau);
     }
 
     auto &out    = envGet(HadronsSerializable, getName());
