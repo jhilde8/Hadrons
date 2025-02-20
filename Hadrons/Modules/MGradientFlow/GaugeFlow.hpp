@@ -76,7 +76,8 @@ public:
     // destructor
     virtual ~TGaugeFlow(void) {};
     // run flow
-    virtual void runGaugeFlow(FlowAction SG);
+    virtual void runGaugeFlow(Evolution<FlowAction> &evolve);
+    virtual void setupGaugeFlow(FlowAction &SG);
     // dependency relation
     virtual std::vector<std::string> getInput(void);
     virtual std::vector<std::string> getOutput(void);
@@ -127,18 +128,8 @@ void TGaugeFlow<GImpl,FlowAction>::setup(void)
 
 // run flow ////////////////////////////////////////////////////////////////////
 template <typename GImpl,typename FlowAction>
-void TGaugeFlow<GImpl,FlowAction>::runGaugeFlow(FlowAction SG)
+void TGaugeFlow<GImpl,FlowAction>::runGaugeFlow(Evolution<FlowAction> &evolve)
 {
-    std::string type = SG.action_name();
-    LOG(Message) << "Setting up " << type << " Flow on '" << par().gauge << "' with " << par().steps
-                 << " step" << ((par().steps != 1) ? "s." : ".") << std::endl;
-
-    double mTau = -1.0;
-    if(!par().maxTau.empty()) {
-        LOG(Message) << "Using adaptive algorithm with maxTau = " << par().maxTau << std::endl;
-        mTau = std::stod(par().maxTau);
-    }
-
     auto &out    = envGet(HadronsSerializable, getName());
     auto &result = out.template hold<Result>();
 
@@ -146,11 +137,6 @@ void TGaugeFlow<GImpl,FlowAction>::runGaugeFlow(FlowAction SG)
     auto &Uwf = envGet(GaugeField, getName()+"_U");
     Uwf = U;
 
-    if constexpr (std::is_same_v<FlowAction, PlaqPlusRectangleAction<GImpl>>) {
-        Evolution<FlowAction> evolve(std::stod(par().c_plaq), std::stod(par().c_rect), par().step_size, mTau, par().step_size);
-    } else {
-        Evolution<FlowAction> evolve(3.0, par().step_size, mTau, par().step_size);
-    }
     if (par().steps == 0) { 
         // if steps = 0, give the status of gauge field without flowing
         result.plaquette.resize(1);
@@ -188,6 +174,28 @@ void TGaugeFlow<GImpl,FlowAction>::runGaugeFlow(FlowAction SG)
     saveResult(par().output,"gauge_obs",result);
 }
 
+template <typename GImpl,typename FlowAction>
+void TGaugeFlow<GImpl,FlowAction>::setupGaugeFlow(FlowAction &SG)
+{
+    std::string type = SG.action_name();
+    LOG(Message) << "Setting up " << type << " Flow on '" << par().gauge << "' with " << par().steps
+                 << " step" << ((par().steps != 1) ? "s." : ".") << std::endl;
+
+    double mTau = -1.0;
+    if(!par().maxTau.empty()) {
+        LOG(Message) << "Using adaptive algorithm with maxTau = " << par().maxTau << std::endl;
+        mTau = std::stod(par().maxTau);
+    }
+
+    if constexpr (std::is_same_v<FlowAction, PlaqPlusRectangleAction<GImpl>>) {
+        Evolution<FlowAction> evolve(std::stod(par().c_plaq), std::stod(par().c_rect), par().step_size, mTau, par().step_size);
+        runGaugeFlow(evolve);
+    } else {
+        Evolution<FlowAction> evolve(3.0, par().step_size, mTau, par().step_size);
+        runGaugeFlow(evolve);
+    }
+}
+
 // execution ///////////////////////////////////////////////////////////////////
 template <typename GImpl,typename FlowAction>
 void TGaugeFlow<GImpl,FlowAction>::execute(void)
@@ -200,10 +208,10 @@ void TGaugeFlow<GImpl,FlowAction>::execute(void)
         }
         FlowAction SG = FlowAction(std::stod(par().c_plaq),std::stod(par().c_rect));
         LOG(Message) << SG.LogParameters();
-        runGaugeFlow(SG);
+        setupGaugeFlow(SG);
     } else {
         FlowAction SG = FlowAction(3.0);
-        runGaugeFlow(SG);
+        setupGaugeFlow(SG);
     }
 }
 
