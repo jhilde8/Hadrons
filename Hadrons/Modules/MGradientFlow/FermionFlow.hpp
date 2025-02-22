@@ -64,10 +64,11 @@ public:
     {
     public:
         GRID_SERIALIZABLE_CLASS_MEMBERS(GaugeResult,
+                                        std::vector<double>,    flowtime,
                                         std::vector<double>,    plaquette,
                                         std::vector<double>,    rectangle,
                                         std::vector<double>,    clover,
-                                        std::vector<double>,    topcharge,
+                                        std::vector<double>,    topocharge,
                                         std::vector<double>,    action,
                                         std::vector<ComplexD>,  polyakovX,
                                         std::vector<ComplexD>,  polyakovY,
@@ -185,16 +186,6 @@ void TFermionFlow<FImpl,GImpl,FlowAction>::execute(void)
     auto &out     = envGet(HadronsSerializable, getName());
     auto &Uresult = out.template hold<GaugeResult>();
 
-    Uresult.plaquette.resize(par().steps);
-    Uresult.rectangle.resize(par().steps);
-    Uresult.clover.resize(par().steps);
-    Uresult.topcharge.resize(par().steps);
-    Uresult.action.resize(par().steps);
-    Uresult.polyakovX.resize(par().steps);
-    Uresult.polyakovY.resize(par().steps);
-    Uresult.polyakovZ.resize(par().steps);
-    Uresult.polyakovT.resize(par().steps);
-
     auto &U   = envGet(GaugeField, par().gauge);
     auto &Uwf = envGet(GaugeField, getName()+"_U");
     Uwf = U;
@@ -206,10 +197,12 @@ void TFermionFlow<FImpl,GImpl,FlowAction>::execute(void)
     }
     
     // apply flow equations
+    double flowt = 0.0;
     Evolution<FlowAction> evolve(3.0, par().step_size, -1.0, par().step_size);
+    evolve.template gauge_status<GImpl,GaugeField,ComplexField,GaugeLinkField,GaugeResult>(Uwf,Uresult,flowt);
     for (unsigned int step = 1; step <= par().steps; step++) {
-        double ft = par().step_size * step;
-        std::stringstream ftt; ftt << std::fixed << std::setprecision(2) << ft;
+        flowt += evolve.epsilon;
+        std::stringstream ftt; ftt << std::fixed << std::setprecision(2) << flowt;
 
         // evolve gauge field 
         startTimer("gauge field flow time "+ftt.str());
@@ -217,7 +210,7 @@ void TFermionFlow<FImpl,GImpl,FlowAction>::execute(void)
         stopTimer("gauge field flow time "+ftt.str());
 
         // measure gauge observables
-        evolve.template gauge_status<GImpl,GaugeField,ComplexField,GaugeLinkField,GaugeResult>(Uwf,Uresult,step-1);
+        evolve.template gauge_status<GImpl,GaugeField,ComplexField,GaugeLinkField,GaugeResult>(Uwf,Uresult,flowt);
 
         // evolve propagators
         for (std::string q : par().props) {

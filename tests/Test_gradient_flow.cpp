@@ -42,7 +42,7 @@ int main(int argc, char *argv[])
                                           */
     gfPar.gauge = "gauge";
     gfPar.steps = 10;                     // total number of evolution steps to perform
-    gfPar.step_size = 0.1;                // size of one step in flow time/a^2
+    gfPar.step_size = 0.01;               // size of one step in flow time/a^2
     gfPar.meas_interval = 1;              // interval of steps at which to measure observables
     gfPar.output = "WilsonFlow";         
     application.createModule<MGradientFlow::WilsonFlow>("WilsonFlow",gfPar);

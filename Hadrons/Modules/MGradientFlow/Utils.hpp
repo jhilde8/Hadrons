@@ -298,7 +298,7 @@ class Evolution {
 
         // gauge field status //////////////////////////////////////////////////////////
         template <typename GImpl,typename GaugeField,typename ComplexField,typename GaugeLinkField,typename Result>
-        void gauge_status(GaugeField &Umu, Result &result, int index)
+        void gauge_status(GaugeField &Umu, Result &result, double flowt)
         {
             double Q = WilsonLoops<GImpl>::TopologicalCharge(Umu);
             double plaq = WilsonLoops<GImpl>::avgPlaquette(Umu);
@@ -310,15 +310,16 @@ class Evolution {
             ComplexD polyZ = avgPolyakovLoopMu<GImpl,GaugeField,GaugeLinkField>(Umu,2);
             ComplexD polyT = avgPolyakovLoopMu<GImpl,GaugeField,GaugeLinkField>(Umu,3);
 
-            result.plaquette[index]  = plaq;
-            result.rectangle[index]  = rect;
-            result.clover[index]     = clov;
-            result.topcharge[index]  =    Q;
-            result.action[index]     =  act;
-            result.polyakovX[index]  = polyX;
-            result.polyakovY[index]  = polyY;
-            result.polyakovZ[index]  = polyZ;
-            result.polyakovT[index]  = polyT;
+            result.flowtime.push_back(flowt);
+            result.plaquette.push_back(plaq);
+            result.rectangle.push_back(rect);
+            result.clover.push_back(clov);
+            result.topocharge.push_back(Q);
+            result.action.push_back(act);
+            result.polyakovX.push_back(polyX);
+            result.polyakovY.push_back(polyY);
+            result.polyakovZ.push_back(polyZ);
+            result.polyakovT.push_back(polyT);
         };
 };
 

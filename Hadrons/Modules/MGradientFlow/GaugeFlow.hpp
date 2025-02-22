@@ -63,10 +63,11 @@ public:
     {
     public:
         GRID_SERIALIZABLE_CLASS_MEMBERS(Result,
+                                        std::vector<double>,    flowtime,
                                         std::vector<double>,    plaquette,
                                         std::vector<double>,    rectangle,
                                         std::vector<double>,    clover,
-                                        std::vector<double>,    topcharge,
+                                        std::vector<double>,    topocharge,
                                         std::vector<double>,    action,
                                         std::vector<ComplexD>,  polyakovX,
                                         std::vector<ComplexD>,  polyakovY,
@@ -140,42 +141,26 @@ void TGaugeFlow<GImpl,FlowAction>::runGaugeFlow(Evolution<FlowAction> &evolve, d
     auto &Uwf = envGet(GaugeField, getName()+"_U");
     Uwf = U;
 
-    if (par().steps == 0) { 
-        // if steps = 0, give the status of gauge field without flowing
-        result.plaquette.resize(1);
-        result.rectangle.resize(1);
-        result.clover.resize(1);
-        result.topcharge.resize(1);
-        result.action.resize(1);
-        result.polyakovX.resize(1);
-        result.polyakovY.resize(1);
-        result.polyakovZ.resize(1);
-        result.polyakovT.resize(1);
-        evolve.template gauge_status<GImpl,GaugeField,ComplexField,GaugeLinkField,Result>(Uwf,result,0); 
-    } else {
-        result.plaquette.resize(par().steps);
-        result.rectangle.resize(par().steps);
-        result.clover.resize(par().steps);
-        result.topcharge.resize(par().steps);
-        result.action.resize(par().steps);
-        result.polyakovX.resize(par().steps);
-        result.polyakovY.resize(par().steps);
-        result.polyakovZ.resize(par().steps);
-        result.polyakovT.resize(par().steps);
+    double flowt = 0.0;
+    evolve.template gauge_status<GImpl,GaugeField,ComplexField,GaugeLinkField,Result>(Uwf,result,flowt); 
+    // if steps = 0, give the status of gauge field without flowing
+    if (par().steps != 0) { 
         if (mTau > 0) {
             unsigned int step = 0;
             do {
                 step++;
+                flowt += evolve.epsilon;
                 evolve.template evolve_gauge_adaptive<GImpl,GaugeField>(Uwf);
                 if (step % par().meas_interval == 0) {
-                    evolve.template gauge_status<GImpl,GaugeField,ComplexField,GaugeLinkField,Result>(Uwf,result,step-1);
+                    evolve.template gauge_status<GImpl,GaugeField,ComplexField,GaugeLinkField,Result>(Uwf,result,flowt);
                 }
             } while (evolve.taus < mTau);
         } else {
             for (unsigned int step = 1; step <= par().steps; step++) {
+                flowt += evolve.epsilon;
                 evolve.template evolve_gauge<GImpl,GaugeField>(Uwf);
                 if (step % par().meas_interval == 0) {
-                    evolve.template gauge_status<GImpl,GaugeField,ComplexField,GaugeLinkField,Result>(Uwf,result,step-1);
+                    evolve.template gauge_status<GImpl,GaugeField,ComplexField,GaugeLinkField,Result>(Uwf,result,flowt);
                 }
             }
         }
