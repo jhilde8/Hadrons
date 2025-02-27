@@ -28,6 +28,7 @@ BEGIN_HADRONS_NAMESPACE
 
 BEGIN_MODULE_NAMESPACE(MContraction)
 
+
 class QEDBurgerShortPar: Serializable
 {
 public:
@@ -40,13 +41,92 @@ public:
     );
 
     GRID_SERIALIZABLE_CLASS_MEMBERS(QEDBurgerShortPar,
-                                    std::string,              sources,
-                                    std::string,              qs,
-                                    std::vector<std::string>, photonProps,
-                                    unsigned int,             radius,
-                                    SymmetryMode,             useLatticeSymmetry,
-                                    std::string,              output);
+                                    std::string,               sources,
+                                    std::string,               qs,
+                                    std::vector<std::string>,  photonProps,
+                                    unsigned int,              rSq,
+                                    std::vector<SymmetryMode>, shellSymmetries,
+                                    std::string,               output);
 };
+
+struct QEDBurgerShortSiteGenerator
+{
+public:
+    QEDBurgerShortSiteGenerator(int Nd) : Nd{Nd} {};
+    virtual ~QEDBurgerShortSiteGenerator() {}
+    virtual std::vector<Coordinate> culledDiscreteRadialShell(int squared_radius) = 0;
+    virtual double symmetryFactor(const Coordinate& site) = 0;
+protected:
+    template<typename CullFunction>
+    std::vector<Coordinate> discreteRadialShell(int squared_radius, CullFunction cullFn);
+protected:
+    int Nd;
+};
+
+struct QEDBurgerShortFullSiteGenerator : public QEDBurgerShortSiteGenerator
+{
+    using QEDBurgerShortSiteGenerator::QEDBurgerShortSiteGenerator;
+    virtual std::vector<Coordinate> culledDiscreteRadialShell(int squared_radius) override;
+    virtual double symmetryFactor(const Coordinate& site) override;
+};
+
+struct QEDBurgerShortParitySymmetrySiteGenerator : public QEDBurgerShortSiteGenerator
+{
+    using QEDBurgerShortSiteGenerator::QEDBurgerShortSiteGenerator;
+    virtual std::vector<Coordinate> culledDiscreteRadialShell(int squared_radius) override;
+    virtual double symmetryFactor(const Coordinate& site) override;
+};
+
+struct QEDBurgerShortOrthantSiteGenerator : public QEDBurgerShortSiteGenerator
+{
+    using QEDBurgerShortSiteGenerator::QEDBurgerShortSiteGenerator;
+    virtual std::vector<Coordinate> culledDiscreteRadialShell(int squared_radius) override;
+    virtual double symmetryFactor(const Coordinate& site) override;
+};
+
+struct QEDBurgerShortOctahedral3DSiteGenerator : public QEDBurgerShortSiteGenerator
+{
+    using QEDBurgerShortSiteGenerator::QEDBurgerShortSiteGenerator;
+    virtual std::vector<Coordinate> culledDiscreteRadialShell(int squared_radius) override;
+    virtual double symmetryFactor(const Coordinate& site) override;
+};
+
+struct QEDBurgerShortOctahedral4DSiteGenerator : public QEDBurgerShortSiteGenerator
+{
+    using QEDBurgerShortSiteGenerator::QEDBurgerShortSiteGenerator;
+    virtual std::vector<Coordinate> culledDiscreteRadialShell(int squared_radius) override;
+    virtual double symmetryFactor(const Coordinate& site) override;
+};
+
+template<typename CullFunction>
+std::vector<Coordinate> QEDBurgerShortSiteGenerator::discreteRadialShell(int squared_radius, CullFunction cullFn)
+{
+    int radius = static_cast<int>(std::ceil(std::sqrt(static_cast<float>(squared_radius))));
+    
+    // Generate list of sites
+    std::vector<Coordinate> shifts;
+    // Make this depend on Nd rather than hardcode to Nd=4..?
+    for (int r0=-radius; r0<=radius; ++r0)
+    for (int r1=-radius; r1<=radius; ++r1)
+    for (int r2=-radius; r2<=radius; ++r2)
+    for (int r3=-radius; r3<=radius; ++r3)
+    {
+        int rsq = r0*r0+r1*r1+r2*r2+r3*r3;
+
+        if (rsq != squared_radius) continue;
+
+        Coordinate r(this->Nd);
+        r[0]=r0;
+        r[1]=r1;
+        r[2]=r2;
+        r[3]=r3;
+
+        if (cullFn(r))
+            shifts.push_back(r);
+    }
+    return shifts;
+}
+
 
 template <typename FImpl, typename Field, typename VType>
 class TQEDBurgerShort: public Module<QEDBurgerShortPar>
@@ -54,6 +134,18 @@ class TQEDBurgerShort: public Module<QEDBurgerShortPar>
 public:
     FERM_TYPE_ALIASES(FImpl,);
     
+    class Result: Serializable
+    {
+    public:
+        GRID_SERIALIZABLE_CLASS_MEMBERS(Result,
+                                        int,         rSq,
+                                        std::string, symmetry,
+                                        std::string, photon,
+                                        std::vector<Real>, burger,
+                                        std::vector<Real>, full,
+                                        std::vector<Real>, bias);
+    };
+
     typedef TEmFieldGenerator<VType> EmGen;
     typedef typename EmGen::ScalarField PhotonProp;
     size_t numPhotonProps;
@@ -71,12 +163,7 @@ public:
     // execution
     virtual void execute(void) override;
 
-    inline std::vector<Coordinate> generateShiftVectors(int rsqmin, int radius, QEDBurgerShortPar::SymmetryMode useLatticeSymmetry) const;
-    inline double symmetryFactor(const Coordinate& site, QEDBurgerShortPar::SymmetryMode useLatticeSymmetry) const;
-    inline bool isInUsedLatticeHalf(const Coordinate& site) const;
-    inline bool isInUsedLatticeOrthant(const Coordinate& site) const;
-    inline bool isInUsedOctahedralSection(const Coordinate& site) const;
-    inline bool isInUsedOctahedral3DSection(const Coordinate& site) const;
+    inline std::unique_ptr<QEDBurgerShortSiteGenerator> createSiteGenerator(QEDBurgerShortPar::SymmetryMode symmetry);
     inline void fastBurger(const PropagatorField& left, const PropagatorField& right, const typename PhotonProp::scalar_object& pSite, LatticeComplexD& out) const;
     inline void coordCshift(const Field& field, const Coordinate& coord, Field& out) const;
     inline PropagatorField pointToPointProp(const PropagatorField& left, const PropagatorField& right);
@@ -134,6 +221,20 @@ void TQEDBurgerShort<FImpl, Field, VType>::setup(void)
     {
         HADRONS_ERROR(Definition, "No photon props provided to module");
     }
+
+    if (par().shellSymmetries.empty())
+    {
+        HADRONS_ERROR(Definition, "No shell symmetries were provided");
+    }
+
+    for (auto symm : par().shellSymmetries)
+    {
+        if (symm == QEDBurgerShortPar::SymmetryMode::undef) // Do not remove if-statement braces: Macro expands to multiple lines
+        {
+            HADRONS_ERROR(Definition, "Encountered an undefined shell symmetry");
+        }
+    }
+
     // Contraction temporaries
     envTmp(FFT,                     "fft",           1,                 env().getGrid());
     envTmp(std::vector<PhotonProp>, "Gxs",           1, numPhotonProps, env().getGrid());
@@ -146,277 +247,24 @@ void TQEDBurgerShort<FImpl, Field, VType>::setup(void)
     envTmp(Field,                   "shifted_noise", 1,                 envGetGrid(Field));
     // Output
     envCreate(HadronsSerializable, getName(), 1, 0);
-    envCreate(HadronsSerializable, getName()+"_full", 1, 0);
-    envCreate(HadronsSerializable, getName()+"_bias", 1, 0);
 }
 
 
-template<typename FImpl, typename Field, typename VType>
-std::vector<Coordinate> TQEDBurgerShort<FImpl, Field, VType>::generateShiftVectors(int rsqmin, int radius, QEDBurgerShortPar::SymmetryMode useLatticeSymmetry) const
+template <typename FImpl, typename Field, typename VType>
+std::unique_ptr<QEDBurgerShortSiteGenerator> TQEDBurgerShort<FImpl, Field, VType>::createSiteGenerator(QEDBurgerShortPar::SymmetryMode symmetry)
 {
-    int rsqmax = radius*radius;
-
-    // Generate list of sites
-    std::vector<Coordinate> shifts;
-    // Make this depend on Nd rather than hardcode to Nd=4..?
-    for (int r0=-radius; r0<=radius; ++r0)
-    for (int r1=-radius; r1<=radius; ++r1)
-    for (int r2=-radius; r2<=radius; ++r2)
-    for (int r3=-radius; r3<=radius; ++r3)
+    int Nd = env().getNd();
+    switch (symmetry)
     {
-        int rsq = r0*r0+r1*r1+r2*r2+r3*r3;
-
-        if ((rsqmin >= rsq) || (rsq > rsqmax)) continue;
-
-        Coordinate r(env().getNd());
-        r[0]=r0;
-        r[1]=r1;
-        r[2]=r2;
-        r[3]=r3;
-
-        switch (useLatticeSymmetry)
-        {
-            case QEDBurgerShortPar::SymmetryMode::none:
-            {
-                shifts.push_back(r);
-                break;
-            }
-            case QEDBurgerShortPar::SymmetryMode::parity:
-            {
-                if (this->isInUsedLatticeHalf(r))
-                    shifts.push_back(r);
-                break;
-            }
-            case QEDBurgerShortPar::SymmetryMode::orthant:
-            {
-                if (this->isInUsedLatticeOrthant(r))
-                    shifts.push_back(r);
-                break;
-            }
-            case QEDBurgerShortPar::SymmetryMode::octahedral:
-            {
-                if (this->isInUsedOctahedralSection(r))
-                    shifts.push_back(r);
-                break;
-            }
-            case QEDBurgerShortPar::SymmetryMode::octahedral3D:
-            {
-                if (this->isInUsedOctahedral3DSection(r))
-                    shifts.push_back(r);
-                break;
-            }
-        }
-    }
-    return shifts;
-}
-
-template<typename FImpl, typename Field, typename VType>
-double TQEDBurgerShort<FImpl, Field, VType>::symmetryFactor(const Coordinate& s, QEDBurgerShortPar::SymmetryMode useLatticeSymmetry) const
-{
-    switch (useLatticeSymmetry)
-    {
-        case QEDBurgerShortPar::SymmetryMode::none:
-        {
-            return 1;
-        }
-        case QEDBurgerShortPar::SymmetryMode::parity:
-        {
-            // Only returns 1 if all elements of 'site' are 0.
-            for (const auto d : s)
-            {
-                if (d != 0)
-                    return 2;
-            }
-            return 1;
-        }
-        case QEDBurgerShortPar::SymmetryMode::orthant:
-        {
-            // A site will have as many symmetric partners as elements that are not 0, since the vector is reflected
-            // in the coordinate axes.
-            double factor = 1;
-            for (int mu=0; mu < env().getNd(); ++mu)
-            {
-                if (s[mu]!=0)
-                    factor *= 2;
-            }
-            return factor;
-        }
-        case QEDBurgerShortPar::SymmetryMode::octahedral:
-        {
-            // This is a further reduction over the orthant case.
-            // First get the symmetry factor from dividing up a single orthant.
-            // The lines of symmetry are along lines of equal coefficients.
-            // Therefore, you pick up a duplicate when a site sits on one of these lines because it enters the definition
-            // of all q-orthants sharing that line of symmetry. This compounds factorially.
-            // e.g. a site at 0,0,0,1 has 3!=6 duplicates from the 6 permutations of (0,0,0) and 1 permutation of (1)
-            // e.g. a site at 0,0,1,1 has 2!*2! duplicates from the product of the 2 permutations of (0,0) and of (1,1)
-            // We can convert this into a symmetry factor by considering all 4! q-orthants and dividing out the duplicates.
-            double factor = 1.;
-            // Init factor as Nd!
-            {
-                for (int order=1; order <= env().getNd(); ++order) 
-                    factor *= order;
-            }
-            
-            // Now find the reduction from duplicates
-            {
-                std::vector<double> counts(env().getNd(), 1.);
-
-                // First count all unique pairs of equal coefficients
-                // e.g. this constructs [3,2,1,1] from [0,0,0,1]
-                for (int i=0;   i < env().getNd(); ++i)
-                for (int j=i+1; j < env().getNd(); ++j)
-                {
-                    if (abs(s[i]) == abs(s[j])) // Lines of constant coeffs don't care which orthant you live in
-                        counts[i] += 1.;
-                }
-
-                // Multiplying together the 'counts' recovers the factorials
-                // i.e. [0,0,0,1] -> [3,2,1,1] -> 3! x 1!
-                // i.e. [0,0,1,1] -> [2,1,2,1] -> 2! x 2!
-                for (int i=0; i < Nd; ++i)
-                    factor /= counts[i];
-            }
-
-            // Now find the reduction from using a single orthant
-            for (int mu=0; mu < Nd; ++mu)
-            {
-                if (s[mu]!=0)
-                    factor *= 2;
-            }
-            return factor;
-        }
-        case QEDBurgerShortPar::SymmetryMode::octahedral3D:
-        {
-            double factor = 1.;
-            // Init factor as Nd!
-            {
-                for (int order=1; order <= Nd-1; ++order) 
-                    factor *= order;
-            }
-            
-            // Now find the reduction from duplicates
-            {
-                std::vector<double> counts(Nd-1, 1.);
-
-                // First count all unique pairs of equal coefficients
-                // e.g. this constructs [3,2,1,1] from [0,0,0,1]
-                for (int i=0;   i < Nd-1; ++i)
-                for (int j=i+1; j < Nd-1; ++j)
-                {
-                    if (abs(s[i]) == abs(s[j])) // Lines of constant coeffs don't care which orthant you live in
-                        counts[i] += 1.;
-                }
-
-                // Multiplying together the 'counts' recovers the factorials
-                // i.e. [0,0,1] -> [2,1,1] -> 2! x 1!
-                // i.e. [0,1,1] -> [1,2,1] -> 1! x 2!
-                for (int i=0; i < Nd-1; ++i)
-                    factor /= counts[i];
-            }
-
-            // Now find the reduction from using a single orthant
-            for (int mu=0; mu < Nd; ++mu)
-            {
-                if (s[mu]!=0)
-                    factor *= 2;
-            }
-            return factor;
-        }
-        default:
-        {
-            HADRONS_ERROR(Argument, "invalid symmetry mode");
-        }
+        case (QEDBurgerShortPar::SymmetryMode::none):         return std::make_unique<QEDBurgerShortFullSiteGenerator>          (Nd);
+        case (QEDBurgerShortPar::SymmetryMode::parity):       return std::make_unique<QEDBurgerShortParitySymmetrySiteGenerator>(Nd);
+        case (QEDBurgerShortPar::SymmetryMode::orthant):      return std::make_unique<QEDBurgerShortOrthantSiteGenerator>       (Nd);
+        case (QEDBurgerShortPar::SymmetryMode::octahedral3D): return std::make_unique<QEDBurgerShortOctahedral3DSiteGenerator>  (Nd);
+        case (QEDBurgerShortPar::SymmetryMode::octahedral):   return std::make_unique<QEDBurgerShortOctahedral4DSiteGenerator>  (Nd);
+        default:                                              { HADRONS_ERROR(Argument, "Invalid symmetry mode"); }
     }
 }
 
-template<typename FImpl, typename Field, typename VType>
-bool TQEDBurgerShort<FImpl, Field, VType>::isInUsedLatticeHalf(const Coordinate& site) const
-{
-    // This is a function used to divide the lattice in half, where each half contains sites that are
-    // the Nd-reflection of the other half (e.g. (1, 2, -3, 4) and (-1, -2, 3, -4)).
-    // We will achieve this by defining a plane-of-separation that imposes this reflection, and then a further
-    // Nd-1 separation planes to sort sites that lie in the primary separation plane into either half.
-
-    // The separations are simply done by projecting the site onto the plane normal to see if it is
-    // 'above' or 'below' the plane.
-
-    // First do the primary plane-of-separation.
-    // We'll use the plane with a normal pointing into the orthant with a fully-positive signature to define
-    // the half of the lattice we will use.
-    // Any of the planes orthogonal to this one would also work.
-    int proj = 0;
-    for (int nu=0; nu < Nd; ++nu)
-        proj += site[nu];
-    
-    if (proj > 0)
-        return true;
-    else if (proj < 0)
-        return false;
-
-    // The above projection will be 0 if the site lies in the primary separation plane...
-    // so in this loop we will decide which half of the lattice these sites will count as being part of.
-    // Flipping a single axis of the primary plane-of-separation Nd-1 times guarantees disambiguation.
-    for (int mu=1; mu < Nd; ++mu)
-    {
-        int disamb_proj = proj - site[mu]*2;
-        
-        if (disamb_proj > 0)
-            return true;
-        else if (disamb_proj < 0)
-            return false;
-    }
-
-    // If a site gets this far, it is the origin.
-    // We will count it, but need to remember that it has a symmetry factor of 1, and not 2.
-    return true;
-}
-
-template<typename FImpl, typename Field, typename VType>
-bool TQEDBurgerShort<FImpl, Field, VType>::isInUsedLatticeOrthant(const Coordinate& site) const
-{
-    // Select the site if it is in (or on the boundary of) the orthant with
-    // a fully-positive signature.
-    // This is an arbitrary orthant to choose, but easy to write the cull condition for.
-    for (int mu=0; mu < Nd; ++mu)
-    {
-        if (site[mu] < 0)
-            return false;
-    }
-    return true;
-}
-
-template<typename FImpl, typename Field, typename VType>
-bool TQEDBurgerShort<FImpl, Field, VType>::isInUsedOctahedralSection(const Coordinate& site) const
-{
-    std::vector<int> desc_site;
-    for (int c : site)
-        desc_site.push_back(c);
-    desc_site.push_back(0); // Used to enforce that the site is in a single orthant (i.e. all coords >= 0)
-
-    // Select the Nd! subsection of the orthant.
-    // This is defined by (in 4D), any rearrangement of x >= y >= z >= t, which in 4D gives 4! = 24 subsections.
-    for (int mu=0; mu < env().getNd(); ++mu)
-        if (desc_site[mu] < desc_site[mu+1])
-            return false;
-    return true;
-}
-
-template<typename FImpl, typename Field, typename VType>
-bool TQEDBurgerShort<FImpl, Field, VType>::isInUsedOctahedral3DSection(const Coordinate& site) const
-{
-    std::vector<int> desc_site;
-    for (int site_i=0; site_i < Nd-1; ++site_i)
-        desc_site.push_back(site[site_i]);
-    desc_site.push_back(0); // Used to enforce that the site is in a single orthant (i.e. all coords >= 0)
-
-    // Select the Nd! subsection of the orthant.
-    // This is defined by (in 3D), any rearrangement of x >= y >= z, which in 3D gives 3! = 6 subsections.
-    for (int mu=0; mu < env().getNd()-1; ++mu)
-        if (desc_site[mu] < desc_site[mu+1])
-            return false;
-    return site[env().getNd()-1] >= 0;
-}
 
 template <typename FImpl, typename Field, typename VType>
 void TQEDBurgerShort<FImpl, Field, VType>::fastBurger(const PropagatorField& left, const PropagatorField& right, const typename PhotonProp::scalar_object& pSite, LatticeComplexD& out) const
@@ -540,11 +388,11 @@ void TQEDBurgerShort<FImpl, Field, VType>::execute(void)
         noises = envGet(std::vector<Field*>, par().sources);
 
     // Get other parameters
-    std::vector<int> radii;
-    for (int i=0; i <= par().radius; ++i)
-        radii.push_back(i);
-    int rsqmin = -1;
+    std::vector<size_t> square_radii;
+    for (size_t i=0; i <= par().rSq; ++i)
+        square_radii.push_back(i);
     int Nsrc   = noises.size();
+    int Nd     = env().getNd();
 
     // ************************* //
     // CONTRACTION ROUTINE START //
@@ -554,25 +402,25 @@ void TQEDBurgerShort<FImpl, Field, VType>::execute(void)
     LOG(Message) << "Generating and contracting propagators..." << std::endl;
     
     std::vector<std::string> summary_messages;
-    std::vector<std::vector<std::vector<RealD>>> burgers(numPhotonProps);
-    std::vector<std::vector<std::vector<RealD>>> burgers_full(numPhotonProps);
-    std::vector<std::vector<std::vector<RealD>>> burgers_bias(numPhotonProps);
+    std::vector<Result> burgers(numPhotonProps * square_radii.size());
     std::vector<std::vector<RealD>> burger_buffers(numPhotonProps, std::vector<RealD>(Nsrc, 0.0));
     std::vector<std::vector<RealD>> burger_full_buffers(numPhotonProps, std::vector<RealD>(Nsrc, 0.0));
     std::vector<std::vector<RealD>> burger_bias_buffers(numPhotonProps, std::vector<RealD>(Nsrc, 0.0));
     startTimer("Total Contraction Time");
-    for (auto radius : radii)
+    for (auto square_radius : square_radii)
     {   
-        int rsqmax = radius*radius;
+        // Use the symmetry for this rSq (or the final defined symmetry if fewer symmetries are given)
+        QEDBurgerShortPar::SymmetryMode symmetry_name = par().shellSymmetries[std::min(square_radius, par().shellSymmetries.size()-1)];
+        auto site_generator = createSiteGenerator(symmetry_name);
 
-        const auto shifts = this->generateShiftVectors(rsqmin, radius, par().useLatticeSymmetry);
-
-        LOG(Message) << "Generating propagators for " << shifts.size() << " shifts inside shell from r^2=" << rsqmin << " to (and including) r^2=" << rsqmax << std::endl;
+        const auto shifts = site_generator->culledDiscreteRadialShell(square_radius);
+        LOG(Message) << "Generating propagators for " << shifts.size() << " shifts on shell r^2=" << square_radius << std::endl;
+        
         // Iterate over sites
         for (int site_i=0; site_i < shifts.size(); ++site_i)
         {
             const auto& r          = shifts[site_i];
-            double symmetry_factor = this->symmetryFactor(r, par().useLatticeSymmetry);
+            double symmetry_factor = site_generator->symmetryFactor(r);
 
             // ***************************************************************************************** //
             // To estimate the burger diagram, we average over traces computed from pairs of propagators
@@ -693,9 +541,16 @@ void TQEDBurgerShort<FImpl, Field, VType>::execute(void)
         // This leaves us with (Nsrc^2 - Nsrc) traces we have computed and need to normalise for.
         for (int photon_prop_idx=0; photon_prop_idx < numPhotonProps; ++photon_prop_idx)
         {
-            burgers     [photon_prop_idx].push_back({});
-            burgers_full[photon_prop_idx].push_back({});
-            burgers_bias[photon_prop_idx].push_back({});
+            Result& result      = burgers     [square_radius*numPhotonProps + photon_prop_idx];
+            
+            result.rSq      = square_radius;
+            result.symmetry = symmetry_name;
+            result.photon   = par().photonProps[photon_prop_idx];
+
+            result.burger.resize(Nsrc);
+            result.full  .resize(Nsrc);
+            result.bias  .resize(Nsrc);
+
             for (int hit_i=0; hit_i < Nsrc; ++hit_i)
             {
                 int n_hits = hit_i + 1;
@@ -704,14 +559,15 @@ void TQEDBurgerShort<FImpl, Field, VType>::execute(void)
             
                 // Handle outputs
                 std::stringstream summary_message;
-                summary_message << "burger[radius=" << std::to_string(radius) + ", hits=" << n_hits << "] = " << std::setprecision(15) << normed_burger;
+                summary_message << "burger[radius^2=" << std::to_string(square_radius) + ", hits=" << n_hits << "] = " << std::setprecision(15) << normed_burger;
                 summary_messages.push_back(summary_message.str());
-                burgers     [photon_prop_idx].back().push_back(normed_burger);
-                burgers_full[photon_prop_idx].back().push_back(burger_full_buffers[photon_prop_idx][hit_i]);
-                burgers_bias[photon_prop_idx].back().push_back(burger_bias_buffers[photon_prop_idx][hit_i]);
+                
+                result.burger[hit_i] = normed_burger;
+                result.full  [hit_i] = burger_full_buffers[photon_prop_idx][hit_i];
+                result.bias  [hit_i] = burger_bias_buffers[photon_prop_idx][hit_i];
             }
         }
-        rsqmin = radius*radius;
+
     }
     stopTimer("Total Contraction Time");
 
@@ -721,12 +577,6 @@ void TQEDBurgerShort<FImpl, Field, VType>::execute(void)
     saveResult(par().output, "burgershort", burgers);
     auto& out = envGet(HadronsSerializable, getName());
     out = burgers;
-
-    auto& out_full = envGet(HadronsSerializable, getName()+"_full");
-    out_full = burgers_full;
-
-    auto& out_bias = envGet(HadronsSerializable, getName()+"_bias");
-    out_bias = burgers_bias;
 }
 
 END_MODULE_NAMESPACE

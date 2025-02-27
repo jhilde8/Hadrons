@@ -34,7 +34,7 @@ public:
     GRID_SERIALIZABLE_CLASS_MEMBERS(QEDBurgerLongPar,
                                     std::string, q,
                                     std::string, photonProp,
-                                    int,         radius,
+                                    int,         rSq,
                                     std::string, output);
 };
 
@@ -109,7 +109,7 @@ void TQEDBurgerLong<FImpl, VType>::setup(void)
     envTmp(PhotonProp,     "em_buffer",      1, env().getGrid());
     envTmp(LatticeComplex, "burger_lattice", 1, env().getGrid());
     envCreate(HadronsSerializable, getName(), 1, 0);
-    if (par().radius >= 0)
+    if (par().rSq >= 0)
     {
         envTmp(LatticeInteger, "coord_buffer",     1, env().getGrid());
         envTmp(LatticeInteger, "radial_dist_sq",   1, env().getGrid());
@@ -151,7 +151,7 @@ void TQEDBurgerLong<FImpl, VType>::execute(void)
     // If a non-negative radius was specified, cut out any sites within that radius
     // around the origin from the final result.
     RealD burger;
-    if (par().radius >= 0)
+    if (par().rSq >= 0)
     {
         // First, compute the distance from the origin for each lattice site.
         // To do this, replace the coordinates of sites larger than half the
@@ -173,7 +173,7 @@ void TQEDBurgerLong<FImpl, VType>::execute(void)
         // Perform the lattice sum, ignoring all sites within the specified radius.
         envGetTmp(LatticeComplex, tmp_cbuffer);
         tmp_cbuffer = ComplexD(0.0, 0.0);
-        burger      = toReal(sum(where(radial_dist_sq  > static_cast<Integer>(par().radius*par().radius),burger_lattice,tmp_cbuffer)));
+        burger      = toReal(sum(where(radial_dist_sq  > static_cast<Integer>(par().rSq),burger_lattice,tmp_cbuffer)));
     }
     else
     {
