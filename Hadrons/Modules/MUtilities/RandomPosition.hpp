@@ -32,8 +32,6 @@ public:
     virtual std::vector<std::string> getOutput(void);
     // setup
     virtual void setup(void);
-    // random uint
-    uint32_t randInt(int max);
     // execution
     virtual void execute(void);
 };
