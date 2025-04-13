@@ -42,6 +42,7 @@ nobase_libHadrons_a_HEADERS = \
 	Modules.hpp               \
 	ModuleFactory.hpp         \
 	NamedTensor.hpp           \
+	Random.hpp                \
 	Serialization.hpp         \
 	Solver.hpp                \
 	SqlEntry.hpp              \
