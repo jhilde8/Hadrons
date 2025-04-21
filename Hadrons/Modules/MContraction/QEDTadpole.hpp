@@ -90,12 +90,6 @@ template <typename FImpl, typename VType>
 void TQEDTadpole<FImpl, VType>::execute(void)
 {
     envGetTmp(FFT, fft);
-    std::vector<Gamma::Algebra> Gmu = {
-      Gamma::Algebra::GammaX,
-      Gamma::Algebra::GammaY,
-      Gamma::Algebra::GammaZ,
-      Gamma::Algebra::GammaT
-    };
 
     LOG(Message) << "Creating Tadpole field in the Feynman Gauge" << std::endl;
 
@@ -118,10 +112,15 @@ void TQEDTadpole<FImpl, VType>::execute(void)
     EmField& out = envGet(EmField, getName());
     for (int mu=0; mu<4; mu++)
     {
+        LOG(Message) << "Convolution in direction " << mu << std::endl;
         // Convolve with photon propagator by multiplying in momentum-space
+        startTimer("FFT");
         fft.FFT_all_dim(tmpcomplex2, *q[mu], FFT::forward);
+        stopTimer("FFT");
         tmpcomplex = tmpcomplex2 * photon_prop;
+        startTimer("FFT");
         fft.FFT_all_dim(tmpcomplex2,tmpcomplex,FFT::backward);
+        stopTimer("FFT");
         tmpcomplex = ci*tmpcomplex2;
 
         pokeLorentz(out, tmpcomplex, mu);
