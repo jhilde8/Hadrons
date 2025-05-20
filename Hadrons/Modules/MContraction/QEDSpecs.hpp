@@ -19,10 +19,11 @@ BEGIN_HADRONS_NAMESPACE
             /   \            /   \
            |     |~~~~~~~~~~|     |
             \___/   photon   \___/
-            loop1            loop2
+              q               loop
 
- Tr[q1 * Gamma_{mu}](x, x) * G^{mu,nu}(x, y) * Tr[q2 * Gamma_{nu}](y, y) 
-
+ i Tr[q * Gamma_{mu}](x, x) * G^{mu,nu}(x, y) * i Tr[loop * Gamma_{nu}](y, y) 
+ \__________________________________________/
+                    Tadpole
 */
 
 
@@ -32,9 +33,8 @@ class QEDSpecsPar: Serializable
 {
 public:
     GRID_SERIALIZABLE_CLASS_MEMBERS(QEDSpecsPar,
-                                    std::string, q1,
-                                    std::string, q2,
-                                    std::string, photonProp,
+                                    std::string, tadpole,
+                                    std::string, loop,
                                     std::string, output)
 };
 
@@ -46,6 +46,7 @@ public:
     FERM_TYPE_ALIASES(FImpl,);
 
     typedef TEmFieldGenerator<VType> EmGen;
+    typedef typename EmGen::GaugeField  EmField;
     typedef typename EmGen::ScalarField PhotonProp;
 
     // constructor
@@ -77,7 +78,7 @@ TQEDSpecs<FImpl, VType>::TQEDSpecs(const std::string name)
 template <typename FImpl, typename VType>
 std::vector<std::string> TQEDSpecs<FImpl, VType>::getInput(void)
 {
-    std::vector<std::string> in = {par().q1, par().q2, par().photonProp};
+    std::vector<std::string> in = {par().tadpole, par().loop};
     
     return in;
 }
@@ -105,11 +106,8 @@ std::vector<std::string> TQEDSpecs<FImpl, VType>::getOutputFiles(void)
 template <typename FImpl, typename VType>
 void TQEDSpecs<FImpl, VType>::setup(void)
 {
-    envTmp(FFT,            "fft",         1, env().getGrid());
-    envTmp(LatticeComplex, "tmpcomplex",  1, envGetGrid(FermionField));
-    envTmp(LatticeComplex, "tmpcomplex2", 1, envGetGrid(FermionField));
-    envTmp(LatticeReal,    "tmpreal",     1, envGetGrid(FermionField));
-    envTmp(LatticeReal,    "tmpreal2",    1, envGetGrid(FermionField));
+    envTmp(LatticeComplex, "tadpole_mu", 1, envGetGrid(ComplexField));
+    envTmp(LatticeComplex, "looptrace",  1, envGetGrid(ComplexField));
     envCreate(HadronsSerializable, getName(), 1, 0);
 }
 
@@ -117,52 +115,34 @@ void TQEDSpecs<FImpl, VType>::setup(void)
 template <typename FImpl, typename VType>
 void TQEDSpecs<FImpl, VType>::execute(void)
 {
-    envGetTmp(FFT, fft);
-    std::vector<Gamma> Gmu = {
+
+    // Fetch env variables
+    LOG(Message) << "Starting Specs contraction using tadpole field '" << par().tadpole << "'" << std::endl;
+    const EmField&         tadpole = envGet(EmField,         par().tadpole);
+    const PropagatorField& loop    = envGet(PropagatorField, par().loop);
+    envGetTmp(LatticeComplex, tadpole_mu);
+    envGetTmp(LatticeComplex, looptrace);
+
+    ComplexD result = 0;             // Output variable.
+    std::vector<Gamma> Gmu = {       // Utility variable for indexing Gamma_mu
       Gamma(Gamma::Algebra::GammaX),
       Gamma(Gamma::Algebra::GammaY),
       Gamma(Gamma::Algebra::GammaZ),
       Gamma(Gamma::Algebra::GammaT)
     };
 
-    LOG(Message) << "Starting Specs contraction in Feynman Gauge" << std::endl;
-
-    // Get momentum-space photon
-    std::cout << "Using photon propagator '" << par().photonProp << "'" << std::endl;
-    const PhotonProp& photon_prop = envGet(PhotonProp, par().photonProp);
-
-    // Fetch env variables
-    const PropagatorField& q1 = envGet(PropagatorField, par().q1);
-    const PropagatorField& q2 = envGet(PropagatorField, par().q2);
-    envGetTmp(LatticeComplex, tmpcomplex);
-    envGetTmp(LatticeComplex, tmpcomplex2);
-    envGetTmp(LatticeReal, tmpreal);
-    envGetTmp(LatticeReal, tmpreal2);
-
-    // Output variable
-    RealD result = 0;
-
-    // Feynman gauge: photon propagator is delta^{mu, nu}/k^2.
-    // Therefore we only need to compute cases where mu=nu.
+    // Perform the Lorentz index contraction between the
+    // tadpole field and the EM current insertion on the loop.
     for (int mu=0; mu<env().getNd(); mu++)
     {
-      // Contract quark loop 1
-      tmpcomplex = trace(q1*Gmu[mu]);
-
-      // Convolve with photon propagator by multiplying in momentum-space
-      fft.FFT_all_dim(tmpcomplex2, tmpcomplex, FFT::forward);
-      tmpcomplex = tmpcomplex2 * photon_prop;
-      fft.FFT_all_dim(tmpcomplex2,tmpcomplex,FFT::backward);
-      
-      tmpreal = toReal(imag(tmpcomplex2));
-
-      // Contract loop 2
-      tmpcomplex = trace(q2*Gmu[mu]);
-      tmpreal2   = toReal(imag(tmpcomplex));
-
-      // - to account for implicit i^2
-      result += -sum(tmpreal * tmpreal2);
+      looptrace = trace(loop*Gmu[mu]);
+      peekLorentz(tadpole_mu, tadpole, mu);
+      result += sum(tadpole_mu * looptrace);
     }
+    // The tadpole is assumed to already have the factor i from the
+    // EM current insertion baked in. This i comes from the current
+    // insertion on `loop`.
+    result *= ComplexD(0.0,1.0);
 
     LOG(Message) << "specs: " << result << std::endl;
 
