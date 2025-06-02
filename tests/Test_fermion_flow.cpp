@@ -87,12 +87,13 @@ int main(int argc, char *argv[])
     // gradient flow on propagator ///////////////////////////////////////////
     MGradientFlow::WilsonFermionFlow::Par wfPar;
     wfPar.gauge = "gauge";
-    wfPar.steps = 10;                     // total number of evolution steps to perform
-    wfPar.step_size = 0.01;               // size of one step in flow time/a^2
-    wfPar.meas_interval = 10;              // interval of steps at which to measure observables
-    wfPar.props = qName;                  // provide a list of propagators to be flowed
-    wfPar.bc = -1;                        // set boundary conditions to anti-periodic in time (bc = 1 will keep periodic)
-    //wfPar.output = "GaugeFlow";         // option to output gauge flow data separately
+    wfPar.steps = 10;                        // total number of evolution steps to perform
+    wfPar.step_size = 0.01;                  // size of one step in flow time/a^2
+    wfPar.meas_interval = 10;                // interval of steps at which to measure observables
+    wfPar.props = qName;                     // provide a list of propagators to be flowed
+    //wfPar.outPropStems = {"flowedquark1"}; // (optional) provide a list of stems to assign the output propagators + "_tXXX" flow time value
+    wfPar.bc = -1;                           // set boundary conditions to anti-periodic in time (bc = 1 will keep periodic)
+    //wfPar.output = "GaugeFlow";            // option to output gauge flow data separately
     application.createModule<MGradientFlow::WilsonFermionFlow>("FermionFlow",wfPar);
     // ///////////////////////////////////////////////////////////////////////
     
