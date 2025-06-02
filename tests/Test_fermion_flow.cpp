@@ -91,7 +91,7 @@ int main(int argc, char *argv[])
     wfPar.step_size = 0.01;                  // size of one step in flow time/a^2
     wfPar.meas_interval = 10;                // interval of steps at which to measure observables
     wfPar.props = qName;                     // provide a list of propagators to be flowed
-    //wfPar.outPropStems = {"flowedquark1"}; // (optional) provide a list of stems to assign the output propagators + "_tXXX" flow time value
+    //wfPar.outProps = {"flowedquark1"};     // (optional) provide a list of names for the output propagators
     wfPar.bc = -1;                           // set boundary conditions to anti-periodic in time (bc = 1 will keep periodic)
     //wfPar.output = "GaugeFlow";            // option to output gauge flow data separately
     application.createModule<MGradientFlow::WilsonFermionFlow>("FermionFlow",wfPar);

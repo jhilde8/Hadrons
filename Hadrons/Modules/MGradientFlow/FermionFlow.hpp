@@ -47,7 +47,7 @@ public:
     GRID_SERIALIZABLE_CLASS_MEMBERS(FermionFlowPar,
                                     std::string, output,
                                     std::vector<std::string>, props,
-                                    std::vector<std::string>, outPropStems,
+                                    std::vector<std::string>, outProps,
                                     std::string, gauge,
                                     int, bc,
                                     int, steps,
@@ -124,13 +124,13 @@ std::vector<std::string> TFermionFlow<FImpl,GImpl,FlowAction>::getOutput(void)
         if ((i % par().meas_interval == 0) || (i == par().steps)) {
             double ft = par().step_size * i;
             std::stringstream ftt; ftt << std::fixed << std::setprecision(2) << ft;
-            if (par().outPropStems.empty()) {
+            if (par().outProps.empty()) {
                 for (std::string q : par().props) {
                     out.push_back(q+"_t"+ftt.str());
                 }
             } else {
-                for (std::string q : par().outPropStems) {
-                    out.push_back(q+"_t"+ftt.str());
+                for (std::string q : par().outProps) {
+                    out.push_back(q);
                 }
             }
         }
@@ -156,13 +156,13 @@ void TFermionFlow<FImpl,GImpl,FlowAction>::setup(void)
         if (( i % par().meas_interval == 0) || (i == par().steps)) {
             double ft = par().step_size * i;
             std::stringstream ftt; ftt << std::fixed << std::setprecision(2) << ft;
-            if (par().outPropStems.empty()) {
+            if (par().outProps.empty()) {
                 for (std::string q : par().props) {
                     envCreateLat(PropagatorField, q+"_t"+ftt.str());
                 }
             } else {
-                for (std::string q : par().outPropStems) {
-                    envCreateLat(PropagatorField, q+"_t"+ftt.str());
+                for (std::string q : par().outProps) {
+                    envCreateLat(PropagatorField, q);
                 }
             }
         }
@@ -191,8 +191,8 @@ void TFermionFlow<FImpl,GImpl,FlowAction>::execute(void)
                  << "with ppp" << ((par().bc < 0) ? "a" : "p") << " boundary conditions and "
                  << par().steps << " step" << ((par().steps > 1) ? "s." : ".") << std::endl;
 
-    if ((par().outPropStems.size() != par().props.size()) && !par().outPropStems.empty()) {
-        HADRONS_ERROR(Argument, "outPropStems should either be empty or be the same size as props");
+    if ((par().outProps.size() != par().props.size()) && !par().outProps.empty()) {
+        HADRONS_ERROR(Argument, "outProps should either be empty or be the same size as props");
     }
 
     // set boundary conditions for gauge field
@@ -238,12 +238,12 @@ void TFermionFlow<FImpl,GImpl,FlowAction>::execute(void)
             stopTimer("propagator "+q+" flow time "+ftt.str());
             if (( step % par().meas_interval == 0) || (step == par().steps)) {
                 std::string qo;
-                if (par().outPropStems.empty()) {
-                    qo = q;
+                if (par().outProps.empty()) {
+                    qo = q+"_t"+ftt.str();
                 } else {
-                    qo = par().outPropStems[i];
+                    qo = par().outProps[i];
                 }
-                auto &qji = envGet(PropagatorField, qo+"_t"+ftt.str());
+                auto &qji = envGet(PropagatorField, qo);
                 qji = qjwf;
             }
         }
