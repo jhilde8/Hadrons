@@ -11,6 +11,19 @@ BEGIN_HADRONS_NAMESPACE
 /******************************************************************************
  *                               QEDTadpole                                   *
  ******************************************************************************/
+
+/*
+ Electromagnetic "Tadpole" loop subdiagram
+             ___            
+            /   \           
+           |     |~~~~~~~~~~
+            \___/   photon   
+              q               
+
+ i Tr[q * Gamma_{mu}](x, x) * G^{mu,nu}(x, y)
+ \__________________________________________/
+                    Tadpole
+*/
 BEGIN_MODULE_NAMESPACE(MContraction)
 
 class QEDTadpolePar: Serializable
@@ -110,7 +123,7 @@ void TQEDTadpole<FImpl, VType>::execute(void)
     // Therefore we only need to compute cases where mu=nu.
     Complex ci(0.0,1.0);
     EmField& out = envGet(EmField, getName());
-    for (int mu=0; mu<4; mu++)
+    for (int mu=0; mu<env().getNd(); mu++)
     {
         LOG(Message) << "Convolution in direction " << mu << std::endl;
         // Convolve with photon propagator by multiplying in momentum-space

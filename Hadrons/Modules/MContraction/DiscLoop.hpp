@@ -65,10 +65,11 @@ public:
                                     std::string,              q_loop,
                                     std::string,              gammas,
                                     std::vector<std::string>, mom,
+                                    bool,                     trace,
                                     std::string,              output);
 };
 
-template <typename FImpl, bool doTrace>
+template <typename FImpl>
 class TDiscLoop: public Module<DiscLoopPar>
 {
 public:
@@ -101,39 +102,38 @@ private:
     std::vector<std::vector<int>> mom_;
 };
 
-MODULE_REGISTER_TMP(DiscLoop,      ARG(TDiscLoop<FIMPL, false>), MContraction);
-MODULE_REGISTER_TMP(DiscLoopTrace, ARG(TDiscLoop<FIMPL, true >), MContraction);
+MODULE_REGISTER_TMP(DiscLoop, TDiscLoop<FIMPL>, MContraction);
 
 /******************************************************************************
  *                       TDiscLoop implementation                             *
  ******************************************************************************/
 // constructor /////////////////////////////////////////////////////////////////
-template <typename FImpl, bool doTrace>
-TDiscLoop<FImpl, doTrace>::TDiscLoop(const std::string name)
+template <typename FImpl>
+TDiscLoop<FImpl>::TDiscLoop(const std::string name)
 : Module<DiscLoopPar>(name)
 {}
 
 // dependencies/products ///////////////////////////////////////////////////////
-template <typename FImpl, bool doTrace>
-std::vector<std::string> TDiscLoop<FImpl, doTrace>::getInput(void)
+template <typename FImpl>
+std::vector<std::string> TDiscLoop<FImpl>::getInput(void)
 {
     std::vector<std::string> in = {par().q_loop};
     
     return in;
 }
 
-template <typename FImpl, bool doTrace>
-std::vector<std::string> TDiscLoop<FImpl, doTrace>::getOutput(void)
+template <typename FImpl>
+std::vector<std::string> TDiscLoop<FImpl>::getOutput(void)
 {
     std::vector<std::string> out = {getName()};
-    if constexpr(doTrace)
+    if (par().trace)
         out.push_back(getName() + "_trace");
     
     return out;
 }
 
-template <typename FImpl, bool doTrace>
-std::vector<std::string> TDiscLoop<FImpl, doTrace>::getOutputFiles(void)
+template <typename FImpl>
+std::vector<std::string> TDiscLoop<FImpl>::getOutputFiles(void)
 {
     std::vector<std::string> output;
     
@@ -144,8 +144,8 @@ std::vector<std::string> TDiscLoop<FImpl, doTrace>::getOutputFiles(void)
 }
 
 // setup ///////////////////////////////////////////////////////////////////////
-template <typename FImpl, bool doTrace>
-void TDiscLoop<FImpl, doTrace>::setup(void)
+template <typename FImpl>
+void TDiscLoop<FImpl>::setup(void)
 {
     const unsigned int nd = env().getDim().size();
     mom_.resize(par().mom.size());
@@ -167,7 +167,7 @@ void TDiscLoop<FImpl, doTrace>::setup(void)
     envTmpLat(LatticeComplex,  "ph");
     envCreate(HadronsSerializable, getName(), 1, 0);
 
-    if constexpr (doTrace)
+    if (par().trace)
     {
         std::vector<Gamma::Algebra> gammaList;
         parseGammaString(gammaList);
@@ -176,8 +176,8 @@ void TDiscLoop<FImpl, doTrace>::setup(void)
     }
 }
 
-template <typename FImpl, bool doTrace>
-void TDiscLoop<FImpl, doTrace>::parseGammaString(std::vector<Gamma::Algebra> &gammaList)
+template <typename FImpl>
+void TDiscLoop<FImpl>::parseGammaString(std::vector<Gamma::Algebra> &gammaList)
 {
     gammaList.clear();
     // Determine gamma matrices to insert at source/sink.
@@ -197,8 +197,8 @@ void TDiscLoop<FImpl, doTrace>::parseGammaString(std::vector<Gamma::Algebra> &ga
 }
 
 // execution ///////////////////////////////////////////////////////////////////
-template <typename FImpl, bool doTrace>
-void TDiscLoop<FImpl, doTrace>::execute(void)
+template <typename FImpl>
+void TDiscLoop<FImpl>::execute(void)
 {
     LOG(Message) << "Computing disconnected loop contraction '" << getName() 
                  << "' using '" << par().q_loop << "' with " << par().gammas 
@@ -250,7 +250,7 @@ void TDiscLoop<FImpl, doTrace>::execute(void)
             op = gamma*q_loop*ph;
 
             sliceSum(op,slicedOp[g][m],Tp);
-            if constexpr (doTrace)
+            if (par().trace)
             {
                 unsigned int flat_idx = m * ngam + g;
                 std::vector<ComplexField>& trace_fields = envGet(std::vector<ComplexField>, getName() + "_trace");
