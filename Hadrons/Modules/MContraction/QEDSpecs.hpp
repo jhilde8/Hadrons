@@ -135,9 +135,9 @@ void TQEDSpecs<FImpl, VType>::execute(void)
     // tadpole field and the EM current insertion on the loop.
     for (int mu=0; mu<env().getNd(); mu++)
     {
-      looptrace = trace(loop*Gmu[mu]);
-      peekLorentz(tadpole_mu, tadpole, mu);
-      result += sum(tadpole_mu * looptrace);
+      looptrace  = trace(loop*Gmu[mu]);
+      tadpole_mu = peekLorentz(tadpole, mu);
+      result += TensorRemove(sum(tadpole_mu * looptrace));
     }
     // The tadpole is assumed to already have the factor i from the
     // EM current insertion baked in. This i comes from the current
