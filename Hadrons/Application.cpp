@@ -188,16 +188,16 @@ void Application::run(void)
         auto nowLocal = *std::localtime(&now);
 
         oss << std::put_time(&nowLocal, "%Y%m%d-%H%M%S");
-        if (statDbAllRanks) 
+        if (getPar().database.statDbAllRanks) 
         {
-            statDbFilename = getPar().database.statDbBase + "-stat-" + oss.str() + "-rank" + std::to_string(env().getGrid()->thisRank()) + ".db";
+            statDbFilename = getPar().database.statDbBase + "-stat-" + oss.str() + "-rank" + std::to_string(env().getGrid()->ThisRank()) + ".db";
         } 
         else
         {
             statDbFilename = getPar().database.statDbBase + "-stat-" + oss.str() + ".db";
         }
         LOG(Message) << "Logging run statistics in '" << statDbFilename << "'" << std::endl;
-        if (statDbAllRanks or env().getGrid()->IsBoss())
+        if (getPar().database.statDbAllRanks or env().getGrid()->IsBoss())
         {
             statDb.setFilename(statDbFilename);
             statLogger.setPeriod(getPar().database.statDbPeriodMs);
@@ -241,7 +241,7 @@ void Application::run(void)
         vm().dumpModuleGraph(getPar().graphFile);
     }
     configLoop();
-    if (!getPar().database.statDbBase.empty() and (statDbAllRanks or env().getGrid()->IsBoss()))
+    if (!getPar().database.statDbBase.empty() and (getPar().database.statDbAllRanks or env().getGrid()->IsBoss()))
     {
         statLogger.stop();
     }
