@@ -44,7 +44,7 @@ void TRandomPosition::execute(void)
     for (int i=0; i < dims.size(); ++i)
     {
         uid(rng, tmp);
-        pos[i] = static_cast<int>(tmp) % dims[i];
+        pos[i] = static_cast<int>(tmp % static_cast<uint32_t>(dims[i]));
     }
 
     LOG(Message) << "Created random position vector " << pos << std::endl;
