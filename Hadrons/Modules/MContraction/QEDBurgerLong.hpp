@@ -127,14 +127,6 @@ void TQEDBurgerLong<FImpl, VType>::execute(void)
     const PropagatorField& q           = envGet(PropagatorField, par().q);
     const PhotonProp&      photon_prop = envGet(PhotonProp, par().photonProp);
 
-    Gamma Gmu[] = 
-    {
-        Gamma(Gamma::Algebra::GammaX),
-        Gamma(Gamma::Algebra::GammaY),
-        Gamma(Gamma::Algebra::GammaZ),
-        Gamma(Gamma::Algebra::GammaT),
-    };
-
     envGetTmp(PhotonProp, Gx);
     envGetTmp(FFT,     fft);
     fft.FFT_all_dim(Gx, photon_prop, FFT::backward);
@@ -146,7 +138,7 @@ void TQEDBurgerLong<FImpl, VType>::execute(void)
     envGetTmp(LatticeComplex, burger_lattice);
     burger_lattice = Zero();
     for (int mu=0; mu<Nd; ++mu)
-        burger_lattice += Gx*Burger(q, Gmu[mu], Gmu[mu], Gamma5);
+        burger_lattice += Gx*Burger(q, Gamma::gmu[mu], Gamma::gmu[mu], Gamma5);
     
     // If a non-negative radius was specified, cut out any sites within that radius
     // around the origin from the final result.

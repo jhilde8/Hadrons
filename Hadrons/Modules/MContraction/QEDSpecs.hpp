@@ -124,18 +124,12 @@ void TQEDSpecs<FImpl, VType>::execute(void)
     envGetTmp(LatticeComplex, looptrace);
 
     ComplexD result = 0;             // Output variable.
-    std::vector<Gamma> Gmu = {       // Utility variable for indexing Gamma_mu
-      Gamma(Gamma::Algebra::GammaX),
-      Gamma(Gamma::Algebra::GammaY),
-      Gamma(Gamma::Algebra::GammaZ),
-      Gamma(Gamma::Algebra::GammaT)
-    };
 
     // Perform the Lorentz index contraction between the
     // tadpole field and the EM current insertion on the loop.
     for (int mu=0; mu<env().getNd(); mu++)
     {
-      looptrace  = trace(loop*Gmu[mu]);
+      looptrace  = trace(loop*Gamma::gmu[mu]);
       tadpole_mu = peekLorentz(tadpole, mu);
       result += TensorRemove(sum(tadpole_mu * looptrace));
     }
