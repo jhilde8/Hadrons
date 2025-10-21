@@ -40,6 +40,7 @@ public:
 };
 
 MODULE_REGISTER_TMP(EmFieldFFT, TFFT<TEmFieldGenerator<vComplex>::GaugeField>, MUtilities);
+MODULE_REGISTER_TMP(FeynmanPropFFT, TFFT<TEmFieldGenerator<vComplex>::ScalarField>, MUtilities);
 
 /******************************************************************************
  *                           TFFT implementation                              *
