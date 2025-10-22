@@ -238,6 +238,14 @@ void TQEDBurgerShortPoint<FImpl, Field, VType>::execute(void)
 template <typename FImpl, typename Field, typename VType>
 void TQEDBurgerShortPoint<FImpl, Field, VType>::fastBurger(const PropagatorField& left, const PropagatorField& right, const typename PhotonProp::scalar_object& pSite, LatticeComplexD& out) const
 {
+    Gamma::Algebra Gmu[] = 
+    {
+        (Gamma::Algebra::GammaX),
+        (Gamma::Algebra::GammaY),
+        (Gamma::Algebra::GammaZ),
+        (Gamma::Algebra::GammaT),
+    };
+
     autoView(vleft,left,AcceleratorRead);
     autoView(vright,right,AcceleratorRead);
     autoView(wvout,out,AcceleratorWrite);
@@ -256,8 +264,8 @@ void TQEDBurgerShortPoint<FImpl, Field, VType>::fastBurger(const PropagatorField
         for (int mu=0; mu<Nd; ++mu)
         {
             LatticeComplexD::vector_object tmp = Zero();
-            const auto& gs1 = Gamma(Gamma::gmu[mu])*s1;
-            const auto& gs2 = Gamma(Gamma::gmu[mu])*s2;
+            const auto& gs1 = Gamma(Gmu[mu])*s1;
+            const auto& gs2 = Gamma(Gmu[mu])*s2;
             for(int si=0;si<Ns;si++)
             for(int sj=0;sj<Ns;sj++)
             for(int ci=0;ci<Nc;ci++)

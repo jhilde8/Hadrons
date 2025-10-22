@@ -115,6 +115,13 @@ void TQEDSpecs<FImpl, VType>::setup(void)
 template <typename FImpl, typename VType>
 void TQEDSpecs<FImpl, VType>::execute(void)
 {
+    Gamma::Algebra Gmu[] = 
+    {
+        (Gamma::Algebra::GammaX),
+        (Gamma::Algebra::GammaY),
+        (Gamma::Algebra::GammaZ),
+        (Gamma::Algebra::GammaT),
+    };
 
     // Fetch env variables
     LOG(Message) << "Starting Specs contraction using tadpole field '" << par().tadpole << "'" << std::endl;
@@ -129,7 +136,7 @@ void TQEDSpecs<FImpl, VType>::execute(void)
     // tadpole field and the EM current insertion on the loop.
     for (int mu=0; mu<env().getNd(); mu++)
     {
-      looptrace  = trace(loop*Gamma::gmu[mu]);
+      looptrace  = trace(loop*Gamma(Gmu[mu]));
       tadpole_mu = peekLorentz(tadpole, mu);
       result += TensorRemove(sum(tadpole_mu * looptrace));
     }

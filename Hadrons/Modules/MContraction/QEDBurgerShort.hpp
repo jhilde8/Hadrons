@@ -269,6 +269,14 @@ std::unique_ptr<QEDBurgerShortSiteGenerator> TQEDBurgerShort<FImpl, Field, VType
 template <typename FImpl, typename Field, typename VType>
 void TQEDBurgerShort<FImpl, Field, VType>::fastBurger(const PropagatorField& left, const PropagatorField& right, const typename PhotonProp::scalar_object& pSite, LatticeComplexD& out) const
 {
+    Gamma::Algebra Gmu[] = 
+    {
+        (Gamma::Algebra::GammaX),
+        (Gamma::Algebra::GammaY),
+        (Gamma::Algebra::GammaZ),
+        (Gamma::Algebra::GammaT),
+    };
+
     autoView(vleft,left,AcceleratorRead);
     autoView(vright,right,AcceleratorRead);
     autoView(wvout,out,AcceleratorWrite);
@@ -287,8 +295,8 @@ void TQEDBurgerShort<FImpl, Field, VType>::fastBurger(const PropagatorField& lef
         for (int mu=0; mu<Nd; ++mu)
         {
             LatticeComplexD::vector_object tmp = Zero();
-            const auto& gs1 = Gamma(Gamma::gmu[mu])*s1;
-            const auto& gs2 = Gamma(Gamma::gmu[mu])*s2;
+            const auto& gs1 = Gamma(Gmu[mu])*s1;
+            const auto& gs2 = Gamma(Gmu[mu])*s2;
             for(int si=0;si<Ns;si++)
             for(int sj=0;sj<Ns;sj++)
             for(int ci=0;ci<Nc;ci++)
@@ -328,7 +336,13 @@ void TQEDBurgerShort<FImpl, Field, VType>::execute(void)
     // *********** //
     // PREPARATION //
     // *********** //
-
+    Gamma::Algebra Gmu[] = 
+    {
+        (Gamma::Algebra::GammaX),
+        (Gamma::Algebra::GammaY),
+        (Gamma::Algebra::GammaZ),
+        (Gamma::Algebra::GammaT),
+    };
     Gamma g5 = Gamma(Gamma::Algebra::Gamma5);
 
     // Get temps
@@ -486,8 +500,8 @@ void TQEDBurgerShort<FImpl, Field, VType>::execute(void)
                         tmp_cbuffer = Zero();
                         for (int mu=0; mu<4; ++mu)
                         {
-                            tmp_cbuffer += localInnerProduct(shifted_noise,  closure(Gamma(Gamma::gmu[mu])*shifted_quark))
-                                         * localInnerProduct(*noises[hit_i], closure(Gamma(Gamma::gmu[mu])*(*qs[hit_i])));
+                            tmp_cbuffer += localInnerProduct(shifted_noise,  closure(Gamma(Gmu[mu])*shifted_quark))
+                                         * localInnerProduct(*noises[hit_i], closure(Gamma(Gmu[mu])*(*qs[hit_i])));
                         }
                         tmp_cbuffer *= pSite;
                     }
