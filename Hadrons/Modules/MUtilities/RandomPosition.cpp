@@ -39,11 +39,12 @@ void TRandomPosition::execute(void)
     auto &rng = rngSerialHadrons();
     
     std::vector<int> dims = env().getDim();
-    std::vector<uint32_t> pos(dims.size());
+    std::vector<int> pos(dims.size());
+    uint32_t tmp;
     for (int i=0; i < dims.size(); ++i)
     {
-        uid(rng, pos[i]);
-        pos[i] %= static_cast<unsigned int>(dims[i]);
+        uid(rng, tmp);
+        pos[i] = static_cast<int>(tmp % static_cast<uint32_t>(dims[i]));
     }
 
     LOG(Message) << "Created random position vector " << pos << std::endl;

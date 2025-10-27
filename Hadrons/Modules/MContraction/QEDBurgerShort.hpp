@@ -336,15 +336,14 @@ void TQEDBurgerShort<FImpl, Field, VType>::execute(void)
     // *********** //
     // PREPARATION //
     // *********** //
-
-    Gamma g5 = Gamma(Gamma::Algebra::Gamma5);
-    Gamma Gmu[] = 
+    Gamma::Algebra Gmu[] = 
     {
-        Gamma(Gamma::Algebra::GammaX),
-        Gamma(Gamma::Algebra::GammaY),
-        Gamma(Gamma::Algebra::GammaZ),
-        Gamma(Gamma::Algebra::GammaT),
+        (Gamma::Algebra::GammaX),
+        (Gamma::Algebra::GammaY),
+        (Gamma::Algebra::GammaZ),
+        (Gamma::Algebra::GammaT),
     };
+    Gamma g5 = Gamma(Gamma::Algebra::Gamma5);
 
     // Get temps
     envGetTmp(LatticeComplexD, tmp_cbuffer);

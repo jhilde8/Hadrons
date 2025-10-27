@@ -104,8 +104,6 @@ std::vector<std::string> TQEDBurgerLong<FImpl, VType>::getOutputFiles(void)
 template <typename FImpl, typename VType>
 void TQEDBurgerLong<FImpl, VType>::setup(void)
 {
-    envTmp(FFT,            "fft",            1, env().getGrid());
-    envTmp(PhotonProp,     "Gx",             1, env().getGrid());
     envTmp(PhotonProp,     "em_buffer",      1, env().getGrid());
     envTmp(LatticeComplex, "burger_lattice", 1, env().getGrid());
     envCreate(HadronsSerializable, getName(), 1, 0);
@@ -125,19 +123,8 @@ void TQEDBurgerLong<FImpl, VType>::execute(void)
     // Get env variables
     std::cout << "Using photon propagator '" << par().photonProp << "'" << std::endl;
     const PropagatorField& q           = envGet(PropagatorField, par().q);
-    const PhotonProp&      photon_prop = envGet(PhotonProp, par().photonProp);
+    const PhotonProp&      Gx          = envGet(PhotonProp, par().photonProp);
 
-    Gamma Gmu[] = 
-    {
-        Gamma(Gamma::Algebra::GammaX),
-        Gamma(Gamma::Algebra::GammaY),
-        Gamma(Gamma::Algebra::GammaZ),
-        Gamma(Gamma::Algebra::GammaT),
-    };
-
-    envGetTmp(PhotonProp, Gx);
-    envGetTmp(FFT,     fft);
-    fft.FFT_all_dim(Gx, photon_prop, FFT::backward);
     
     // Calculate the Burger in Feynman gauge
     // The Feynman gauge photon propagator is delta^{mu,nu}/k^2, so we only need
@@ -146,7 +133,7 @@ void TQEDBurgerLong<FImpl, VType>::execute(void)
     envGetTmp(LatticeComplex, burger_lattice);
     burger_lattice = Zero();
     for (int mu=0; mu<Nd; ++mu)
-        burger_lattice += Gx*Burger(q, Gmu[mu], Gmu[mu], Gamma5);
+        burger_lattice += Gx*Burger(q, Gamma::gmu[mu], Gamma::gmu[mu], Gamma5);
     
     // If a non-negative radius was specified, cut out any sites within that radius
     // around the origin from the final result.
