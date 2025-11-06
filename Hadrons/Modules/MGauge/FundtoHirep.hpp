@@ -94,7 +94,8 @@ std::vector<std::string> TFundtoHirep<Rep>::getOutput(void)
 template <typename Rep>
 void TFundtoHirep<Rep>::setup(void)
 {
-    envCreateLatNS(Rep::LatticeField, getName());
+    typedef typename Rep::LatticeField RepLatticeField;
+    envCreateLat(RepLatticeField, getName());
 }
 
 // execution ///////////////////////////////////////////////////////////////////
