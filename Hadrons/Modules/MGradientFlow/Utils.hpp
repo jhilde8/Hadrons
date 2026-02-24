@@ -34,6 +34,22 @@ BEGIN_HADRONS_NAMESPACE
 
 BEGIN_MODULE_NAMESPACE(MGradientFlow)
 
+class GaugeResult : Serializable
+{
+public:
+    GRID_SERIALIZABLE_CLASS_MEMBERS(GaugeResult,
+                                    std::vector<double>,    flowtime,
+                                    std::vector<double>,    plaquette,
+                                    std::vector<double>,    rectangle,
+                                    std::vector<double>,    clover,
+                                    std::vector<double>,    topocharge,
+                                    std::vector<double>,    action,
+                                    std::vector<ComplexD>,  polyakovX,
+                                    std::vector<ComplexD>,  polyakovY,
+                                    std::vector<ComplexD>,  polyakovZ,
+                                    std::vector<ComplexD>,  polyakovT);
+};
+
 // additional action(s) /////////////////////////////////////////////////////
 template <class GImpl>
 class ZeuthenGaugeAction {
@@ -50,6 +66,13 @@ public:
     virtual double S(const GaugeField &U) {
         return SG.S(U);
     };
+
+    virtual std::string LogParameters(){
+        std::stringstream sstream;
+        sstream << GridLogMessage << "["<<action_name() <<"] beta: " << beta << std::endl;
+        return sstream.str();
+    }
+
 
     virtual void deriv(const GaugeField &Umu, GaugeField &dSdU) {
                                                 //  beta = 3.0, cl = -1.0/12.0 -> Symanzik
@@ -87,58 +110,13 @@ public:
     };
 };
 
-// clover //////////////////////////////////////////////////////////////////////
-template <typename GImpl, typename ComplexField, typename GaugeLorentz, typename GaugeMat>
-void siteClover(ComplexField &Clov, const GaugeLorentz &U)
-{
-    GaugeMat Fmn(U.Grid()), Cmn(U.Grid()), scaledUnit(U.Grid()), Umu(U.Grid());
-    Clov = Zero();
-    for (int mu = 1; mu < Nd; mu++) {
-        for (int nu = 0; nu < mu; nu++) {
-            Umu = PeekIndex<LorentzIndex>(U, mu);
-            scaledUnit = (1.0/Nc) * (adj(Umu) * Umu);
-            WilsonLoops<GImpl>::FieldStrength(Fmn, U, mu, nu);
-            Cmn = Fmn - trace(Fmn) * scaledUnit;
-            Clov = Clov - trace(Cmn * Cmn);
-        }
-    }
-}
 
-template <typename GImpl, typename ComplexField, typename GaugeLorentz, typename GaugeMat>
-double avgClover(const GaugeLorentz &Umu) 
-{
-    ComplexField Clov(Umu.Grid());
-
-    siteClover<GImpl,ComplexField,GaugeLorentz,GaugeMat>(Clov, Umu);
-    auto Tc = sum(Clov);
-    auto c = TensorRemove(Tc);
-
-    double vol = Umu.Grid()->gSites();
-
-    return c.real() / vol;
-}
-
-// polyakov loop in mu direction  //////////////////////////////////////////////
-template <typename GImpl, typename GaugeField, typename GaugeLinkField>
-ComplexD avgPolyakovLoopMu(const GaugeField &Umu, int mu) { // assuming Nd=4
-    GaugeLinkField Ut(Umu.Grid()), P(Umu.Grid());
-    ComplexD out;
-
-    double vol = Umu.Grid()->gSites();
-
-    Ut = peekLorentz(Umu,mu);
-    P = Ut;
-    for (int t=1; t < Umu.Grid()->GlobalDimensions()[mu]; t++) {
-        P = GImpl::CovShiftForward(Ut,mu,P);
-    }
-    RealD norm = 1.0/(Nc*vol);
-    out = sum(trace(P))*norm;
-    return out;
-}
 
 // field evolution /////////////////////////////////////////////////////////////
-template <typename FlowAction>
+template <typename FlowAction, typename GImpl, typename FImpl>
 class Evolution {
+    FERM_TYPE_ALIASES(FImpl,);
+    typedef typename GImpl::GaugeLinkField GaugeLinkField;
     public:
         double epsilon, maxTau, taus;
         FlowAction SG;
@@ -151,8 +129,53 @@ class Evolution {
         Evolution(double c_plaq, double c_rect, double step, double mTau, double ts) : 
             SG(FlowAction(c_plaq, c_rect)), epsilon(step), maxTau(mTau), taus(ts) {};
 
+        // clover //////////////////////////////////////////////////////////////////////
+        void siteClover(ComplexField &Clov, const GaugeField &U)
+        {
+            GaugeLinkField Fmn(U.Grid()), Cmn(U.Grid()), scaledUnit(U.Grid()), Umu(U.Grid());
+            Clov = Zero();
+            for (int mu = 1; mu < Nd; mu++) {
+                for (int nu = 0; nu < mu; nu++) {
+                    Umu = PeekIndex<LorentzIndex>(U, mu);
+                    scaledUnit = (1.0/Nc) * (adj(Umu) * Umu);
+                    WilsonLoops<GImpl>::FieldStrength(Fmn, U, mu, nu);
+                    Cmn = Fmn - trace(Fmn) * scaledUnit;
+                    Clov = Clov - trace(Cmn * Cmn);
+                }
+            }
+        }
 
-        template <typename GImpl,typename GaugeField>
+        double avgClover(const GaugeField &Umu) 
+        {
+            ComplexField Clov(Umu.Grid());
+
+            siteClover(Clov, Umu);
+            auto Tc = sum(Clov);
+            auto c = TensorRemove(Tc);
+
+            double vol = Umu.Grid()->gSites();
+
+            return c.real() / vol;
+        }
+
+        // polyakov loop in mu direction  //////////////////////////////////////////////
+        ComplexD avgPolyakovLoopMu(const GaugeField &Umu, int mu) { // assuming Nd=4
+            GaugeLinkField Ut(Umu.Grid()), P(Umu.Grid());
+            ComplexD out;
+
+            double vol = Umu.Grid()->gSites();
+
+            Ut = peekLorentz(Umu,mu);
+            P = Ut;
+            for (int t=1; t < Umu.Grid()->GlobalDimensions()[mu]; t++) {
+                P = GImpl::CovShiftForward(Ut,mu,P);
+            }
+            RealD norm = 1.0/(Nc*vol);
+            out = sum(trace(P))*norm;
+            return out;
+        }
+
+
         std::vector<GaugeField> gauge_RK(GaugeField U) {
 
             std::vector<GaugeField> Wi;
@@ -180,7 +203,6 @@ class Evolution {
             return Wi;
         };
 
-        template <typename GImpl,typename GaugeField>
         std::vector<GaugeField> gauge_RK_adaptive(GaugeField U) {
 
             std::vector<GaugeField> Wi;
@@ -218,7 +240,6 @@ class Evolution {
             return Wi;
         };
 
-        template <typename GaugeField>
         void adaptive_eps(const GaugeField& U, const GaugeField& Uprime) {
             // Compute distance as norm^2 of the difference
             GaugeField diffU = U - Uprime;
@@ -229,20 +250,18 @@ class Evolution {
             epsilon = epsilon*0.95*std::pow(1e-4/diff,1./3.);
         };
 
-        template <typename GImpl,typename GaugeField>
         void evolve_gauge(GaugeField &U) {
-            std::vector<GaugeField> Wi = gauge_RK<GImpl,GaugeField>(U);
+            std::vector<GaugeField> Wi = gauge_RK(U);
             U = Wi[3];
         };
-
-        template <typename GImpl,typename GaugeField>
+        
         void evolve_gauge_adaptive(GaugeField &U) {
-            std::vector<GaugeField> Wi = gauge_RK_adaptive<GImpl,GaugeField>(U);
+            std::vector<GaugeField> Wi = gauge_RK_adaptive(U);
             adaptive_eps(Wi[3],Wi[4]);
             U = Wi[3];
         };
 
-        template <typename GaugeField,typename GaugeLinkField>
+        
         void gauge_apply_boundary(GaugeField &Umu, std::vector<int> bc) {
             GaugeLinkField tmp1(Umu.Grid());
             GaugeLinkField tmp2(Umu.Grid());
@@ -260,12 +279,11 @@ class Evolution {
             }
         };
 
-        template <typename FImpl,typename GImpl,typename GaugeField,typename GaugeLinkField>
-        FImpl generic_laplace(double a, double b, GaugeField &Umu, const FImpl& x_in, int skip_axis) {
+        PropagatorField generic_laplace(double a, double b, GaugeField &Umu, const PropagatorField& x_in, int skip_axis) {
             double Nx = Nd;
             if (skip_axis != -1) Nx--;
 
-            FImpl x_out = (a + -2.0*Nx*b) * x_in;
+            PropagatorField x_out = (a + -2.0*Nx*b) * x_in;
             for (int mu = 0; mu < Nd; mu++) {
                 if (mu != skip_axis) {
                     GaugeLinkField U = PeekIndex<LorentzIndex>(Umu, mu);
@@ -275,40 +293,37 @@ class Evolution {
             return x_out;
         };
 
-        template <typename FImpl,typename GImpl,typename GaugeField,typename GaugeLinkField>
-        void laplace_flow(GaugeField &W0, GaugeField &W1, GaugeField &W2, FImpl &prop) {
-            FImpl psi1 = prop + (epsilon/4.0)*generic_laplace<FImpl,GImpl,GaugeField,GaugeLinkField>(0.0, 1.0, W0, prop, -1);
-            FImpl psi2 = prop + (8.0*epsilon/9.0)*generic_laplace<FImpl,GImpl,GaugeField,GaugeLinkField>(0.0, 1.0, W1, psi1, -1) - (2.0*epsilon/9.0)*generic_laplace<FImpl,GImpl,GaugeField,GaugeLinkField>(0.0, 1.0, W0, prop, -1);
-            FImpl psi3 = psi1 + (3.0*epsilon/4.0)*generic_laplace<FImpl,GImpl,GaugeField,GaugeLinkField>(0.0, 1.0, W2, psi2, -1);
+        void laplace_flow(GaugeField &W0, GaugeField &W1, GaugeField &W2, PropagatorField &prop) {
+            PropagatorField psi1 = prop + (epsilon/4.0)*generic_laplace(0.0, 1.0, W0, prop, -1);
+            PropagatorField psi2 = prop + (8.0*epsilon/9.0)*generic_laplace(0.0, 1.0, W1, psi1, -1) - (2.0*epsilon/9.0)*generic_laplace(0.0, 1.0, W0, prop, -1);
+            PropagatorField psi3 = psi1 + (3.0*epsilon/4.0)*generic_laplace(0.0, 1.0, W2, psi2, -1);
 
             prop = psi3;
         };
 
-        template <typename GImpl,typename GaugeField,typename GaugeLinkField>
         std::vector<GaugeField> evolve_gaugeFF(GaugeField &U, std::vector<int> &bc) {
-            std::vector<GaugeField> Wi = gauge_RK<GImpl,GaugeField>(U);
+            std::vector<GaugeField> Wi = gauge_RK(U);
             U = 1.0*Wi[3];
 
-            gauge_apply_boundary<GaugeField,GaugeLinkField>(Wi[0],bc);
-            gauge_apply_boundary<GaugeField,GaugeLinkField>(Wi[1],bc);
-            gauge_apply_boundary<GaugeField,GaugeLinkField>(Wi[2],bc);
+            gauge_apply_boundary(Wi[0],bc);
+            gauge_apply_boundary(Wi[1],bc);
+            gauge_apply_boundary(Wi[2],bc);
 
             return Wi;
         };
 
         // gauge field status //////////////////////////////////////////////////////////
-        template <typename GImpl,typename GaugeField,typename ComplexField,typename GaugeLinkField,typename Result>
-        void gauge_status(GaugeField &Umu, Result &result, double flowt)
+        void gauge_status(GaugeField &Umu, GaugeResult &result, double flowt)
         {
             double Q = WilsonLoops<GImpl>::TopologicalCharge(Umu);
             double plaq = WilsonLoops<GImpl>::avgPlaquette(Umu);
             double rect = WilsonLoops<GImpl>::avgRectangle(Umu);
-            double clov = avgClover<GImpl,ComplexField,GaugeField,GaugeLinkField>(Umu);
+            double clov = avgClover(Umu);
             double act = SG.S(Umu);
-            ComplexD polyX = avgPolyakovLoopMu<GImpl,GaugeField,GaugeLinkField>(Umu,0);
-            ComplexD polyY = avgPolyakovLoopMu<GImpl,GaugeField,GaugeLinkField>(Umu,1);
-            ComplexD polyZ = avgPolyakovLoopMu<GImpl,GaugeField,GaugeLinkField>(Umu,2);
-            ComplexD polyT = avgPolyakovLoopMu<GImpl,GaugeField,GaugeLinkField>(Umu,3);
+            ComplexD polyX = avgPolyakovLoopMu(Umu,0);
+            ComplexD polyY = avgPolyakovLoopMu(Umu,1);
+            ComplexD polyZ = avgPolyakovLoopMu(Umu,2);
+            ComplexD polyT = avgPolyakovLoopMu(Umu,3);
 
             result.flowtime.push_back(flowt);
             result.plaquette.push_back(plaq);
