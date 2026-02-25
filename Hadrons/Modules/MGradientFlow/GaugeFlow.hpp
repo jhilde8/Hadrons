@@ -74,7 +74,16 @@ public:
     virtual void execute(void);
 };
 
-MODULE_REGISTER_TMP(WilsonFlow, ARG(TGaugeFlow<GIMPL,WilsonGaugeAction<GIMPL>>), MGradientFlow);
+// PlaqPlusRectangleAction is actually more optimised than WilsonGaugeAction
+template<class Gimpl>
+class WilsonAction : public RBCGaugeAction<Gimpl> {
+public:
+  INHERIT_GIMPL_TYPES(Gimpl);
+  WilsonAction(RealD beta) : RBCGaugeAction<Gimpl>(beta,0.0) {};
+  virtual std::string action_name(){return "WilsonAction";}
+};
+
+MODULE_REGISTER_TMP(WilsonFlow, ARG(TGaugeFlow<GIMPL,WilsonAction<GIMPL>>), MGradientFlow);
 MODULE_REGISTER_TMP(SymanzikFlow, ARG(TGaugeFlow<GIMPL,SymanzikGaugeAction<GIMPL>>), MGradientFlow);
 MODULE_REGISTER_TMP(ZeuthenFlow, ARG(TGaugeFlow<GIMPL,ZeuthenGaugeAction<GIMPL>>), MGradientFlow);
 MODULE_REGISTER_TMP(CustomFlow, ARG(TGaugeFlow<GIMPL,PlaqPlusRectangleAction<GIMPL>>), MGradientFlow);
@@ -116,11 +125,12 @@ void TGaugeFlow<GImpl,FlowAction>::setup(void)
     envCreateLat(GaugeField, getName()+"_U");
     envCreate(HadronsSerializable, getName(), 1, 0);
     if constexpr (std::is_same_v<FlowAction, PlaqPlusRectangleAction<GImpl>>) {
-        envTmp(EvolutionType, "evolve", 1, 
+        envTmp(EvolutionType, "evolve", 1, envGetGrid(GaugeField), 
             std::stod(par().c_plaq), std::stod(par().c_rect), par().step_size, 
-            mTau, par().step_size);
+            mTau, par().step_size, this);
     } else {
-        envTmp(EvolutionType, "evolve", 1, 3.0, par().step_size, mTau, par().step_size);
+        envTmp(EvolutionType, "evolve", 1, envGetGrid(GaugeField), 3.0, 
+            par().step_size, mTau, par().step_size, this);
     }
     // create action -> if c_plaq and c_rect are used, called PlaqPlusRectangleAction
     if constexpr (std::is_same_v<FlowAction, PlaqPlusRectangleAction<GImpl>>) {
@@ -158,9 +168,9 @@ void TGaugeFlow<GImpl,FlowAction>::execute(void)
     double flowt = 0.0;
     LOG(Message) << "Step 0 (tau = "<< flowt << ")" << std::endl;
     LOG(Message) << "Compute observables" << std::endl;
-    startTimer("Observables");
+    startTimer("observables");
     evolve.gauge_status(Uwf,result,flowt);
-    stopTimer("Observables"); 
+    stopTimer("observables"); 
     // if steps = 0, give the status of gauge field without flowing
     if (par().steps != 0) { 
         if (mTau > 0) {

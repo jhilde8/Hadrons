@@ -154,7 +154,8 @@ void TFermionFlow<FImpl,GImpl,FlowAction>::setup(void)
         }
     }
     envCreate(HadronsSerializable, getName(), 1, 0);
-    envTmp(EvolutionType, "evolve", 1, 3.0, par().step_size, -1.0, par().step_size);
+    envTmp(EvolutionType, "evolve", 1, envGetGrid(GaugeField), 3.0, par().step_size, 
+        -1.0, par().step_size);
 }
 
 // execution ///////////////////////////////////////////////////////////////////
@@ -211,7 +212,7 @@ void TFermionFlow<FImpl,GImpl,FlowAction>::execute(void)
 
         // evolve gauge field 
         startTimer("gauge field flow time "+ftt.str());
-        std::vector<GaugeField> Wi = evolve.evolve_gaugeFF(Uwf,bc);
+        std::vector<GaugeField> &Wi = evolve.evolve_gaugeFF(Uwf,bc);
         stopTimer("gauge field flow time "+ftt.str());
 
         // measure gauge observables
