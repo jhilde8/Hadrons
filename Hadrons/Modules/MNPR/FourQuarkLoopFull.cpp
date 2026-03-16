@@ -23,10 +23,10 @@
  * See the full license in the file "LICENSE" in the top level distribution 
  * directory.
  */
-//ehehehehe
+
 /*  END LEGAL */
-#include <Hadrons/Modules/MNPR/FourQuarkLoop.hpp>
+#include <Hadrons/Modules/MNPR/FourQuarkLoopFull.hpp>
 
 using namespace Grid;
 
-template class HADRONS_NAMESPACE::MNPR::TFourQuarkLoop<FIMPL>;
+template class HADRONS_NAMESPACE::MNPR::TFourQuarkLoopFull<FIMPL>;

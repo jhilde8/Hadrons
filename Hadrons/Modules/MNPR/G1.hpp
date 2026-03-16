@@ -1,15 +1,12 @@
 /*
  * G1.hpp, part of Hadrons (https://github.com/aportelli/Hadrons)
  *
- * Copyright (C) 2015 - 2023
+ * Copyright (C) 2015 - 2020
  *
  * Author: Antonin Portelli <antonin.portelli@me.com>
- * Author: Fabian Joswig <fabian.joswig@ed.ac.uk>
+ * Author: Ryan Abbott <rabbott@mit.edu>
  * Author: Fabian Joswig <fabian.joswig@wwu.de>
  * Author: Felix Erben <felix.erben@ed.ac.uk>
- * Author: Ryan Abbott <rabbott@mit.edu>
- * Author: Simon Bürger <simon.buerger@rwth-aachen.de>
- * Author: rabbott <rabbott4927@gmail.com>
  *
  * Hadrons is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,7 +21,7 @@
  * You should have received a copy of the GNU General Public License
  * along with Hadrons.  If not, see <http://www.gnu.org/licenses/>.
  *
- * See the full license in the file "LICENSE" in the top level distribution 
+ * See the full license in the file "LICENSE" in the top level distribution
  * directory.
  */
 
@@ -178,6 +175,20 @@ void TG1<FImpl>::execute(void)
 
     IwasakiGaugeAction<FImpl> action(1.0); // Include freedom to choose the gauge action?
     action.deriv(Umu, dSdU);
+    // *** Added according to EHC's investigation ***
+    // The implementation of IwasakiGaugeAction::deriv has an overall
+    // normalization factor of 1 / (2 Nc) which is not present in Greg's code.
+    // In the interest of matching Greg's code we undo this normalization
+    // factor here
+    // EHC: missing in Hadrons sinces 2021!
+    dSdU = 2.0 * RealD(Nc) * dSdU;
+
+    // EHC: needs to initialize these, otherwise undefined behavior (tested with GPU).
+    result.fourq_scalar = Zero() ;
+    result.fourq_gamma5 = Zero() ;
+    result.twoq_scalar  = Zero() ;
+    result.twoq_gamma5  = Zero() ;
+    // *** END EHC's additions ***
 
     for (int mu = 0; mu < Nd; mu++)
     {
