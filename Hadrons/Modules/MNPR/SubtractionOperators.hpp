@@ -10,6 +10,7 @@
  * Author: Ryan Abbott <rabbott@mit.edu>
  * Author: Simon Bürger <simon.buerger@rwth-aachen.de>
  * Author: rabbott <rabbott4927@gmail.com>
+ * Author: Jonas Hildebrand <jonas.hildebrand@uconn.edu> (windowing)
  *
  * Hadrons is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -54,6 +55,8 @@ public:
                                     std::string, pIn,
                                     std::string, pOut,
                                     std::string, gauge,
+				    std::string, window,
+				    double, fwhm,
                                     std::string, output);
 };
 
@@ -142,10 +145,14 @@ void TSubtractionOperators<FImpl>::setup(void)
     envTmpLat(PropagatorField, "Dslash_qOut");
 
     envTmpLat(PropagatorField, "bilinear");
+    envTmpLat(PropagatorField, "bilinear_tmp");
+    envTmpLat(PropagatorField, "spectator");
+    envTmpLat(PropagatorField, "stilde"); //FFT of spectator
 
     envTmpLat(ComplexField, "bilinear_phase");
     envTmpLat(ComplexField, "pDotXOut");
     envTmpLat(ComplexField, "coordinate");
+    envTmpLat(ComplexField, "w_p");
 
     envTmpLat(PropagatorField, "tmp");
 
@@ -169,6 +176,9 @@ void TSubtractionOperators<FImpl>::execute(void)
     envGetTmp(PropagatorField, Dslash_qOut);
 
     envGetTmp(PropagatorField, bilinear);
+    envGetTmp(PropagatorField, bilinear_tmp);
+    envGetTmp(PropagatorField, spectator);
+    envGetTmp(PropagatorField, stilde);
 
     Coordinate                  latt_size = GridDefaultLatt();
     std::vector<Real> pIn = strToVec<Real>(par().pIn);
@@ -177,9 +187,16 @@ void TSubtractionOperators<FImpl>::execute(void)
     envGetTmp(ComplexField, bilinear_phase);
     envGetTmp(ComplexField, pDotXOut);
     envGetTmp(ComplexField, coordinate);
+    envGetTmp(ComplexField, w_p);
 
     Result result;
     Gamma g5(Gamma::Algebra::Gamma5);
+
+    //GridBase *grid = getGrid5d(const bool redBlack = false, const unsigned int Ls = 16); 
+    GridBase *grid = pDotXOut.Grid();
+
+    bool trunc = false; //windowing flag
+    double fwhm = par().fwhm; //this parameter is passed in regardless of if we window or not, we ignore it if trunc=false. 
 
     //// Compute volume
     Real volume = 1.0;
@@ -199,17 +216,64 @@ void TSubtractionOperators<FImpl>::execute(void)
 
     //// Compute spectator quark for 4-quark diagrams
     Complex Ci = Complex(0.0, 1.0);
-    bilinear = qIn * exp(-Ci * pDotXOut);
-    SpinColourMatrixScalar spectator = sum(bilinear);
+    spectator = qIn * exp(-Ci * pDotXOut);
+    SpinColourMatrixScalar spectator_sum = sum(spectator);
+
+    //// Computing window function and spectator window convolution 
+    LOG(Message) << "Computing window functions" << std::endl;
+
+    auto spectator_window_convolution = [&]() {
+
+        LOG(Message) << "Computing window-spectator convolution" << std::endl;
+
+        FFT fft((GridCartesian *)grid);
+        fft.FFT_all_dim(stilde, spectator, FFT::forward);
+        stilde = w_p * stilde;
+        fft.FFT_all_dim(spectator, stilde, FFT::backward); //spectator is now windowed 
+
+        //normalize the result by V/sum(w_p)
+        Complex window_norm = sum(w_p);
+        spectator *= volume/window_norm;
+    };
+
+    WindowType window = parseWindowType(par().window);
+    switch(window) {
+        case WindowType::RECTANGLE: 
+	    trunc = true;
+	    w_p = NPRUtils<FImpl>::getRectWindow(grid);
+	    spectator_window_convolution();
+	    break;
+	case WindowType::GAUSSIAN:
+	    trunc = true;
+	    w_p = NPRUtils<FImpl>::getGaussianWindow(grid, fwhm);
+    	    spectator_window_convolution();
+	    break;
+	case WindowType::NONE: //spectator is already ready, so we do nothing here. 
+	default:
+	    break; 
+    }
 
     //// Compute results
     auto compute_result = [&] (typename Result::OperatorResult &res)
     {
+
         bilinear = bilinear_phase * bilinear;
-        res.twoq = (1.0 / volume) * sum(bilinear);
-        bilinear = bilinear_phase * bilinear;
-        SpinColourMatrixScalar bilinear_avg = (1.0 / volume) * sum(bilinear);
-        NPRUtils<FImpl>::tensorSiteProd(res.fourq, bilinear_avg, spectator);
+        res.twoq = (1.0 / volume) * sum(bilinear); //twoq result is same with and without window
+        bilinear = bilinear_phase * bilinear; //second phase applied for fourq result
+        
+	if (trunc=true){
+	    LOG(Message) << "Computing subtraction diagram with windowed spectator" << std::endl;	
+	    //we want to use 'spectator' and 'bilinear' to do the tensor product at each site. 
+	    bilinear_tmp = Zero(); //reset tmp prop field for tensor product functionality
+	    res.fourq = (1.0 / volume) * NPRUtils<FImpl>::tensorProdSum(bilinear_tmp, bilinear, spectator);
+
+	} else {
+	    LOG(Message) << "Computing standard subtraction diagram" << std::endl;
+
+            SpinColourMatrixScalar bilinear_avg = (1.0 / volume) * sum(bilinear);
+            NPRUtils<FImpl>::tensorSiteProd(res.fourq, bilinear_avg, spectator_sum); //tensor product of summed propagator fields
+	}
+
     };
 
     // The expression we want to compute here is
