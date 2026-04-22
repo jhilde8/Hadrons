@@ -267,7 +267,7 @@ void TSubtractionOperators<FImpl>::execute(void)
         res.twoq = (1.0 / volume) * sum(bilinear); //twoq result is same with and without window
         bilinear = bilinear_phase * bilinear; //second phase applied for fourq result
         
-	if (trunc=true){
+	if (trunc==true){
 	    LOG(Message) << "Computing subtraction diagram with windowed spectator" << std::endl;	
 	    //we want to use 'spectator' and 'bilinear' to do the tensor product at each site. 
 	    bilinear_tmp = Zero(); //reset tmp prop field for tensor product functionality
