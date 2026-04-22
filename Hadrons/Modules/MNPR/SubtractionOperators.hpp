@@ -248,6 +248,12 @@ void TSubtractionOperators<FImpl>::execute(void)
 	    w_p = NPRUtils<FImpl>::getGaussianWindow(grid, fwhm);
     	    spectator_window_convolution();
 	    break;
+	case WindowType::DELTA:
+	    trunc=true; 
+	    //in the delta window case we don't need to waste time with a convolution since the position space 
+	    //window has 1 at one site and zero everywhere else. Thus we just do the tensor product sum with the 
+	    //position space spectator since the delta function contracts the sums.  
+
 	case WindowType::NONE: //spectator is already ready, so we do nothing here. 
 	default:
 	    break; 

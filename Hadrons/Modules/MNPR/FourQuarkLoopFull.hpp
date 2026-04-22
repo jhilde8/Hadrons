@@ -219,7 +219,7 @@ void TFourQuarkLoopFull<FImpl>::setup()
         HADRONS_ERROR(Definition, "Unkown loop type");
     }
 
-    envTmpLat(ComplexField, "pDotXin");
+    envTmpLat(ComplexField, "pDotXout");
     envTmpLat(ComplexField, "w_p");
 
     envTmpLat(PropagatorField, "loop");
@@ -279,10 +279,10 @@ void TFourQuarkLoopFull<FImpl>::execute()
     Gamma g5 = Gamma(Gamma::Algebra::Gamma5);
 
     envGetTmp(ComplexField, bilinear_phase);
-    envGetTmp(ComplexField, pDotXin);
+    envGetTmp(ComplexField, pDotXout);
     envGetTmp(ComplexField, w_p);
 
-    GridBase *grid = pDotXin.Grid(); //get the grid directly from env please. 
+    GridBase *grid = pDotXout.Grid(); //get the grid directly from env please. 
 
     Complex Ci(0.0, 1.0);
 
@@ -313,8 +313,8 @@ void TFourQuarkLoopFull<FImpl>::execute()
     LOG(Message) << "Calculating phases" << std::endl;
 
     NPRUtils<FImpl>::phase(bilinear_phase,pIn,pOut);
-    NPRUtils<FImpl>::dot(pDotXin, pOut); 
-    spectator = qIn * exp(-Ci * pDotXin); //position space spectator field
+    NPRUtils<FImpl>::dot(pDotXout, pOut);  
+    spectator = qIn * exp(-Ci * pDotXout); //position space spectator field
     SpinColourMatrix s1 = sum(spectator); //this completes the momentum projection for the un-windowed spectator. 
 
     LOG(Message) << "Computing window functions" << std::endl;
@@ -331,6 +331,16 @@ void TFourQuarkLoopFull<FImpl>::execute()
 	    w_p = NPRUtils<FImpl>::getGaussianWindow(grid, fwhm);
     	    spectator_window_convolution();
 	    break;
+	case WindowType::DELTA:
+	    trunc = true;
+	    //for the Delta window case, the coordinate of the spectator coincides with the coordinate of the 
+	    //four quark operator, so we don't need to touch the spectator in this case, and simply do the sum over 
+	    // a tensor product betweent the position space spectator and position space bilinear, as the code exists 
+	    // in the trunc=true case already. Thus we do not need any extra implementation in NPRUtils. 
+
+	    //w_p = NPRUtils<FImpl>::getDeltaWindow(grid);
+	    //spectator_window_convolution();
+
 	case WindowType::NONE: //spectator is already ready, so we do nothing here. 
 	default:
 	    break; 
@@ -415,7 +425,7 @@ void TFourQuarkLoopFull<FImpl>::execute()
 	    fourq_result.corr.push_back((1.0 / volume) * lret);
 	} else {
 	    LOG(Message) << "Computing single tensor product with un-windowed spectator" << std::endl;
-	    SpinColourMatrix b1 = sum(bilinear); //momentum space bilnear term
+	    SpinColourMatrix b1 = sum(bilinear); //momentum space bilinear term
 
 	    SpinColourSpinColourMatrix mom_ret;
 	    NPRUtils<FImpl>::tensorSiteProd(mom_ret, b1, s1); //single site tensor product between momentum space spectator and bilinear

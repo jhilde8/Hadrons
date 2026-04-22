@@ -322,13 +322,14 @@ NPRUtils<FImpl>::getGaussianWindow(GridBase* grid, double fwhm)
 
 //passing in a string for the window in the xml, this is an efficient way to classify 
 //which window we want to use, and assign local variables to such a window at runtime.
-enum class WindowType{NONE, RECTANGLE, GAUSSIAN}; 
+enum class WindowType{NONE, RECTANGLE, GAUSSIAN, DELTA}; 
 
 inline WindowType parseWindowType(const std::string &s){
     static const std::unordered_map<std::string, WindowType> windowMap{
         {"none", WindowType::NONE},
 	{"rectangle", WindowType::RECTANGLE},
-	{"gaussian", WindowType::GAUSSIAN}
+	{"gaussian", WindowType::GAUSSIAN},
+	{"delta", WindowType::DELTA}
     };
 
     auto it = windowMap.find(s);
