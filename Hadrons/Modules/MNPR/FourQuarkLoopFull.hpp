@@ -340,6 +340,13 @@ void TFourQuarkLoopFull<FImpl>::execute()
 
 	    //w_p = NPRUtils<FImpl>::getDeltaWindow(grid);
 	    //spectator_window_convolution();
+	    break;
+
+	case WindowType::ZERO:
+	    //set spectator contribution to zero. This is the most extreme windowing limit. 
+	    trunc=true;
+	    spectator=Zero(); //I could define a zero window and do the convolution and everything, but I think this is easier. 
+	    break;
 
 	case WindowType::NONE: //spectator is already ready, so we do nothing here. 
 	default:
