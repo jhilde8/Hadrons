@@ -52,6 +52,8 @@ private:
 public:
     //v1
     static SpinColourSpinColourMatrix tensorProdSum(PropagatorField &tsum, PropagatorField &a, PropagatorField &b);
+    //v2
+    static SpinColourSpinColourMatrix tensorProdSum(LatticeColourMatrix &tmp_colour, PropagatorField &tsum, PropagatorField &a, PropagatorField &b);
     //v3
     static SpinColourSpinColourMatrix tensorProdSum_v3(PropagatorField &tsum, PropagatorField &a, PropagatorField &b);
 
@@ -70,10 +72,14 @@ public:
 
 
 // Tensor product of two PropagatorFields (Lattice Spin Colour Matrices in many FImpls)
+// v1
 template <typename FImpl>
 SpinColourSpinColourMatrix NPRUtils<FImpl>::tensorProdSum(PropagatorField &tsum, PropagatorField &a, PropagatorField &b)
 {
+    GridBase *grid = a.Grid();
     SpinColourSpinColourMatrix result;
+    double t_acc=0.0;
+    double t_sum=0.0;
 
     for(int si=0; si < Ns; ++si)
 	{
@@ -83,15 +89,66 @@ SpinColourSpinColourMatrix NPRUtils<FImpl>::tensorProdSum(PropagatorField &tsum,
 	        {
                 for (int cj=0; cj < Nc; ++cj)
 	            {
+                    t_acc -= usecond();    
                     tsum = peekColour(peekSpin(a, si, sj), ci, cj) * b;
+                    t_acc += usecond();    
+		    t_sum -= usecond();
                     result()(si,sj)(ci,cj) = sum_large(tsum)();
+		    t_sum += usecond();
                 }
             }
         }
     }
+    
+    uint64_t bytes  = Nc*Nc*Ns*Ns*3*sizeof(vSpinColourMatrix)*grid->oSites();
+    uint64_t sbytes = Nc*Nc*Ns*Ns*sizeof(vSpinColourMatrix)*grid->oSites();
+    std::cout << " tacc "<< t_acc << " tsum " << t_sum << " us "<<std::endl;
+    std::cout << " bytes "<< bytes <<std::endl;
+    std::cout << "acc "<< (double)bytes/t_acc << " MB/s "<<std::endl;
+    std::cout << "sum "<< (double)sbytes/t_sum << " MB/s "<<std::endl;
     return result;
 }
 
+//v2. just adds an additional temporary such that we don't waste spin index iterations
+template <typename FImpl>
+SpinColourSpinColourMatrix NPRUtils<FImpl>::tensorProdSum(LatticeColourMatrix &tmp_colour, PropagatorField &tsum, PropagatorField &a, PropagatorField &b)
+{
+    GridBase *grid = a.Grid(); 
+
+    SpinColourSpinColourMatrix result;
+    double t_acc=0.0;
+    double t_sum=0.0;
+
+    for(int si=0; si < Ns; ++si)
+	{
+        for(int sj=0; sj < Ns; ++sj)
+	    {
+            tmp_colour = peekSpin(a, si, sj); 
+	    
+ 	    for (int ci=0; ci < Nc; ++ci)
+	        {
+                for (int cj=0; cj < Nc; ++cj)
+	            {
+                    t_acc -= usecond();    
+		    tsum = peekColour(tmp_colour, ci, cj) * b;
+                    t_acc+=usecond();
+		    t_sum-=usecond();
+		    result()(si,sj)(ci,cj) = sum_large(tsum)();
+                    t_sum+=usecond();
+		}
+            }
+        }
+    } 
+    uint64_t bytes  = Nc*Nc*Ns*Ns*3*sizeof(vSpinColourMatrix)*grid->oSites();
+    uint64_t sbytes = Nc*Nc*Ns*Ns*sizeof(vSpinColourMatrix)*grid->oSites();
+    std::cout << " tacc "<< t_acc << " tsum " << t_sum << " us "<<std::endl;
+    std::cout << " bytes "<< bytes <<std::endl;
+    std::cout << "acc "<< (double)bytes/t_acc << " MB/s "<<std::endl;
+    std::cout << "sum "<< (double)sbytes/t_sum << " MB/s "<<std::endl;
+    return result;
+}
+
+//v3.
 template <typename FImpl>
 SpinColourSpinColourMatrix NPRUtils<FImpl>::tensorProdSum_v3(PropagatorField &tsum,PropagatorField &a, PropagatorField &b)
 {
@@ -101,7 +158,7 @@ SpinColourSpinColourMatrix NPRUtils<FImpl>::tensorProdSum_v3(PropagatorField &ts
     int Nsimd = grid->Nsimd();
     double t_acc=0.0;
     double t_sum=0.0;
-	autoView(tsum_v,tsum,AcceleratorWrite);
+    autoView(tsum_v,tsum,AcceleratorWrite);
     autoView(a_v,a,AcceleratorRead);
     autoView(b_v,b,AcceleratorRead);
     for(int si=0; si < Ns; ++si){
@@ -121,8 +178,8 @@ SpinColourSpinColourMatrix NPRUtils<FImpl>::tensorProdSum_v3(PropagatorField &ts
         result()(si,sj)(ci,cj) = sum_large(tsum)();
         t_sum += usecond();
     }}}}
-    uint64_t bytes  = 3*sizeof(vSpinColourMatrix)*grid->oSites();
-    uint64_t sbytes = sizeof(vSpinColourMatrix)*grid->oSites();
+    uint64_t bytes  = Ns*Ns*Nc*Nc*3*sizeof(vSpinColourMatrix)*grid->oSites();
+    uint64_t sbytes = Ns*Ns*Nc*Nc*sizeof(vSpinColourMatrix)*grid->oSites();
     std::cout << " tacc "<< t_acc << " tsum " << t_sum << " us "<<std::endl;
     std::cout << " bytes "<< bytes <<std::endl;
     std::cout << "acc "<< (double)bytes/t_acc << " MB/s "<<std::endl;
