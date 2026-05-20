@@ -52,13 +52,12 @@ private:
 public:
     //v1
     static SpinColourSpinColourMatrix tensorProdSum(PropagatorField &tsum, PropagatorField &a, PropagatorField &b);
-    //v2
-    static SpinColourSpinColourMatrix tensorProdSum(LatticeColourMatrix &tmp_colour, PropagatorField &tsum, PropagatorField &a, PropagatorField &b);
     //v3
     static SpinColourSpinColourMatrix tensorProdSum_v3(PropagatorField &tsum, PropagatorField &a, PropagatorField &b);
-
+    //v4
+    static SpinColourSpinColourMatrix tensorProdSum_v4(PropagatorField &tsum, PropagatorField &a, PropagatorField &b);
+    
     static void tensorSiteProd(SpinColourSpinColourMatrix &lret, SpinColourMatrixScalar &a, SpinColourMatrixScalar &b);        
-    static void tensorSiteProd(vSpinColourSpinColourMatrix &lret, vSpinColourMatrix &a, vSpinColourMatrix &b);
     static void tensorProd(LatticeSpinColourSpinColourMatrix &res, PropagatorField &a, PropagatorField &b); 
     // covariant derivative
     static void dslash(PropagatorField &in, const PropagatorField &out,
@@ -77,6 +76,7 @@ template <typename FImpl>
 SpinColourSpinColourMatrix NPRUtils<FImpl>::tensorProdSum(PropagatorField &tsum, PropagatorField &a, PropagatorField &b)
 {
     GridBase *grid = a.Grid();
+
     SpinColourSpinColourMatrix result;
     double t_acc=0.0;
     double t_sum=0.0;
@@ -92,6 +92,7 @@ SpinColourSpinColourMatrix NPRUtils<FImpl>::tensorProdSum(PropagatorField &tsum,
                     t_acc -= usecond();    
                     tsum = peekColour(peekSpin(a, si, sj), ci, cj) * b;
                     t_acc += usecond();    
+		    
 		    t_sum -= usecond();
                     result()(si,sj)(ci,cj) = sum_large(tsum)();
 		    t_sum += usecond();
@@ -109,44 +110,6 @@ SpinColourSpinColourMatrix NPRUtils<FImpl>::tensorProdSum(PropagatorField &tsum,
     return result;
 }
 
-//v2. just adds an additional temporary such that we don't waste spin index iterations
-template <typename FImpl>
-SpinColourSpinColourMatrix NPRUtils<FImpl>::tensorProdSum(LatticeColourMatrix &tmp_colour, PropagatorField &tsum, PropagatorField &a, PropagatorField &b)
-{
-    GridBase *grid = a.Grid(); 
-
-    SpinColourSpinColourMatrix result;
-    double t_acc=0.0;
-    double t_sum=0.0;
-
-    for(int si=0; si < Ns; ++si)
-	{
-        for(int sj=0; sj < Ns; ++sj)
-	    {
-            tmp_colour = peekSpin(a, si, sj); 
-	    
- 	    for (int ci=0; ci < Nc; ++ci)
-	        {
-                for (int cj=0; cj < Nc; ++cj)
-	            {
-                    t_acc -= usecond();    
-		    tsum = peekColour(tmp_colour, ci, cj) * b;
-                    t_acc+=usecond();
-		    t_sum-=usecond();
-		    result()(si,sj)(ci,cj) = sum_large(tsum)();
-                    t_sum+=usecond();
-		}
-            }
-        }
-    } 
-    uint64_t bytes  = Nc*Nc*Ns*Ns*3*sizeof(vSpinColourMatrix)*grid->oSites();
-    uint64_t sbytes = Nc*Nc*Ns*Ns*sizeof(vSpinColourMatrix)*grid->oSites();
-    std::cout << " tacc "<< t_acc << " tsum " << t_sum << " us "<<std::endl;
-    std::cout << " bytes "<< bytes <<std::endl;
-    std::cout << "acc "<< (double)bytes/t_acc << " MB/s "<<std::endl;
-    std::cout << "sum "<< (double)sbytes/t_sum << " MB/s "<<std::endl;
-    return result;
-}
 
 //v3.
 template <typename FImpl>
@@ -187,7 +150,53 @@ SpinColourSpinColourMatrix NPRUtils<FImpl>::tensorProdSum_v3(PropagatorField &ts
     return result;
 }
 
-    
+//v3.
+template <typename FImpl>
+SpinColourSpinColourMatrix NPRUtils<FImpl>::tensorProdSum_v4(PropagatorField &tsum,PropagatorField &a, PropagatorField &b)
+{
+    vComplex dummy;
+    SpinColourSpinColourMatrix result;
+    GridBase *grid = a.Grid();
+    int Nsimd = grid->Nsimd();
+    double t_acc=0.0;
+    double t_sum=0.0;
+    PropagatorField tsum1(grid);
+    PropagatorField tsum2(grid);
+    for(int si=0; si < Ns; ++si){
+    for(int sj=0; sj < Ns; ++sj){
+    for(int ci=0; ci < Nc; ++ci){
+      {
+        autoView(tsum_v0,tsum,AcceleratorWrite);
+        autoView(tsum_v1,tsum1,AcceleratorWrite);
+        autoView(tsum_v2,tsum2,AcceleratorWrite);
+        autoView(a_v,a,AcceleratorRead);
+        autoView(b_v,b,AcceleratorRead);
+        t_acc -= usecond();
+        accelerator_for(ss,grid->oSites(),Nsimd, {
+            typedef decltype(coalescedRead(vTComplex())) calcComplex;
+            calcComplex aa;
+            auto bb = b_v(ss);
+            aa()()() = a_v(ss)()(si,sj)(ci,0); coalescedWrite(tsum_v0[ss],aa*bb);
+            aa()()() = a_v(ss)()(si,sj)(ci,1); coalescedWrite(tsum_v1[ss],aa*bb);
+            aa()()() = a_v(ss)()(si,sj)(ci,2); coalescedWrite(tsum_v2[ss],aa*bb);
+        });
+        t_acc += usecond();
+      }
+      t_sum -= usecond();
+      result()(si,sj)(ci,0) = sum_large(tsum)();
+      result()(si,sj)(ci,1) = sum_large(tsum1)();
+      result()(si,sj)(ci,2) = sum_large(tsum2)();
+      t_sum += usecond();
+    }}}
+    uint64_t bytes  = Nc*Nc*Ns*Ns*3*sizeof(vSpinColourMatrix)*grid->oSites();
+    uint64_t sbytes = Nc*Nc*Ns*Ns*sizeof(vSpinColourMatrix)*grid->oSites();
+    std::cout << " tacc "<< t_acc << " tsum " << t_sum << " us "<<std::endl;
+    std::cout << " bytes "<< bytes <<std::endl;
+    std::cout << "acc "<< (double)bytes/t_acc << " MB/s "<<std::endl;
+    std::cout << "sum "<< (double)sbytes/t_sum << " MB/s "<<std::endl;
+    return result;
+}
+
 // Tensosumroduct on a ssingle sisumonly
 template <typename FImpl>
 void NPRUtils<FImpl>::tensorSiteProd(SpinColourSpinColourMatrix &lret, SpinColourMatrixScalar &a, SpinColourMatrixScalar &b)
