@@ -16,6 +16,7 @@ Author: Masaaki Tomii <masaaki.tomii@uconn.edu>
 #include <Hadrons/Module.hpp>
 #include <Hadrons/ModuleFactory.hpp>
 #include <Hadrons/A2AMatrix.hpp>
+#include <Grid/qcd/utils/A2Autils.h>
 
 BEGIN_HADRONS_NAMESPACE
 //   _
@@ -243,7 +244,6 @@ void TA2AExtendedMesonField<FImpl>::execute(void)
     //int block      = par().block;
     int cacheBlock = par().cacheBlock;
     Vector<HADRONS_A2AM_IO_TYPE> mBuf; mBuf.resize(nt*N_i*N_j);
-    Vector<Complex> mCacheBuf; mCacheBuf.resize(nt*cacheBlock*cacheBlock);
 
   int ngamma = 0;
     for ( int ig = 0 ; ig < gamma1_.size() ; ++ig ) {
@@ -269,285 +269,62 @@ void TA2AExtendedMesonField<FImpl>::execute(void)
                  << "/momentum/bilinear)" << std::endl;
 
     auto &loop = envGet(PropagatorField, "propagatorLoop");
-    loop = Zero();
-    for (unsigned int i = 0; i < loop1.size(); ++i)
-    {
-      loop += outerProduct(loop1[i], loop2[i]);
-    }
-    autoView(loopv,loop,CpuRead);
+    Grid::A2AExtendedMesonField<FImpl>::LoopPropagator(loop, loop1, loop2);
     LOG(Message) << "Quark loop calculated" << std::endl;
 
-    std::vector<SpinColourVector_v> zeroVec(rd*grid->_ostride[orthogdim],Zero());
-    std::vector<std::vector<SpinColourVector_v> > leftv(N_i,zeroVec);
-    for ( unsigned int i = 0; i < N_i; i++ ){
-      autoView(tmp,left[i],CpuRead);
-      thread_for(r,rd,{
-	int so=r*grid->_ostride[orthogdim];
-	for(int n=0;n<e1;n++)
-	for(int b=0;b<e2;b++){
-	  int ss = so+n*stride+b;
-	  leftv[i][ss] = conjugate(tmp[ss]);
-	}
-      });
-    }
+    std::vector<FermionField> leftv(N_i, grid);
+    for (int i = 0; i < N_i; i++)
+      Grid::A2AExtendedMesonField<FImpl>::PackLeftConjugated(leftv[i], left[i]);
     LOG(Message) << "Memory for left vectors allocated" << std::endl;
 
-    std::function<void(SpinColourVector_v&, const SpinColourMatrix_v&, const SpinColourVector_v&, const std::vector<Gamma::Algebra>, const std::vector<Gamma::Algebra>)> addLoopRight;
     for (int &type: types_){
-      std::vector<SpinColourMatrix_v> tloopv(rd*grid->_ostride[orthogdim],Zero());
-      LOG(Message) << "Starting calculation with type " << type << std::endl;
-      if ( type == 0 ) {
-	thread_for(r,rd,{
-	  int so=r*grid->_ostride[orthogdim];
-	  for(int n=0;n<e1;n++)
-	  for(int b=0;b<e2;b++){
-	    int ss = so+n*stride+b;
-	    for(int s1=0;s1<Ns;++s1)
-	    for(int s2=0;s2<Ns;++s2){
-	      tloopv[ss]()(s1,s2)(0,0) += loopv[ss]()(s1,s2)(0,0) + loopv[ss]()(s1,s2)(1,1) + loopv[ss]()(s1,s2)(2,2);
-	    }
-	  }
-	});
-	LOG(Message) << "Color contraction for quark loop done" << std::endl;
-
-	addLoopRight = [this](SpinColourVector_v& loopRight, const SpinColourMatrix_v& loopm, const SpinColourVector_v rightv,
-			      const std::vector<Gamma::Algebra> gamma1, const std::vector<Gamma::Algebra> gamma2){
-	  SpinMatrix_v spinLoop = Zero();
-	  for(int s1=0;s1<Ns;++s1)
-	  for(int s2=0;s2<Ns;++s2){
-	    spinLoop()(s1,s2)() = loopm()(s1,s2)(0,0);
-	  }
-	  for(int mu=0;mu<gamma1.size();++mu){
-	    SpinMatrix_v GLoop = Gamma(gamma2[mu]) * spinLoop;
-	    Scalar_v trGLoop;
-	    trGLoop()()() = GLoop()(0,0)() + GLoop()(1,1)() + GLoop()(2,2)() + GLoop()(3,3)();
-	    SpinColourVector_v Grightv = Gamma(gamma1[mu]) * rightv;
-	    for(int s=0;s<Ns;++s)
-	    for(int c=0;c<Nc;++c){
-	      loopRight()(s)(c) += Grightv()(s)(c) * trGLoop()()();
-	    }
-	  }
-	};
-      }
-      if ( type == 1 ) {
-	addLoopRight = [this](SpinColourVector_v& loopRight, const SpinColourMatrix_v& loopm, const SpinColourVector_v rightv,
-			      const std::vector<Gamma::Algebra> gamma1, const std::vector<Gamma::Algebra> gamma2){
-          for(int s=0;s<Ns;++s)
-          for(int c=0;c<Nc;++c){
-	    loopRight()(s)(c)
-	      += loopm()(s,0)(c,0) * rightv()(0)(0)
-	      +  loopm()(s,0)(c,1) * rightv()(0)(1)
-	      +  loopm()(s,0)(c,2) * rightv()(0)(2)
-	      +  loopm()(s,1)(c,0) * rightv()(1)(0)
-	      +  loopm()(s,1)(c,1) * rightv()(1)(1)
-	      +  loopm()(s,1)(c,2) * rightv()(1)(2)
-	      +  loopm()(s,2)(c,0) * rightv()(2)(0)
-	      +  loopm()(s,2)(c,1) * rightv()(2)(1)
-	      +  loopm()(s,2)(c,2) * rightv()(2)(2)
-	      +  loopm()(s,3)(c,0) * rightv()(3)(0)
-	      +  loopm()(s,3)(c,1) * rightv()(3)(1)
-	      +  loopm()(s,3)(c,2) * rightv()(3)(2);
-	  }
-	};
-      }
-      if ( type == 2 ) {
-	addLoopRight = [this](SpinColourVector_v& loopRight, const SpinColourMatrix_v& loopm, const SpinColourVector_v rightv,
-			      const std::vector<Gamma::Algebra> gamma1, const std::vector<Gamma::Algebra> gamma2){
-	  for(int mu=0;mu<gamma1.size();++mu){
-	    int s1 = int(mu/Ns);
-	    int s2 = mu%Ns;
-	    SpinColourVector_v Grightv = Gamma(gamma1[mu]) * rightv;
-	    for(int s=0;s<Ns;++s)
-	    for(int c=0;c<Nc;++c){
-	      loopRight()(s)(c)
-		+= loopm()(s1,s2)(c,0) * Grightv()(s)(0)
-		+  loopm()(s1,s2)(c,1) * Grightv()(s)(1)
-		+  loopm()(s1,s2)(c,2) * Grightv()(s)(2);
-	    }
-	  }
-	};
-      }
-      if ( type == 3 ) {
-	addLoopRight = [this](SpinColourVector_v& loopRight, const SpinColourMatrix_v& loopm, const SpinColourVector_v rightv,
-			      const std::vector<Gamma::Algebra> gamma1, const std::vector<Gamma::Algebra> gamma2){
-          for(int s=0;s<Ns;++s)
-          for(int c=0;c<Nc;++c){
-	    loopRight()(s)(c)
-	      += loopm()(s,0)(0,0) * rightv()(0)(c)
-	      +  loopm()(s,1)(0,0) * rightv()(1)(c)
-	      +  loopm()(s,2)(0,0) * rightv()(2)(c)
-	      +  loopm()(s,3)(0,0) * rightv()(3)(c);
-	  }
-	};
-      }
 
       for (int ig = 0 ; ig < gamma1_.size() ; ++ig ){
-	LOG(Message) << "Starting calculation of " << nameg1_[ig] << "_" << nameg2_[ig] << std::endl;
-	if ( type == 1 ) {
-	  std::vector<Gamma::Algebra> gamma1 = gamma1_[ig];
-	  std::vector<Gamma::Algebra> gamma2 = gamma2_[ig];
-	  thread_for(r,rd,{
-	    int so=r*grid->_ostride[orthogdim];
-	    for(int n=0;n<e1;n++)
-	    for(int b=0;b<e2;b++){
-	      int ss = so+n*stride+b;
-	      tloopv[ss] = Zero();
-	      for(int mu=0;mu<gamma1.size();++mu)
-		tloopv[ss] = tloopv[ss] + Gamma(gamma1[mu]) * loopv[ss] * Gamma(gamma2[mu]);
-	    }
-	  });
-	  LOG(Message) << "Sum over mu done with quark loop" << std::endl;
-	}
-	if ( type == 2 ) {
-	  std::vector<Gamma::Algebra> gamma2 = gamma2_[ig];
-	  thread_for(r,rd,{
-	    int so=r*grid->_ostride[orthogdim];
-	    for(int n=0;n<e1;n++)
-	    for(int b=0;b<e2;b++){
-	      int ss = so+n*stride+b;
-	      tloopv[ss] = Zero();
-	      for(int mu=0;mu<gamma2.size();++mu) {
-		SpinColourMatrix_v tmp = Gamma(gamma2[mu])*loopv[ss];
-		int s1 = int(mu/Ns);
-		int s2 = mu%Ns;
-		for(int c1=0;c1<Nc;++c1)
-		for(int c2=0;c2<Nc;++c2){
-		  tloopv[ss]()(s1,s2)(c1,c2)
-		    = tmp()(0,0)(c1,c2)
-		    + tmp()(1,1)(c1,c2)
-		    + tmp()(2,2)(c1,c2)
-		    + tmp()(3,3)(c1,c2);
-		}
-	      }
-	    }
-	  });
-	  LOG(Message) << "Spin contraction with quark loop done for " << nameg2_[ig] << std::endl;
-	}
-	if ( type == 3 ) {
-	  std::vector<Gamma::Algebra> gamma1 = gamma1_[ig];
-	  std::vector<Gamma::Algebra> gamma2 = gamma2_[ig];
-	  thread_for(r,rd,{
-	    int so=r*grid->_ostride[orthogdim];
-	    for(int n=0;n<e1;n++)
-	    for(int b=0;b<e2;b++){
-	      int ss = so+n*stride+b;
-	      SpinMatrix_v tmp = Zero();
-	      for(int s1=0;s1<Ns;++s1)
-	      for(int s2=0;s2<Ns;++s2){
-		tmp()(s1,s2)() = loopv[ss]()(s1,s2)(0,0) + loopv[ss]()(s1,s2)(1,1) + loopv[ss]()(s1,s2)(2,2);
-	      }
-	      tloopv[ss] = Zero();
-	      for(int mu=0;mu<gamma1.size();++mu) {
-		SpinMatrix_v tmp2 = Gamma(gamma1[mu]) * tmp * Gamma(gamma2[mu]);
-		for(int s1=0;s1<Ns;++s1)
-		for(int s2=0;s2<Ns;++s2){
-		  tloopv[ss]()(s1,s2)(0,0) = tloopv[ss]()(s1,s2)(0,0) + tmp2()(s1,s2)();
-		}
-	      }
-	    }
-	  });
-	  LOG(Message) << "Color contraction for quark loop and corresponding sum over mu done" << std::endl;
-	}
+		
 	A2AMatrixSet<HADRONS_A2AM_IO_TYPE> emf(mBuf.data(),1,1,nt,N_i,N_j);
-	std::vector<std::vector<SpinColourVector_v> > loopRight(N_j,zeroVec);
-	LOG(Message) << "Making loop x right vec" << std::endl;
-	for ( unsigned int j = 0; j < N_j; j++ ){
-	  // Left x Loop
-	  autoView(right_v,right[j],CpuRead);
+	
+	Vector<Gamma::Algebra> gamma1(gamma1_[ig].begin(), gamma1_[ig].end());
+	Vector<Gamma::Algebra> gamma2(gamma2_[ig].begin(), gamma2_[ig].end());
 
-	  thread_for(r,rd,{
-	    int so=r*grid->_ostride[orthogdim];
-	    for(int n=0;n<e1;n++)
-	    for(int b=0;b<e2;b++){
-	      int ss = so+n*stride+b;
-	      addLoopRight(loopRight[j][ss],tloopv[ss],right_v[ss],gamma1_[ig],gamma2_[ig]);
-	    }
-	  });
+	PropagatorField tloop(grid);
+	tloop = Zero();
+	switch (type) {
+	case 0: Grid::A2AExtendedMesonField<FImpl>::LoopContractionType0(tloop, loop);                 break;
+	case 1: Grid::A2AExtendedMesonField<FImpl>::LoopContractionType1(tloop, loop, gamma1, gamma2); break;
+	case 2: Grid::A2AExtendedMesonField<FImpl>::LoopContractionType2(tloop, loop, gamma2);         break;
+	case 3: Grid::A2AExtendedMesonField<FImpl>::LoopContractionType3(tloop, loop, gamma1, gamma2); break;
 	}
-	LOG(Message) << "Done" << std::endl;
+	LOG(Message) << "tloop contraction done for type " << type << std::endl;
+
+	std::vector<FermionField> loopRight(N_j, grid);
+	for (int j = 0; j < N_j; j++) {
+	  switch (type) {
+	  case 0: Grid::A2AExtendedMesonField<FImpl>::LoopRightContractionType0(loopRight[j], tloop, right[j], gamma1, gamma2); break;
+	  case 1: Grid::A2AExtendedMesonField<FImpl>::LoopRightContractionType1(loopRight[j], tloop, right[j]);                 break;
+	  case 2: Grid::A2AExtendedMesonField<FImpl>::LoopRightContractionType2(loopRight[j], tloop, right[j], gamma1);         break;
+	  case 3: Grid::A2AExtendedMesonField<FImpl>::LoopRightContractionType3(loopRight[j], tloop, right[j]);                 break;
+	  }
+	}
+	LOG(Message) << "loopRight packed for type " << type << std::endl;
 	LOG(Message) << "Making EMF" << std::endl;
+	A2ASpatialSum<SpinColourVector_v> spatial_sum;
 	for ( unsigned int i = 0; i < N_i; i += cacheBlock )
 	for ( unsigned int j = 0; j < N_j; j += cacheBlock ){
 	  int Nii = MIN(N_i-i,cacheBlock);
 	  int Njj = MIN(N_j-j,cacheBlock);
 
-	  int MFrvol = rd * Nii * Njj;
-	  int MFlvol = ld * Nii * Njj;
+	  spatial_sum.Allocate(Nii, Njj, grid);
+	  spatial_sum.PackLeft (leftv,     i, Nii);
+	  spatial_sum.PackRight(loopRight, j, Njj);
 
-	  Vector<Scalar_v > lvSum(MFrvol);
-	  thread_for( r, MFrvol,{
-	    lvSum[r] = Zero();
-	  });
-	  // potentially wasting cores here if local time extent too small
-	  thread_for(r,rd,{
-	    int so=r*grid->_ostride[orthogdim]; // base offset for start of plane
-	    int base=Nii*Njj*r;
-	    for(int n=0;n<e1;n++)
-	    for(int b=0;b<e2;b++){
-	      int ss= so+n*stride+b;
-	      for(int ii=0;ii<Nii;ii++)
-	      for(int jj=0;jj<Njj;jj++){
-		int idx = jj+Njj*ii+base;
-		SpinMatrix_v tmp = Zero();
-		for(int c=0;c<Nc;++c)
-		for(int s=0;s<Ns;++s){
-		  lvSum[idx]()()() += leftv[i+ii][ss]()(s)(c) * loopRight[j+jj][ss]()(s)(c);
-		}
-	      }
-	    }
-	  });
+	  Eigen::Tensor<ComplexD,3> emfBlock(nt, Nii, Njj);
+	  emfBlock.setZero();
+	  spatial_sum.Sum(emfBlock);
 
-	  Vector<Scalar_s > lsSum(MFlvol);
-	  thread_for(r,MFlvol,{
-	    lsSum[r]=scalar_type(0.0);
-	  });
-	  thread_for(rt,rd,{
-	    Coordinate icoor(Nd);
-	    ExtractBuffer<Scalar_s> extracted(Nsimd);
-	    for(int ii=0;ii<Nii;ii++)
-	    for(int jj=0;jj<Njj;jj++){
-	      int ij_rdx = jj+Njj*(ii+Nii*rt);
-	      extract(lvSum[ij_rdx],extracted);
-	      for(int idx=0;idx<Nsimd;idx++){
-		grid->iCoorFromIindex(icoor,idx);
-		int ldx    = rt+icoor[orthogdim]*rd;
-		int ij_ldx = jj+Njj*(ii+Nii*ldx);
-		lsSum[ij_ldx]=lsSum[ij_ldx]+extracted[idx];
-	      }
-	    }
-	  });
-
-	  int pd = grid->_processors[orthogdim];
-	  int pc = grid->_processor_coor[orthogdim];
-	  A2AMatrixSet<Complex> emfCache(mCacheBuf.data(),1,1,nt,Nii,Njj);
-	  thread_for_collapse(2,lt,ld,{
-	    for(int pt=0;pt<pd;pt++){
-	      int t = lt + pt*ld;
-	      if (pt == pc){
-		for(int ii=0;ii<Nii;ii++)
-		for(int jj=0;jj<Njj;jj++){
-		  int ij_dx = jj+Njj*(ii+Nii*lt);//m+Nmom*i + Nmom*cacheBlock * j + Nmom*lock * Rblock * lt;
-		  emfCache(0,0,t,ii,jj) = lsSum[ij_dx]()()();
-		}
-	      } else {
-		const scalar_type zz(0.0);
-		for(int ii=0;ii<Nii;ii++)
-		for(int jj=0;jj<Njj;jj++){
-		  emfCache(0,0,t,ii,jj) = zz;
-		}
-	      }
-	    }
-	  });
-	  grid->GlobalSumVector(&emfCache(0,0,0,0,0),nt*Nii*Njj);
-	  thread_for_collapse( 5,e,1,{
-	    for(int s =0;s< 1;s++)
-	    for(int t =0;t< nt;t++)
-	    for(int ii=0;ii< Nii;ii++)
-	    for(int jj=0;jj< Njj;jj++)
-	    {
-	      emf(0,0,t,i+ii,j+jj) = emfCache(0,0,t,ii,jj);
-	    }
-	  });
+	  for(int t =0;t< nt;t++)
+	  for(int ii=0;ii< Nii;ii++)
+	  for(int jj=0;jj< Njj;jj++)
+	    emf(0,0,t,i+ii,j+jj) = emfBlock(t,ii,jj);
 	}// i,j
 	LOG(Message) << "Done" << std::endl;
 
