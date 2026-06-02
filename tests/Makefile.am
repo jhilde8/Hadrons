@@ -19,7 +19,9 @@ EXTRA_PROGRAMS = \
   Test_result_bundling      \
   Test_sigma_to_nucleon     \
   Test_stoch_distil         \
-  Test_xi_to_sigma
+  Test_xi_to_sigma          \
+  Test_emf_mt_cpu           \
+  Test_emf_gpu
 
 CLEANFILES = $(EXTRA_PROGRAMS)
 
@@ -78,3 +80,9 @@ Test_stoch_distil_LDADD=-lHadrons -lGrid
 
 Test_xi_to_sigma_SOURCES=Test_xi_to_sigma.cpp
 Test_xi_to_sigma_LDADD=-lHadrons -lGrid
+
+Test_emf_mt_cpu_SOURCES=Test_emf_mt_cpu.cpp
+Test_emf_mt_cpu_LDADD=-lHadrons -lGrid
+
+Test_emf_gpu_SOURCES=Test_emf_gpu.cpp
+Test_emf_gpu_LDADD=-lHadrons -lGrid
