@@ -272,12 +272,6 @@ void TA2AExtendedMesonField<FImpl>::execute(void)
     Grid::A2AExtendedMesonField<FImpl>::LoopPropagator(loop, loop1, loop2);
     LOG(Message) << "Quark loop calculated" << std::endl;
 
-    //Currently trying to remove this block. No need to create so many temporaries in memory just to store the conjugate of the left vectors. 
-    //std::vector<FermionField> leftv(N_i, grid);
-    //for (int i = 0; i < N_i; i++)
-    //  Grid::A2AExtendedMesonField<FImpl>::PackLeftConjugated(leftv[i], left[i]);
-    //LOG(Message) << "Memory for left vectors allocated" << std::endl;
-
     double t1 = 0.0;
     double t2 = 0.0;
     double t3 = 0.0;
