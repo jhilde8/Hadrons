@@ -314,19 +314,14 @@ void TA2AExtendedMesonField<FImpl>::execute(void)
 	  }
 	  t2 += usecond();
 	  LOG(Message) << "loopRight packed for block "<< j/cacheBlock << "; type " << type << "; t_LR = "<< t2 << " us" << std::endl; //outputs once per j block
-          
-	  spatial_sum.AllocateRight(Njj, grid);
-	  spatial_sum.PackRight(loopRight, 0, Njj);
 
 	  t3 = -usecond();
 	  for ( unsigned int i = 0; i < N_i; i += cacheBlock ) {
 	    int Nii = MIN(N_i-i,cacheBlock);
 
-	    // spatial_sum.Allocate(Nii, Njj, grid);
-	    // spatial_sum.PackLeftConj(left, i, Nii);
-	    // spatial_sum.PackRight(loopRight, 0, Njj);
-	    spatial_sum.AllocateLeft(Nii);
+	    spatial_sum.Allocate(Nii, Njj, grid);
 	    spatial_sum.PackLeftConj(left, i, Nii);
+	    spatial_sum.PackRight(loopRight, 0, Njj);
 
 	    Eigen::Tensor<ComplexD,3> emfBlock(nt, Nii, Njj);
 	    emfBlock.setZero();

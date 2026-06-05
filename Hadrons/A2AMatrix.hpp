@@ -43,7 +43,7 @@
 #endif
 
 #ifndef HADRONS_A2AM_IO_TYPE
-#define HADRONS_A2AM_IO_TYPE ComplexF
+#define HADRONS_A2AM_IO_TYPE ComplexD
 #endif
 
 #ifndef DISTIL_NT_CHUNK_SIZE
