@@ -799,10 +799,13 @@ void A2AMatrixBlockComputation<T, Field, MetadataType, TIo>
         }
 
         // perf
-        LOG(Message) << "Kernel perf " << flops/t_kernel/1.0e3/nodes 
-                     << " Gflop/s/node " << std::endl;
-        LOG(Message) << "Kernel perf " << bytes/t_kernel*1.0e6/1024/1024/1024/nodes 
-                     << " GB/s/node "  << std::endl;
+        if (t_kernel > 0.)
+        {
+            LOG(Message) << "Kernel perf " << flops/t_kernel/1.0e3/nodes
+                         << " Gflop/s/node " << std::endl;
+            LOG(Message) << "Kernel perf " << bytes/t_kernel*1.0e6/1024/1024/1024/nodes
+                         << " GB/s/node "  << std::endl;
+        }
 
         // IO
         double       blockSize, ioTime;
@@ -855,10 +858,11 @@ void A2AMatrixBlockComputation<T, Field, MetadataType, TIo>
         STOP_TIMER("IO: total");
         blockSize  = static_cast<double>(next_*nstr_*nt_*N_ii*N_jj*sizeof(TIo));
         ioTime    += GET_TIMER("IO: write block");
-        LOG(Message) << "HDF5 IO done " << sizeString(blockSize) << " in "
-                     << ioTime  << " us (" 
-                     << blockSize/ioTime*1.0e6/1024/1024
-                     << " MB/s)" << std::endl;
+        if (ioTime > 0.)
+            LOG(Message) << "HDF5 IO done " << sizeString(blockSize) << " in "
+                         << ioTime << " us ("
+                         << blockSize/ioTime*1.0e6/1024/1024
+                         << " MB/s)" << std::endl;
     }
 }
 
