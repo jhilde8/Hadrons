@@ -54,8 +54,7 @@ class TLoadBinnedA2AVecs: public Module<LoadBinnedA2AVecsPar>
 {
 public:
     FERM_TYPE_ALIASES(FImpl,);
-  typedef typename FImpl::SiteSpinor::vector_type vector_type;
-  typedef iVector<iVector<iVector<vector_type, Nc>, Ns>, binSize > SiteSpinorSet;
+  typedef iVector<typename FImpl::SiteSpinor, binSize> SiteSpinorSet;
 public:
     // constructor
     TLoadBinnedA2AVecs(const std::string name);
