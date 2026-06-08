@@ -23,7 +23,9 @@ EXTRA_PROGRAMS = \
   Test_emf_mt_cpu           \
   Test_emf_gpu              \
   Test_fmf_cpu              \
-  Test_mf_gpu
+  Test_mf_gpu               \
+  Test_cmof_gpu             \
+  Test_cmof_mt_cpu
 
 CLEANFILES = $(EXTRA_PROGRAMS)
 
@@ -94,3 +96,9 @@ Test_fmf_cpu_LDADD=-lHadrons -lGrid
 
 Test_mf_gpu_SOURCES=Test_mf_gpu.cpp
 Test_mf_gpu_LDADD=-lHadrons -lGrid
+
+Test_cmof_gpu_SOURCES=Test_cmof_gpu.cpp
+Test_cmof_gpu_LDADD=-lHadrons -lGrid
+
+Test_cmof_mt_cpu_SOURCES=Test_cmof_mt_cpu.cpp
+Test_cmof_mt_cpu_LDADD=-lHadrons -lGrid
