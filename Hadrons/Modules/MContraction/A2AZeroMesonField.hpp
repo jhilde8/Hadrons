@@ -146,7 +146,7 @@ void TA2AZeroMesonField<FImpl>::execute(void)
     for (auto &gamma: gamma_)
     {
         std::stringstream ionameSS;
-        ionameSS << gamma;
+        ionameSS << gamma << "_0_0_0";
         std::string ioname   = ionameSS.str();
         std::string filename = dirBase + "/" + ioname + ".h5";
 

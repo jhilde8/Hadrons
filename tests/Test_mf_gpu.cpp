@@ -92,7 +92,7 @@ int main(int argc, char *argv[])
     mfPar.right      = "right";
     mfPar.output     = "mf_gpu_out";
     mfPar.gammas     = "Gamma5 Identity";
-    mfPar.mom        = {"0 0 0", "0 0 1"};
+    mfPar.mom        = {"0 0 0"};
 
     application.createModule<MContraction::A2AMesonField>("mf_gpu", mfPar);
 

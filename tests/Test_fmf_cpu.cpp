@@ -89,7 +89,7 @@ int main(int argc, char *argv[])
     fmfPar.right      = "right";
     fmfPar.output     = "fmf_cpu_out";
     fmfPar.gammas     = "Gamma5 Identity";
-    fmfPar.mom        = {"0 0 0", "0 0 1"};
+    fmfPar.mom        = {"0 0 0"};
 
     application.createModule<MContraction::A2AFewMesonField>("fmf_cpu", fmfPar);
 
