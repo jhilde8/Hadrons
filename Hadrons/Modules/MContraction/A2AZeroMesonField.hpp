@@ -26,7 +26,7 @@ class A2AZeroMesonFieldPar: Serializable
 public:
     GRID_SERIALIZABLE_CLASS_MEMBERS(A2AZeroMesonFieldPar,
                                     int,         block,
-                                    int,         cacheBlock,
+                                    int,         a2aBlock,
                                     std::string, left,
                                     std::string, right,
                                     std::string, output,
@@ -120,8 +120,8 @@ void TA2AZeroMesonField<FImpl>::execute(void)
     int nt         = env().getDim().back();
     int N_i        = left.size();
     int N_j        = right.size();
-    int block      = par().block;
-    int cacheBlock = par().cacheBlock;
+    int block    = par().block;
+    int a2aBlock = par().a2aBlock;
 
     LOG(Message) << "Computing all-to-all zero-momentum meson fields" << std::endl;
     LOG(Message) << "Left: '" << par().left << "' Right: '" << par().right << "'" << std::endl;
@@ -182,27 +182,17 @@ void TA2AZeroMesonField<FImpl>::execute(void)
 
                 double t_block = -usecond();
 
-                // cacheBlock sub-loops: one ZeroMesonField call per sub-block.
-                for (int sub_jj = 0; sub_jj < Njj; sub_jj += cacheBlock)
-                {
-                    int Njjj = std::min(Njj - sub_jj, cacheBlock);
-                    for (int sub_ii = 0; sub_ii < Nii; sub_ii += cacheBlock)
-                    {
-                        int Niii = std::min(Nii - sub_ii, cacheBlock);
+                Eigen::Tensor<ComplexD, 3> mfResult(nt, Nii, Njj);
+                A2Autils<FImpl>::ZeroMesonField(
+                    mfResult,
+                    left,  ib, Nii,
+                    right, jb, Njj,
+                    gamma, a2aBlock);
 
-                        Eigen::Tensor<ComplexD, 3> mfChunk(nt, Niii, Njjj);
-                        A2Autils<FImpl>::ZeroMesonField(
-                            mfChunk,
-                            left,  ib + sub_ii, Niii,
-                            right, jb + sub_jj, Njjj,
-                            gamma);
-
-                        for (int t   = 0; t   < nt;   t++)
-                        for (int ii  = 0; ii  < Niii; ii++)
-                        for (int jjj = 0; jjj < Njjj; jjj++)
-                            mf(0, 0, t, sub_ii + ii, sub_jj + jjj) = mfChunk(t, ii, jjj);
-                    }
-                }
+                for (int t  = 0; t  < nt;  t++)
+                for (int ii = 0; ii < Nii; ii++)
+                for (int jj = 0; jj < Njj; jj++)
+                    mf(0, 0, t, ii, jj) = mfResult(t, ii, jj);
 
                 t_block += usecond();
                 LOG(Message) << "MF block i=" << ib << " j=" << jb
