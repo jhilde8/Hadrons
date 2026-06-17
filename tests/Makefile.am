@@ -27,7 +27,8 @@ EXTRA_PROGRAMS = \
   Test_cmof_gpu             \
   Test_cmof_mt_cpu          \
   Test_zmf_gpu              \
-  Test_nmf_gpu
+  Test_nmf_gpu              \
+  Test_amf_gpu
 
 CLEANFILES = $(EXTRA_PROGRAMS)
 
@@ -110,3 +111,6 @@ Test_zmf_gpu_LDADD=-lHadrons -lGrid
 
 Test_nmf_gpu_SOURCES=Test_nmf_gpu.cpp
 Test_nmf_gpu_LDADD=-lHadrons -lGrid
+
+Test_amf_gpu_SOURCES=Test_amf_gpu.cpp
+Test_amf_gpu_LDADD=-lHadrons -lGrid

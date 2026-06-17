@@ -156,6 +156,7 @@ void TA2ANewMesonField<FImpl>::execute(void)
     typedef typename FImpl::SiteSpinor      vobj;
     typedef typename vobj::vector_type      vector_type;
     typedef iSpinColourVector<vector_type>  SpinColourVector_v;
+    typedef typename SpinColourVector_v::scalar_type scalar_t;
 
     auto &left  = envGet(std::vector<FermionField>, par().left);
     auto &right = envGet(std::vector<FermionField>, par().right);
@@ -230,8 +231,8 @@ void TA2ANewMesonField<FImpl>::execute(void)
     Vector<HADRONS_A2AM_IO_TYPE> mBuf;
     mBuf.resize(nt * block * block);
 
-    // Scratch right vectors for PhaseContractRight output.
-    std::vector<FermionField> phaseGammaRight(block, grid);
+    // Scratch right vectors for GammaRight output (zero-momentum base pack).
+    std::vector<FermionField> gammaRight(block, grid);
 
     // Create output directory.
     std::string dirBase = par().output + "." + std::to_string(vm().getTrajectory());
@@ -261,65 +262,215 @@ void TA2ANewMesonField<FImpl>::execute(void)
 #endif
     }
 
-    // Outer j-block loop.
+    // Pre-pack flat phase arrays (one per momentum) for in-place buffer multiplication.
+    // PackPhase mirrors PackVectors: SIMD/SIMT extraction → one scalar per spatial site.
+    std::vector<deviceVector<scalar_t>> ph_flat(nmom);
+    for (int m = 0; m < nmom; m++)
+        A2ASpatialSum<SpinColourVector_v>::PackPhase(grid, ph[m], ph_flat[m]);
+
+    // Identify which momenta are zero so we can skip Apply/RestorePhaseRight.
+    std::vector<bool> zero_mom(nmom, true);
+    for (int m = 0; m < nmom; m++)
+        for (auto c : mom_[m])
+            if (c != 0.0) { zero_mom[m] = false; break; }
+
+    // Loop order (jb, g, ib, m):
+    //   GammaRight  — once per (jb, g), outside ib
+    //   PackLeft    — once per (jb, g, ib)
+    //   PackRight   — once per (jb, g, ib)
+    //   Apply+GEMM+Restore — once per (jb, g, ib, m); Apply/Restore skipped at p=0
+
     for (int jb = 0; jb < N_j; jb += block)
     {
         int Njj = std::min(N_j - jb, block);
 
         for (int g = 0; g < ngamma; g++)
-        for (int m = 0; m < nmom; m++)
         {
-            // PhaseContractRight depends only on (jb, g, m): compute once,
-            // reuse across all i-blocks below.
+            // Apply gamma only (no phase) to right vectors — once per (jb, g).
             for (int jj = 0; jj < Njj; jj++)
-                A2Autils<FImpl>::PhaseContractRight(
-                    phaseGammaRight[jj], ph[m], gamma_[g], right[jb + jj]);
+                A2Autils<FImpl>::GammaRight(gammaRight[jj], gamma_[g], right[jb + jj]);
 
-            std::string ioname   = ionameFn(m, g);
-            std::string filename = filenameFn(m, g);
-
-            // Inner i-block loop.
             for (int ib = 0; ib < N_i; ib += block)
             {
                 int Nii = std::min(N_i - ib, block);
 
-                A2AMatrixSet<HADRONS_A2AM_IO_TYPE> mf(mBuf.data(), 1, 1, nt, Nii, Njj);
-
                 A2ASpatialSum<SpinColourVector_v> spatial_sum;
                 spatial_sum.Allocate(Nii, Njj, grid);
                 spatial_sum.PackLeftConj(left, ib, Nii);
-                spatial_sum.PackRight(phaseGammaRight, 0, Njj);
+                spatial_sum.PackRight(gammaRight, 0, Njj);
 
-                Eigen::Tensor<ComplexD, 3> block_result(nt, Nii, Njj);
-                spatial_sum.Sum(block_result);
-
-                for (int t  = 0; t  < nt;  t++)
-                for (int ii = 0; ii < Nii; ii++)
-                for (int jj = 0; jj < Njj; jj++)
-                    mf(0, 0, t, ii, jj) = block_result(t, ii, jj);
-
-                LOG(Message) << "MF block i=" << ib << " j=" << jb
-                             << " g=" << gamma_[g] << " m=" << m << std::endl;
-
-#ifdef HADRONS_A2AM_PARALLEL_IO
-                grid->Barrier();
-                if (grid->ThisRank() == 0) {
-#endif
+                for (int m = 0; m < nmom; m++)
                 {
-                    A2AMatrixIo<HADRONS_A2AM_IO_TYPE> io(filename, ioname, nt, N_i, N_j);
-                    io.saveBlock(mf, 0, 0, ib, jb);
-                }
+                    if (!zero_mom[m]) spatial_sum.ApplyPhaseRight(ph_flat[m]);
+
+                    Eigen::Tensor<ComplexD, 3> block_result(nt, Nii, Njj);
+                    spatial_sum.Sum(block_result);
+
+                    if (!zero_mom[m]) spatial_sum.RestorePhaseRight(ph_flat[m]);
+
+                    A2AMatrixSet<HADRONS_A2AM_IO_TYPE> mf(mBuf.data(), 1, 1, nt, Nii, Njj);
+                    for (int t  = 0; t  < nt;  t++)
+                    for (int ii = 0; ii < Nii; ii++)
+                    for (int jj = 0; jj < Njj; jj++)
+                        mf(0, 0, t, ii, jj) = block_result(t, ii, jj);
+
+                    std::string ioname   = ionameFn(m, g);
+                    std::string filename = filenameFn(m, g);
+
+                    LOG(Message) << "MF block i=" << ib << " j=" << jb
+                                 << " g=" << gamma_[g] << " m=" << m << std::endl;
+
 #ifdef HADRONS_A2AM_PARALLEL_IO
-                }
-                grid->Barrier();
+                    grid->Barrier();
+                    if (grid->ThisRank() == 0) {
 #endif
+                    {
+                        A2AMatrixIo<HADRONS_A2AM_IO_TYPE> io(filename, ioname, nt, N_i, N_j);
+                        io.saveBlock(mf, 0, 0, ib, jb);
+                    }
+#ifdef HADRONS_A2AM_PARALLEL_IO
+                    }
+                    grid->Barrier();
+#endif
+                } // m
             } // ib
-        } // g, m
+        } // g
     } // jb
 }
 
 END_MODULE_NAMESPACE
 
 END_HADRONS_NAMESPACE
+
+// =============================================================================
+// OLD execute() — loop order (jb, g, m, ib) using PhaseContractRight.
+// Kept for regression comparison.  Restore by swapping with the active execute()
+// above and recompiling.
+// =============================================================================
+#if 0
+template <typename FImpl>
+void TA2ANewMesonField<FImpl>::execute_old(void)
+{
+    typedef typename FImpl::SiteSpinor      vobj;
+    typedef typename vobj::vector_type      vector_type;
+    typedef iSpinColourVector<vector_type>  SpinColourVector_v;
+
+    auto &left  = envGet(std::vector<FermionField>, par().left);
+    auto &right = envGet(std::vector<FermionField>, par().right);
+
+    GridBase *grid = envGetGrid(FermionField);
+
+    int nt     = env().getDim().back();
+    int N_i    = left.size();
+    int N_j    = right.size();
+    int ngamma = gamma_.size();
+    int nmom   = mom_.size();
+    int block  = par().block;
+
+    auto &ph = envGet(std::vector<ComplexField>, momphName_);
+
+    if (!hasPhase_)
+    {
+        startTimer("Momentum phases");
+        for (int j = 0; j < nmom; ++j)
+        {
+            Complex i(0.0, 1.0);
+            envGetTmp(ComplexField, coor);
+            ph[j] = Zero();
+            for (unsigned int mu = 0; mu < mom_[j].size(); mu++)
+            {
+                LatticeCoordinate(coor, mu);
+                ph[j] = ph[j] + (mom_[j][mu]/env().getDim(mu))*coor;
+            }
+            ph[j] = exp((Real)(2*M_PI)*i*ph[j]);
+        }
+        hasPhase_ = true;
+        stopTimer("Momentum phases");
+    }
+
+    auto ionameFn = [this](const int m, const int g)
+    {
+        std::stringstream ss;
+        ss << gamma_[g] << "_";
+        for (unsigned int mu = 0; mu < mom_[m].size(); ++mu)
+            ss << mom_[m][mu] << ((mu == mom_[m].size() - 1) ? "" : "_");
+        return ss.str();
+    };
+
+    auto filenameFn = [this, &ionameFn](const int m, const int g)
+    {
+        return par().output + "." + std::to_string(vm().getTrajectory())
+               + "/" + ionameFn(m, g) + ".h5";
+    };
+
+    auto metadataFn = [this](const int m, const int g)
+    {
+        A2ANewMesonFieldMetadata md;
+        for (auto pmu: mom_[m])
+            md.momentum.push_back(pmu);
+        md.gamma = gamma_[g];
+        return md;
+    };
+
+    Vector<HADRONS_A2AM_IO_TYPE> mBuf;
+    mBuf.resize(nt * block * block);
+
+    std::vector<FermionField> phaseGammaRight(block, grid);
+
+    std::string dirBase = par().output + "." + std::to_string(vm().getTrajectory());
+    { std::string dummy = dirBase + "/mkdir.h5"; makeFileDir(dummy, grid); }
+
+    for (int m = 0; m < nmom; m++)
+    for (int g = 0; g < ngamma; g++)
+    {
+        std::string ioname   = ionameFn(m, g);
+        std::string filename = filenameFn(m, g);
+        A2ANewMesonFieldMetadata md = metadataFn(m, g);
+#ifdef HADRONS_A2AM_PARALLEL_IO
+        grid->Barrier();
+        if (grid->ThisRank() == 0) {
+#endif
+        { A2AMatrixIo<HADRONS_A2AM_IO_TYPE> io(filename, ioname, nt, N_i, N_j); io.initFile(md, block); }
+#ifdef HADRONS_A2AM_PARALLEL_IO
+        } grid->Barrier();
+#endif
+    }
+
+    for (int jb = 0; jb < N_j; jb += block)
+    {
+        int Njj = std::min(N_j - jb, block);
+        for (int g = 0; g < ngamma; g++)
+        for (int m = 0; m < nmom; m++)
+        {
+            for (int jj = 0; jj < Njj; jj++)
+                A2Autils<FImpl>::PhaseContractRight(
+                    phaseGammaRight[jj], ph[m], gamma_[g], right[jb + jj]);
+            std::string ioname   = ionameFn(m, g);
+            std::string filename = filenameFn(m, g);
+            for (int ib = 0; ib < N_i; ib += block)
+            {
+                int Nii = std::min(N_i - ib, block);
+                A2AMatrixSet<HADRONS_A2AM_IO_TYPE> mf(mBuf.data(), 1, 1, nt, Nii, Njj);
+                A2ASpatialSum<SpinColourVector_v> spatial_sum;
+                spatial_sum.Allocate(Nii, Njj, grid);
+                spatial_sum.PackLeftConj(left, ib, Nii);
+                spatial_sum.PackRight(phaseGammaRight, 0, Njj);
+                Eigen::Tensor<ComplexD, 3> block_result(nt, Nii, Njj);
+                spatial_sum.Sum(block_result);
+                for (int t=0;t<nt;t++) for (int ii=0;ii<Nii;ii++) for (int jj=0;jj<Njj;jj++)
+                    mf(0, 0, t, ii, jj) = block_result(t, ii, jj);
+#ifdef HADRONS_A2AM_PARALLEL_IO
+                grid->Barrier();
+                if (grid->ThisRank() == 0) {
+#endif
+                { A2AMatrixIo<HADRONS_A2AM_IO_TYPE> io(filename, ioname, nt, N_i, N_j); io.saveBlock(mf, 0, 0, ib, jb); }
+#ifdef HADRONS_A2AM_PARALLEL_IO
+                } grid->Barrier();
+#endif
+            } // ib
+        } // g, m
+    } // jb
+}
+#endif // 0
 
 #endif // Hadrons_MContraction_A2ANewMesonField_hpp_
