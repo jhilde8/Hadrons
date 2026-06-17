@@ -24,6 +24,7 @@
 #define HADRONS_A2AM_IO_TYPE ComplexD
 #include <Hadrons/Application.hpp>
 #include <Hadrons/Modules.hpp>
+#include "TestMFShells.hpp"
 
 using namespace Grid;
 using namespace Hadrons;
@@ -58,10 +59,12 @@ int main(int argc, char *argv[])
     // Parse optional CLI arguments (must match Test_fmf_cpu.cpp values
     // to get identical random vectors in both runs).
     // ------------------------------------------------------------------
-    int N_i        = 16;
-    int N_j        = 16;
-    int block      = 16;
-    int cacheBlock = 8;
+    int         N_i        = 16;
+    int         N_j        = 16;
+    int         block      = 16;
+    int         cacheBlock = 8;
+    int         momShell   = 0;
+    std::string gammas     = "Gamma5 Identity";
     if (GridCmdOptionExists(argv, argv + argc, "--Ni"))
         N_i        = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--Ni"));
     if (GridCmdOptionExists(argv, argv + argc, "--Nj"))
@@ -70,6 +73,12 @@ int main(int argc, char *argv[])
         block      = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--block"));
     if (GridCmdOptionExists(argv, argv + argc, "--cacheBlock"))
         cacheBlock = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--cacheBlock"));
+    if (GridCmdOptionExists(argv, argv + argc, "--mom"))
+        momShell   = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--mom"));
+    if (GridCmdOptionExists(argv, argv + argc, "--gammas"))
+        gammas     = GridCmdOptionPayload(argv, argv + argc, "--gammas");
+
+    std::vector<std::string> momenta = momentumShells(momShell);
 
     // ------------------------------------------------------------------
     // Random A2A vectors
@@ -91,8 +100,8 @@ int main(int argc, char *argv[])
     mfPar.left       = "left";
     mfPar.right      = "right";
     mfPar.output     = "mf_gpu_out";
-    mfPar.gammas     = "Gamma5 Identity";
-    mfPar.mom        = {"0 0 0"};
+    mfPar.gammas     = gammas;
+    mfPar.mom        = momenta;
 
     application.createModule<MContraction::A2AMesonField>("mf_gpu", mfPar);
 

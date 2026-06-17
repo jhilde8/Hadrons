@@ -274,41 +274,10 @@ void TA2AAllMesonField<FImpl>::execute(void)
     for (int m = 0; m < nmom; m++)
         A2ASpatialSum<SpinColourVector_v>::PackPhase(grid, ph[m], ph_flat[m]);
 
-    std::vector<bool> zero_mom(nmom, true);
-    for (int m = 0; m < nmom; m++)
-        for (auto c : mom_[m])
-            if (c != 0.0) { zero_mom[m] = false; break; }
-
-#if 0
-    // DISABLED: Precomputed sparse gamma coefficients.
-    // Fails for (a) off-diagonal sparse gammas (GammaX/Z, GammaYG5, GammaZG5)
-    // because the left/right spin indices are transposed relative to the
-    // correct formula, and (b) sigma matrices which have TWO nonzero entries
-    // per row so the 'break' silently drops the second term.
-    // Use the SpinMatrixD + Grid trace path below instead.
-    struct GammaInfo {
-        int      src[4];
-        ComplexD coeff[4];
-    };
-    std::vector<GammaInfo> ginfo(ngamma);
-    {
-        SpinMatrixD id; id = Zero();
-        for (int s = 0; s < Ns; s++) id()(s,s)() = 1.0;
-        for (int g = 0; g < ngamma; g++) {
-            SpinMatrixD gmat = Gamma(gamma_[g]) * id;
-            for (int s = 0; s < Ns; s++)
-            for (int sp = 0; sp < Ns; sp++) {
-                ComplexD v = gmat()(s,sp)();
-                if (v != ComplexD(0)) { ginfo[g].src[s] = sp; ginfo[g].coeff[s] = v; break; }
-            }
-        }
-    }
-#endif
-
     // Loop order (jb, ib, m):
-    //   PackLeftConjSpin, PackRightSpin — once per (jb, ib)
-    //   ApplyPhaseRight + Sum + Restore — once per (jb, ib, m)
-    //   gamma trace (host, all g)       — once per (jb, ib, m)
+    //   PackLeftConjSpin, PackRightSpin - once per (jb, ib)
+    //   ApplyPhaseRight + Sum + Restore - once per (jb, ib, m)
+    //   gamma trace (host, all g)       - once per (jb, ib, m)
 
     for (int jb = 0; jb < N_j; jb += block)
     {
@@ -323,14 +292,14 @@ void TA2AAllMesonField<FImpl>::execute(void)
             spatial_sum.PackLeftConjSpin(left,  ib, Nii);
             spatial_sum.PackRightSpin(right, jb, Njj);
 
+            // Reused across all momenta; size is fixed for this (ib, jb) block.
+            Eigen::Tensor<ComplexD, 3> spin_result(nt, Nii * Ns, Njj * Ns);
+
             for (int m = 0; m < nmom; m++)
             {
-                if (!zero_mom[m]) spatial_sum.ApplyPhaseRight(ph_flat[m]);
-
-                Eigen::Tensor<ComplexD, 3> spin_result(nt, Nii * Ns, Njj * Ns);
+                spatial_sum.ApplyPhaseRight(ph_flat[m]);
                 spatial_sum.Sum(spin_result);
-
-                if (!zero_mom[m]) spatial_sum.RestorePhaseRight(ph_flat[m]);
+                spatial_sum.RestorePhaseRight(ph_flat[m]);
 
                 for (int g = 0; g < ngamma; g++)
                 {
@@ -339,24 +308,16 @@ void TA2AAllMesonField<FImpl>::execute(void)
                     for (int ii = 0; ii < Nii; ii++)
                     for (int jj = 0; jj < Njj; jj++)
                     {
-                        // MF = Σ_{sl,sr} Γ[sl,sr] * spin_result[ii*Ns+sl, jj*Ns+sr]
-                        //    = trace(Γ * M)  where M[sr,sl] = spin_result[ii*Ns+sl, jj*Ns+sr].
-                        // Transposed fill is required: trace(Γ*M) = Σ_{α,β} Γ[α,β]*M[β,α],
-                        // so M[β,α] must equal spin_result[..+α, ..+β].
+                        // MF(ii,jj,t) = sum_{sl,sr} G[sl,sr] * spin_result[ii*Ns+sl, jj*Ns+sr]
+                        //             = trace(G * M) where M[sr,sl] = spin_result[ii*Ns+sl, jj*Ns+sr].
+                        // Transposed fill: trace(G*M) = sum_{a,b} G[a,b]*M[b,a],
+                        // so M[b,a] = spin_result[..+a, ..+b] requires spinMat(sr,sl) = spin_result(sl,sr).
+                        // All Ns*Ns entries are written below, so no Zero() initialisation needed.
                         SpinMatrixD spinMat;
-                        spinMat = Zero();
                         for (int sl = 0; sl < Ns; sl++)
                         for (int sr = 0; sr < Ns; sr++)
                             spinMat()(sr, sl)() = spin_result(t, ii*Ns + sl, jj*Ns + sr);
                         mf(0, 0, t, ii, jj) = TensorRemove(trace(Gamma(gamma_[g]) * spinMat));
-#if 0
-                        // DISABLED: sparse precomputed version — see #if 0 block above.
-                        ComplexD tr = 0;
-                        for (int s = 0; s < Ns; s++)
-                            tr += ginfo[g].coeff[s]
-                                * spin_result(t, ii * Ns + ginfo[g].src[s], jj * Ns + s);
-                        mf(0, 0, t, ii, jj) = tr;
-#endif
                     }
 
                     std::string ioname   = ionameFn(m, g);

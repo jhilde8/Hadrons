@@ -32,6 +32,7 @@
 #include <Hadrons/Application.hpp>
 #include <Hadrons/Modules.hpp>
 #include <Hadrons/Modules/MContraction/A2AAllMesonField.hpp>
+#include "TestMFShells.hpp"
 
 using namespace Grid;
 using namespace Hadrons;
@@ -65,15 +66,23 @@ int main(int argc, char *argv[])
     // ------------------------------------------------------------------
     // Parse optional CLI arguments.
     // ------------------------------------------------------------------
-    int N_i   = 16;
-    int N_j   = 16;
-    int block = 16;
+    int         N_i      = 16;
+    int         N_j      = 16;
+    int         block    = 16;
+    int         momShell = 0;
+    std::string gammas   = "Gamma5 Identity";
     if (GridCmdOptionExists(argv, argv + argc, "--Ni"))
-        N_i   = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--Ni"));
+        N_i      = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--Ni"));
     if (GridCmdOptionExists(argv, argv + argc, "--Nj"))
-        N_j   = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--Nj"));
+        N_j      = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--Nj"));
     if (GridCmdOptionExists(argv, argv + argc, "--block"))
-        block = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--block"));
+        block    = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--block"));
+    if (GridCmdOptionExists(argv, argv + argc, "--mom"))
+        momShell = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--mom"));
+    if (GridCmdOptionExists(argv, argv + argc, "--gammas"))
+        gammas   = GridCmdOptionPayload(argv, argv + argc, "--gammas");
+
+    std::vector<std::string> momenta = momentumShells(momShell);
 
     // ------------------------------------------------------------------
     // Random A2A vectors — names and sizes must match Test_fmf_cpu.cpp.
@@ -93,8 +102,8 @@ int main(int argc, char *argv[])
     amfPar.left   = "left";
     amfPar.right  = "right";
     amfPar.output = "amf_gpu_out";
-    amfPar.gammas = "Gamma5 Identity";
-    amfPar.mom    = {"0 0 0"};
+    amfPar.gammas = gammas;
+    amfPar.mom    = momenta;
 
     application.createModule<MContraction::A2AAllMesonField>("amf_gpu", amfPar);
 

@@ -268,17 +268,11 @@ void TA2ANewMesonField<FImpl>::execute(void)
     for (int m = 0; m < nmom; m++)
         A2ASpatialSum<SpinColourVector_v>::PackPhase(grid, ph[m], ph_flat[m]);
 
-    // Identify which momenta are zero so we can skip Apply/RestorePhaseRight.
-    std::vector<bool> zero_mom(nmom, true);
-    for (int m = 0; m < nmom; m++)
-        for (auto c : mom_[m])
-            if (c != 0.0) { zero_mom[m] = false; break; }
-
     // Loop order (jb, g, ib, m):
-    //   GammaRight  — once per (jb, g), outside ib
-    //   PackLeft    — once per (jb, g, ib)
-    //   PackRight   — once per (jb, g, ib)
-    //   Apply+GEMM+Restore — once per (jb, g, ib, m); Apply/Restore skipped at p=0
+    //   GammaRight       - once per (jb, g), outside ib
+    //   PackLeft         - once per (jb, g, ib)
+    //   PackRight        - once per (jb, g, ib)
+    //   Apply+GEMM+Restore - once per (jb, g, ib, m)
 
     for (int jb = 0; jb < N_j; jb += block)
     {
@@ -299,14 +293,15 @@ void TA2ANewMesonField<FImpl>::execute(void)
                 spatial_sum.PackLeftConj(left, ib, Nii);
                 spatial_sum.PackRight(gammaRight, 0, Njj);
 
+                // Reused across all momenta; size is fixed for this (ib, jb) block.
+                Eigen::Tensor<ComplexD, 3> block_result(nt, Nii, Njj);
+
                 for (int m = 0; m < nmom; m++)
                 {
-                    if (!zero_mom[m]) spatial_sum.ApplyPhaseRight(ph_flat[m]);
-
-                    Eigen::Tensor<ComplexD, 3> block_result(nt, Nii, Njj);
+                    spatial_sum.ApplyPhaseRight(ph_flat[m]);
                     spatial_sum.Sum(block_result);
 
-                    if (!zero_mom[m]) spatial_sum.RestorePhaseRight(ph_flat[m]);
+                    spatial_sum.RestorePhaseRight(ph_flat[m]);
 
                     A2AMatrixSet<HADRONS_A2AM_IO_TYPE> mf(mBuf.data(), 1, 1, nt, Nii, Njj);
                     for (int t  = 0; t  < nt;  t++)
