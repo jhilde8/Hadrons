@@ -279,10 +279,13 @@ void TA2AAllMesonField<FImpl>::execute(void)
         for (auto c : mom_[m])
             if (c != 0.0) { zero_mom[m] = false; break; }
 
-    // Precompute sparse gamma coefficients: for each gamma g and output spin s,
-    // trace(Γ_g * M)= Σ_s Γ_g[s][src[s]] * M[src[s]][s].
-    // Extracted by left-multiplying the identity SpinMatrixD by each Gamma.
-    // Gamma matrix entries are exactly 0, ±1, or ±i — equality comparison is safe.
+#if 0
+    // DISABLED: Precomputed sparse gamma coefficients.
+    // Fails for (a) off-diagonal sparse gammas (GammaX/Z, GammaYG5, GammaZG5)
+    // because the left/right spin indices are transposed relative to the
+    // correct formula, and (b) sigma matrices which have TWO nonzero entries
+    // per row so the 'break' silently drops the second term.
+    // Use the SpinMatrixD + Grid trace path below instead.
     struct GammaInfo {
         int      src[4];
         ComplexD coeff[4];
@@ -290,18 +293,17 @@ void TA2AAllMesonField<FImpl>::execute(void)
     std::vector<GammaInfo> ginfo(ngamma);
     {
         SpinMatrixD id; id = Zero();
-        for (int s = 0; s < Ns; s++) id()(s,s)() = 1.0; //sets identity
+        for (int s = 0; s < Ns; s++) id()(s,s)() = 1.0;
         for (int g = 0; g < ngamma; g++) {
-            SpinMatrixD gmat = Gamma(gamma_[g]) * id; //expanded Gamma * I 
+            SpinMatrixD gmat = Gamma(gamma_[g]) * id;
             for (int s = 0; s < Ns; s++)
             for (int sp = 0; sp < Ns; sp++) {
-                ComplexD v = gmat()(s,sp)(); //extracts single element, most of these will be 0. 
-                if (v != ComplexD(0)) { ginfo[g].src[s] = sp; ginfo[g].coeff[s] = v; break; } 
-		//for the nonzero entries, we save the spin indices in the src struct element, so src[0] would give the spin index pair 0,0 if the first element was nonzero
-		//We save the coefficient, +/- 1 or +/- i, in the coeff sctuct element, and since each gamma matrix has only one nonzero entry in each row and column, we can then 		   // find the coefficient using these two struct members only. coeffs give the coefficient for a particular first index, and src gives the second index.  
+                ComplexD v = gmat()(s,sp)();
+                if (v != ComplexD(0)) { ginfo[g].src[s] = sp; ginfo[g].coeff[s] = v; break; }
             }
         }
     }
+#endif
 
     // Loop order (jb, ib, m):
     //   PackLeftConjSpin, PackRightSpin — once per (jb, ib)
@@ -336,15 +338,25 @@ void TA2AAllMesonField<FImpl>::execute(void)
                     for (int t  = 0; t  < nt;  t++)
                     for (int ii = 0; ii < Nii; ii++)
                     for (int jj = 0; jj < Njj; jj++)
-                    //Computation of Tr(Gamma * spin_result). Gammas have been precomputed in a dense format as to neglect all zero entries
-		    //We index into spin_result using the src struct member of gammaInfo, and since there is only one non-zero entry per outer spin index s
-		    // we can simply loop over the single spin index, and do the multiplication onlyfor the nonzero entries. 
-		    {
+                    {
+                        // MF = Σ_{sl,sr} Γ[sl,sr] * spin_result[ii*Ns+sl, jj*Ns+sr]
+                        //    = trace(Γ * M)  where M[sr,sl] = spin_result[ii*Ns+sl, jj*Ns+sr].
+                        // Transposed fill is required: trace(Γ*M) = Σ_{α,β} Γ[α,β]*M[β,α],
+                        // so M[β,α] must equal spin_result[..+α, ..+β].
+                        SpinMatrixD spinMat;
+                        spinMat = Zero();
+                        for (int sl = 0; sl < Ns; sl++)
+                        for (int sr = 0; sr < Ns; sr++)
+                            spinMat()(sr, sl)() = spin_result(t, ii*Ns + sl, jj*Ns + sr);
+                        mf(0, 0, t, ii, jj) = TensorRemove(trace(Gamma(gamma_[g]) * spinMat));
+#if 0
+                        // DISABLED: sparse precomputed version — see #if 0 block above.
                         ComplexD tr = 0;
                         for (int s = 0; s < Ns; s++)
                             tr += ginfo[g].coeff[s]
                                 * spin_result(t, ii * Ns + ginfo[g].src[s], jj * Ns + s);
                         mf(0, 0, t, ii, jj) = tr;
+#endif
                     }
 
                     std::string ioname   = ionameFn(m, g);
