@@ -86,8 +86,9 @@ public:
                                         std::string,                graphFile,
                                         std::string,                scheduleFile,
                                         bool,                       saveSchedule,
+                                        std::string,                fileDirMode,
                                         int,                        parallelWriteMaxRetry);
-        GlobalPar(void): parallelWriteMaxRetry{-1}, saveSchedule{false} {}
+        GlobalPar(void): fileDirMode{"755"}, parallelWriteMaxRetry{-1}, saveSchedule{false} {}
     };
 
     struct ObjectId: Serializable

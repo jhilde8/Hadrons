@@ -40,6 +40,7 @@
 #include <regex>
 #include <Grid/Grid.h>
 #include <cxxabi.h>
+#include <sys/stat.h>
 
 #ifndef SITE_SIZE_TYPE
 #define SITE_SIZE_TYPE size_t
@@ -295,6 +296,8 @@ typedef XmlWriter ResultWriter;
 
 // recursive mkdir
 #define MAX_PATH_LENGTH 512u
+extern mode_t fileDirMode;
+void        setFileDirMode(const std::string &mode);
 int         mkdir(const std::string dirName);
 std::string basename(const std::string &s);
 std::string dirname(const std::string &s);

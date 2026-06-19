@@ -26,6 +26,8 @@
 
 #include <Hadrons/Global.hpp>
 
+#include <cstdlib>
+
 using namespace Grid;
 using namespace Hadrons;
 using namespace std::chrono_literals;
@@ -36,6 +38,7 @@ HadronsLogger Hadrons::HadronsLogMessage(1,"Message");
 HadronsLogger Hadrons::HadronsLogIterative(1,"Iterative");
 HadronsLogger Hadrons::HadronsLogDebug(1,"Debug");
 HadronsLogger Hadrons::HadronsLogIRL(1,"IRL");
+mode_t Hadrons::fileDirMode = S_IRWXU|S_IRGRP|S_IXGRP|S_IROTH|S_IXOTH;
 
 void Hadrons::initLogger(void)
 {
@@ -97,16 +100,32 @@ const std::string Hadrons::resultFileExt = "xml";
 #endif
 
 // recursive mkdir /////////////////////////////////////////////////////////////
+void Hadrons::setFileDirMode(const std::string &mode)
+{
+    if (mode.empty())
+    {
+        fileDirMode = S_IRWXU|S_IRGRP|S_IXGRP|S_IROTH|S_IXOTH;
+        return;
+    }
+
+    char *end = nullptr;
+    unsigned long value = std::strtoul(mode.c_str(), &end, 8);
+
+    if ((end == mode.c_str()) or (*end != '\0') or (value > 0777))
+    {
+        HADRONS_ERROR(Definition, "invalid file directory mode '" + mode + "'");
+    }
+
+    fileDirMode = static_cast<mode_t>(value);
+}
+
 int Hadrons::mkdir(const std::string dirName)
 {
     if (!dirName.empty() and access(dirName.c_str(), R_OK|W_OK|X_OK))
     {
-        mode_t mode755;
         char   tmp[MAX_PATH_LENGTH];
         char   *p = NULL;
         size_t len;
-
-        mode755 = S_IRWXU|S_IRGRP|S_IXGRP|S_IROTH|S_IXOTH;
 
         snprintf(tmp, sizeof(tmp), "%s", dirName.c_str());
         len = strlen(tmp);
@@ -119,12 +138,12 @@ int Hadrons::mkdir(const std::string dirName)
             if(*p == '/')
             {
                 *p = 0;
-                ::mkdir(tmp, mode755);
+                ::mkdir(tmp, fileDirMode);
                 *p = '/';
             }
         }
 
-        return ::mkdir(tmp, mode755);
+        return ::mkdir(tmp, fileDirMode);
     }
     else
     {

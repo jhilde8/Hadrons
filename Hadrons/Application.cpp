@@ -98,6 +98,11 @@ Application::Application(const std::string parameterFileName)
 void Application::setPar(const Application::GlobalPar &par)
 {
     par_ = par;
+    if (par_.fileDirMode.empty())
+    {
+        par_.fileDirMode = "755";
+    }
+    setFileDirMode(par_.fileDirMode);
     if (!getPar().database.applicationDb.empty())
     {
         LOG(Message) << "Connecting to application database in file '" 
