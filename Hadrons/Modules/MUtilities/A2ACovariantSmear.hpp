@@ -41,7 +41,7 @@ public:
 
     template <typename vtype>
     using iImplDoubledGaugeField = iVector<iScalar<iMatrix<vtype, Nc>>, Nds>;
-    typedef iImplDoubledGaugeField<Simd> SiteDoubledGaugeField;
+    typedef iImplDoubledGaugeField<vComplex> SiteDoubledGaugeField;
     typedef Lattice<SiteDoubledGaugeField> DoubledGaugeField;
 
     typedef CartesianStencil<siteObject, siteObject, SimpleStencilParams> StencilImpl;
@@ -196,9 +196,6 @@ void TA2ACovariantSmear<GImpl, FImpl>::execute(void)
     LOG(Message) << "Starting A2A covariant smearing, alpha=" << width
                  << " N=" << iterations << " orthog=" << orthog_axis << std::endl;
     LOG(Message) << par().a2aVectors << " has size " << Ni << std::endl;
-
-    if (orthog_axis != (unsigned int)(Nd - 1))
-        HADRONS_ERROR(Implementation, "CovariantLaplacianStencil smearing requires orthog_axis == Nd-1");
 
     CovariantLaplacianStencil<GImpl, FermionField> Lap(U);
     FermionField tmp(envGetGrid(FermionField));
