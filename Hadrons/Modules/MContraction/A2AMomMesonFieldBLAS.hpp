@@ -175,12 +175,6 @@ void TA2AMomMesonFieldBLAS<FImpl>::execute(void)
     int nxyz     = grid->lSites() / nt_local;
     int Nsc      = sizeof(typename SpinColourVector_v::scalar_object) / sizeof(scalar_t);
 
-    {
-        int64_t q_bytes = (int64_t)block * block * nt_local * nxyz * sizeof(scalar_t);
-        if (q_bytes >= (int64_t)60 * 1024 * 1024 * 1024)
-            HADRONS_ERROR(Size, "q_buf would exceed 60 GB; reduce par().block");
-    }
-
     LOG(Message) << "Computing all-to-all meson fields (momentum-factored, BLAS Phase 2)"
                  << std::endl;
     LOG(Message) << "Left: '" << par().left << "' Right: '" << par().right << "'"
@@ -298,7 +292,7 @@ void TA2AMomMesonFieldBLAS<FImpl>::execute(void)
 
                 startTimer("Pack vectors");
                 spatial_sum.PackLeftConj(left, ib, Nii);
-                spatial_sum.PackRight(right, jb, Njj);
+                spatial_sum.PackRightSCT(right, jb, Njj);
                 stopTimer("Pack vectors");
 
                 deviceVector<scalar_t> q_buf;
@@ -306,7 +300,7 @@ void TA2AMomMesonFieldBLAS<FImpl>::execute(void)
                 A2Autils<FImpl>::SpinColorTrace(
                     q_buf,
                     spatial_sum.W_buf,
-                    spatial_sum.LR_buf,
+                    spatial_sum.LR_sct,
                     gamma_[g],
                     Nii, Njj, nt_local, nxyz, Nsc);
                 stopTimer("SpinColorTrace");
