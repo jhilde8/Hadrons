@@ -23,6 +23,7 @@ EXTRA_PROGRAMS = \
   Test_emf_gpu              \
   Test_cmof_gpu             \
   Test_mf_gpu               \
+  Test_nmf_gpu              \
   Test_mmf_kernel           \
   Test_mmf_blas
 
@@ -92,6 +93,9 @@ Test_cmof_gpu_LDADD=-lHadrons -lGrid
 
 Test_mf_gpu_SOURCES=Test_mf_gpu.cpp
 Test_mf_gpu_LDADD=-lHadrons -lGrid
+
+Test_nmf_gpu_SOURCES=Test_nmf_gpu.cpp
+Test_nmf_gpu_LDADD=-lHadrons -lGrid
 
 Test_mmf_kernel_SOURCES=Test_mmf_kernel.cpp
 Test_mmf_kernel_LDADD=-lHadrons -lGrid
