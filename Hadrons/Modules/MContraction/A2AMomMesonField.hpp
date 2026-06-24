@@ -43,8 +43,25 @@ BEGIN_HADRONS_NAMESPACE
  ******************************************************************************/
 BEGIN_MODULE_NAMESPACE(MContraction)
 
-using A2AMomMesonFieldPar      = A2AMesonFieldPar;
-using A2AMomMesonFieldMetadata = A2AMesonFieldMetadata;
+class A2AMomMesonFieldPar: Serializable
+{
+public:
+    GRID_SERIALIZABLE_CLASS_MEMBERS(A2AMomMesonFieldPar,
+                                    int,                      block,
+                                    std::string,              left,
+                                    std::string,              right,
+                                    std::string,              output,
+                                    std::string,              gammas,
+                                    std::vector<std::string>, mom);
+};
+
+class A2AMomMesonFieldMetadata: Serializable
+{
+public:
+    GRID_SERIALIZABLE_CLASS_MEMBERS(A2AMomMesonFieldMetadata,
+                                    std::vector<RealF>, momentum,
+                                    Gamma::Algebra,     gamma);
+};
 
 template <typename FImpl>
 class TA2AMomMesonField : public Module<A2AMomMesonFieldPar>
@@ -161,8 +178,8 @@ void TA2AMomMesonField<FImpl>::execute(void)
 
     {
         int64_t q_bytes = (int64_t)block * block * nt_local * nxyz * sizeof(scalar_t);
-        GRID_ASSERT(q_bytes < (int64_t)60 * 1024 * 1024 * 1024,
-                    "q_buf would exceed 60 GB; reduce par().block");
+        if (q_bytes >= (int64_t)60 * 1024 * 1024 * 1024)
+            HADRONS_ERROR(Size, "q_buf would exceed 60 GB; reduce par().block");
     }
 
     LOG(Message) << "Computing all-to-all meson fields (momentum-factored kernel)"
