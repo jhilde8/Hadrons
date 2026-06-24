@@ -54,6 +54,69 @@ public:
     virtual void execute(void);
 private:
     std::vector<Gamma::Algebra> gamma_;
+
+    // Zero-momentum meson field via batched GEMM (no MomentumProject).
+    // Moved here from A2Autils so A2ASpatialSum.h stays free of ZMF-specific code.
+    static void ZeroMesonField(Eigen::Tensor<ComplexD, 3> &mat,
+                               const std::vector<FermionField> &lhs_wi,
+                               int lhs_start, int lhs_count,
+                               const std::vector<FermionField> &rhs_vj,
+                               int rhs_start, int rhs_count,
+                               Gamma::Algebra gamma,
+                               int a2aBlock)
+    {
+        typedef iSpinColourVector<typename FImpl::SiteSpinor::vector_type> SpinColourVector_v;
+
+        GridBase *grid      = lhs_wi[lhs_start].Grid();
+        int       Ni        = lhs_count;
+        int       Nj        = rhs_count;
+        int       Nsimd     = grid->Nsimd();
+        uint64_t  oSites    = grid->oSites();
+        int       nt_global = (int)mat.dimension(0);
+
+        double t_gamma = 0;
+        double t_gemm  = 0;
+
+        for (int jo = 0; jo < Nj; jo += a2aBlock) {
+            int Njj = std::min(Nj - jo, a2aBlock);
+
+            std::vector<FermionField> gammaRight(Njj, grid);
+            {
+                Gamma::Algebra ga = gamma;
+                for (int jj = 0; jj < Njj; jj++) {
+                    t_gamma -= usecond();
+                    autoView(outv, gammaRight[jj],                AcceleratorWrite);
+                    autoView(inv,  rhs_vj[rhs_start + jo + jj],  AcceleratorRead);
+                    accelerator_for(ss, oSites, (size_t)Nsimd, {
+                        coalescedWrite(outv[ss], Gamma(ga) * inv(ss));
+                    });
+                    t_gamma += usecond();
+                }
+            }
+
+            for (int io = 0; io < Ni; io += a2aBlock) {
+                int Nii = std::min(Ni - io, a2aBlock);
+
+                t_gemm -= usecond();
+                A2ASpatialSum<SpinColourVector_v> spatial_sum;
+                spatial_sum.Allocate    (Nii, Njj, grid);
+                spatial_sum.PackLeftConj(lhs_wi,     lhs_start + io, Nii);
+                spatial_sum.PackRight   (gammaRight, 0,              Njj);
+
+                Eigen::Tensor<ComplexD, 3> mfChunk(nt_global, Nii, Njj);
+                spatial_sum.Sum(mfChunk);
+                t_gemm += usecond();
+
+                for (int t  = 0; t  < nt_global; t++)
+                for (int ii = 0; ii < Nii;       ii++)
+                for (int jj = 0; jj < Njj;       jj++)
+                    mat(t, io + ii, jo + jj) = mfChunk(t, ii, jj);
+            }
+        }
+
+        std::cout << GridLogMessage << " ZeroMesonField t_gamma " << t_gamma/1.e6 << "s" << std::endl;
+        std::cout << GridLogMessage << " ZeroMesonField t_gemm  " << t_gemm/1.e6  << "s" << std::endl;
+    }
 };
 
 MODULE_REGISTER(A2AZeroMesonField, ARG(TA2AZeroMesonField<FIMPL>), MContraction);
@@ -183,7 +246,7 @@ void TA2AZeroMesonField<FImpl>::execute(void)
                 double t_block = -usecond();
 
                 Eigen::Tensor<ComplexD, 3> mfResult(nt, Nii, Njj);
-                A2Autils<FImpl>::ZeroMesonField(
+                ZeroMesonField(
                     mfResult,
                     left,  ib, Nii,
                     right, jb, Njj,

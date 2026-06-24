@@ -20,15 +20,11 @@ EXTRA_PROGRAMS = \
   Test_sigma_to_nucleon     \
   Test_stoch_distil         \
   Test_xi_to_sigma          \
-  Test_emf_mt_cpu           \
   Test_emf_gpu              \
-  Test_fmf_cpu              \
-  Test_mf_gpu               \
   Test_cmof_gpu             \
-  Test_cmof_mt_cpu          \
-  Test_zmf_gpu              \
-  Test_nmf_gpu              \
-  Test_amf_gpu
+  Test_mf_gpu               \
+  Test_mmf_kernel           \
+  Test_mmf_blas
 
 CLEANFILES = $(EXTRA_PROGRAMS)
 
@@ -88,29 +84,17 @@ Test_stoch_distil_LDADD=-lHadrons -lGrid
 Test_xi_to_sigma_SOURCES=Test_xi_to_sigma.cpp
 Test_xi_to_sigma_LDADD=-lHadrons -lGrid
 
-Test_emf_mt_cpu_SOURCES=Test_emf_mt_cpu.cpp
-Test_emf_mt_cpu_LDADD=-lHadrons -lGrid
-
 Test_emf_gpu_SOURCES=Test_emf_gpu.cpp
 Test_emf_gpu_LDADD=-lHadrons -lGrid
-
-Test_fmf_cpu_SOURCES=Test_fmf_cpu.cpp
-Test_fmf_cpu_LDADD=-lHadrons -lGrid
-
-Test_mf_gpu_SOURCES=Test_mf_gpu.cpp
-Test_mf_gpu_LDADD=-lHadrons -lGrid
 
 Test_cmof_gpu_SOURCES=Test_cmof_gpu.cpp
 Test_cmof_gpu_LDADD=-lHadrons -lGrid
 
-Test_cmof_mt_cpu_SOURCES=Test_cmof_mt_cpu.cpp
-Test_cmof_mt_cpu_LDADD=-lHadrons -lGrid
+Test_mf_gpu_SOURCES=Test_mf_gpu.cpp
+Test_mf_gpu_LDADD=-lHadrons -lGrid
 
-Test_zmf_gpu_SOURCES=Test_zmf_gpu.cpp
-Test_zmf_gpu_LDADD=-lHadrons -lGrid
+Test_mmf_kernel_SOURCES=Test_mmf_kernel.cpp
+Test_mmf_kernel_LDADD=-lHadrons -lGrid
 
-Test_nmf_gpu_SOURCES=Test_nmf_gpu.cpp
-Test_nmf_gpu_LDADD=-lHadrons -lGrid
-
-Test_amf_gpu_SOURCES=Test_amf_gpu.cpp
-Test_amf_gpu_LDADD=-lHadrons -lGrid
+Test_mmf_blas_SOURCES=Test_mmf_blas.cpp
+Test_mmf_blas_LDADD=-lHadrons -lGrid
