@@ -199,6 +199,8 @@ void TA2ANewMesonField<FImpl>::execute(void)
             }
             ph[j] = exp((Real)(2*M_PI)*i*ph[j]);
         }
+        for (int j = nmom - 1; j >= 1; --j)
+            ph[j] = ph[j] * adj(ph[j - 1]); // apply the phase difference
         hasPhase_ = true;
         stopTimer("Momentum phases");
     }
@@ -302,17 +304,22 @@ void TA2ANewMesonField<FImpl>::execute(void)
                 // Reused across all momenta; size is fixed for this (ib, jb) block.
                 Eigen::Tensor<ComplexD, 3> block_result(nt, Nii, Njj);
 
-                for (int m = 0; m < nmom; m++)
+                // Apply the first absolute phase before entering the momentum loop.
+                // Subsequent iterations apply the transition phase ph[m]*adj(ph[m-1])
+                // stored in ph_flat[m], stepping LR_buf from one momentum to the next
+                // without a restore pass.  No restore is needed after the final momentum
+                // because PackRight overwrites LR_buf at the start of each (ib,jb) block.
+                if (nmom > 0)
                 {
                     startTimer("Phase");
-                    spatial_sum.ApplyPhaseRight(ph_flat[m]);
+                    spatial_sum.ApplyPhaseRight(ph_flat[0]);
                     stopTimer("Phase");
+                }
+                for (int m = 0; m < nmom; m++)
+                {
                     startTimer("Sum");
                     spatial_sum.Sum(block_result);
                     stopTimer("Sum");
-                    startTimer("Phase");
-                    spatial_sum.RestorePhaseRight(ph_flat[m]);
-                    stopTimer("Phase");
 
                     startTimer("IO");
                     A2AMatrixSet<HADRONS_A2AM_IO_TYPE> mf(mBuf.data(), 1, 1, nt, Nii, Njj);
@@ -340,6 +347,13 @@ void TA2ANewMesonField<FImpl>::execute(void)
                     grid->Barrier();
 #endif
                     stopTimer("IO");
+
+                    if (m < nmom - 1)
+                    {
+                        startTimer("Phase");
+                        spatial_sum.ApplyPhaseRight(ph_flat[m + 1]);
+                        stopTimer("Phase");
+                    }
                 } // m
             } // ib
         } // g
