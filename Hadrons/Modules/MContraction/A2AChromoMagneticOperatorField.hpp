@@ -6,6 +6,8 @@ Source file: Hadrons/Modules/MContraction/A2AChromoMagneticOperatorField.hpp
 
 Copyright (C) 2015-2019
 
+Author: Peter Boyle <paboyle@bnl.gov>
+Author: Jonas Hildebrand <jonas.hildebrand@uconn.edu>
 Author: Masaaki Tomii <masaaki.tomii@uconn.edu>
 *************************************************************************************/
 /*  END LEGAL */
@@ -112,11 +114,6 @@ template <typename GImpl, typename FImpl>
 void TA2AChromoMagneticOperatorField<GImpl,FImpl>::execute(void)
 {
   typedef iSpinColourVector<vector_type> SpinColourVector_v;
-  typedef iSpinColourMatrix<vector_type> SpinColourMatrix_v;
-  typedef iColourMatrix<vector_type>     ColourMatrix_v;
-  typedef iSpinMatrix<vector_type>       SpinMatrix_v;
-  typedef iSinglet<vector_type>          Scalar_v;
-  typedef iSinglet<scalar_type>          Scalar_s;
 
   auto &left    = envGet(std::vector<FermionField>, par().left);
   auto &right   = envGet(std::vector<FermionField>, par().right);
@@ -124,20 +121,7 @@ void TA2AChromoMagneticOperatorField<GImpl,FImpl>::execute(void)
 
   GridBase *grid = left[0].Grid();
 
-  int orthogdim = 3;
-  int rd     = grid->_rdimensions[orthogdim];
-  int ld     = grid->_ldimensions[orthogdim];
-  int Nd     = grid->_ndimension;
-  int Nsimd  = grid->Nsimd();
-  int e1     = grid->_slice_nblock[orthogdim];
-  int e2     = grid->_slice_block [orthogdim];
-  int stride = grid->_slice_stride[orthogdim];
-
   LOG(Message) << "Computing all-to-all ChromoMagnetic operator fields (GPU)" << std::endl;
-  LOG(Message) << "R dimension: "  << rd     << std::endl;
-  LOG(Message) << "Slice nblock: " << e1     << std::endl;
-  LOG(Message) << "Slice block: "  << e2     << std::endl;
-  LOG(Message) << "Slice stride: " << stride << std::endl;
 
   int nt         = env().getDim().back();
   int N_i        = left.size();
@@ -154,22 +138,19 @@ void TA2AChromoMagneticOperatorField<GImpl,FImpl>::execute(void)
   LOG(Message) << "CMO field size: " << nt << "*" << N_i << "*" << N_j
                << " (filesize " << sizeString(nt*N_i*N_j*sizeof(HADRONS_A2AM_IO_TYPE)) << std::endl;
 
-  double t0, t1, t2, t3;
-
   std::vector<FermionField> loopRight(cacheBlock, grid);
 
   for (auto &ifOrthog: ifOrthogs_) {
     std::vector<GaugeMat>  G;
     Vector<Gamma::Algebra> Sigma;
 
-    t0 = -usecond();
+    startTimer("CMO contraction");
     if (ifOrthog == 0)
       Grid::A2AChromoMagneticOperator<GImpl,FImpl>::CMOContraction0(G, Sigma, U);
     else
       Grid::A2AChromoMagneticOperator<GImpl,FImpl>::CMOContraction1(G, Sigma, U);
-    t0 += usecond();
-    LOG(Message) << "Field strength constructed for ifOrthog=" << ifOrthog
-                 << "; t_fs=" << t0 << " us" << std::endl;
+    stopTimer("CMO contraction");
+    LOG(Message) << "Field strength constructed for ifOrthog=" << ifOrthog << std::endl;
 
     for (auto &parity: parities_) {
       LOG(Message) << "Starting calculation with ifOrthog=" << ifOrthog
@@ -177,32 +158,33 @@ void TA2AChromoMagneticOperatorField<GImpl,FImpl>::execute(void)
       A2AMatrixSet<HADRONS_A2AM_IO_TYPE> cmf(mBuf.data(), 1, 1, nt, N_i, N_j);
       A2ASpatialSum<SpinColourVector_v> spatial_sum;
 
-      t1 = -usecond();
       LOG(Message) << "Making CMF" << std::endl;
 
       for (unsigned int j = 0; j < N_j; j += cacheBlock) {
         int Njj = MIN(N_j-j, cacheBlock);
 
-        t2 = -usecond();
+        startTimer("CMOContractRight");
         for (int jj = 0; jj < Njj; jj++)
           Grid::A2AChromoMagneticOperator<GImpl,FImpl>::CMOContractRight(
               loopRight[jj], G, Sigma, right[j+jj], parity);
-        t2 += usecond();
+        stopTimer("CMOContractRight");
         LOG(Message) << "loopRight packed for j-block " << j/cacheBlock
-                     << "; ifOrthog=" << ifOrthog << " parity=" << parity
-                     << "; t_LR=" << t2 << " us" << std::endl;
+                     << " ifOrthog=" << ifOrthog << " parity=" << parity << std::endl;
 
-        t3 = -usecond();
         for (unsigned int i = 0; i < N_i; i += cacheBlock) {
           int Nii = MIN(N_i-i, cacheBlock);
 
+          startTimer("Allocate + Pack vectors");
           spatial_sum.Allocate(Nii, Njj, grid);
           spatial_sum.PackLeftConj(left, i, Nii);
           spatial_sum.PackRight(loopRight, 0, Njj);
+          stopTimer("Allocate + Pack vectors");
 
           Eigen::Tensor<ComplexD,3> cmfBlock(nt, Nii, Njj);
           cmfBlock.setZero();
+          startTimer("Sum");
           spatial_sum.Sum(cmfBlock);
+          stopTimer("Sum");
 
           for (int t  = 0; t  < nt;  t++)
           for (int ii = 0; ii < Nii; ii++)
@@ -210,21 +192,13 @@ void TA2AChromoMagneticOperatorField<GImpl,FImpl>::execute(void)
             cmf(0,0,t,i+ii,j+jj) = cmfBlock(t,ii,jj);
 
           LOG(Message) << "CMF made for i-block " << i/cacheBlock
-                       << "; j-block "            << j/cacheBlock
-                       << "; ifOrthog="           << ifOrthog
+                       << " j-block "             << j/cacheBlock
+                       << " ifOrthog="            << ifOrthog
                        << " parity="              << parity << std::endl;
         }// i
-        t3 += usecond();
-        LOG(Message) << "CMF made for all i-blocks in j-block " << j/cacheBlock
-                     << "; t_block=" << t3 << " us" << std::endl;
       }// j
-      t1 += usecond();
-      LOG(Message) << "CMF made; t_cmf=" << t1 << " us" << std::endl;
+      LOG(Message) << "CMF made for ifOrthog=" << ifOrthog << " parity=" << parity << std::endl;
 
-#ifdef HADRONS_A2AM_PARALLEL_IO
-      grid->Barrier();
-      if (grid->ThisRank() == 0) {
-#endif
       std::string ioname = "parity" + std::to_string(parity);
       if (ifOrthog == 1)
         ioname = ioname + "_GijSij";
@@ -234,6 +208,11 @@ void TA2AChromoMagneticOperatorField<GImpl,FImpl>::execute(void)
                            + "/" + ioname + ".h5";
       LOG(Message) << "Writing block to " << filename << std::endl;
       makeFileDir(filename, grid);
+      startTimer("IO");
+#ifdef HADRONS_A2AM_PARALLEL_IO
+      grid->Barrier();
+      if (grid->ThisRank() == 0) {
+#endif
       A2AMatrixIo<HADRONS_A2AM_IO_TYPE> io(filename, ioname, nt, N_i, N_j);
       A2AChromoMagneticOperatorFieldMetadata md;
       md.meta = ioname;
@@ -243,6 +222,7 @@ void TA2AChromoMagneticOperatorField<GImpl,FImpl>::execute(void)
       }
       grid->Barrier();
 #endif
+      stopTimer("IO");
     }// parity
   }// ifOrthog
 }

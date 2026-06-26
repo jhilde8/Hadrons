@@ -263,10 +263,12 @@ void TA2ANewMesonField<FImpl>::execute(void)
     }
 
     // Pre-pack flat phase arrays (one per momentum) for in-place buffer multiplication.
-    // PackPhase mirrors PackVectors: SIMD/SIMT extraction → one scalar per spatial site.
+    // PackPhase mirrors PackVectors: SIMD/SIMT extraction -> one scalar per spatial site.
+    startTimer("Pack phases");
     std::vector<deviceVector<scalar_t>> ph_flat(nmom);
     for (int m = 0; m < nmom; m++)
         A2ASpatialSum<SpinColourVector_v>::PackPhase(grid, ph[m], ph_flat[m]);
+    stopTimer("Pack phases");
 
     // Loop order (jb, g, ib, m):
     //   GammaRight       - once per (jb, g), outside ib
@@ -280,29 +282,39 @@ void TA2ANewMesonField<FImpl>::execute(void)
 
         for (int g = 0; g < ngamma; g++)
         {
-            // Apply gamma only (no phase) to right vectors — once per (jb, g).
+            // Apply gamma only (no phase) to right vectors - once per (jb, g).
+            startTimer("GammaRight");
             for (int jj = 0; jj < Njj; jj++)
                 A2Autils<FImpl>::GammaRight(gammaRight[jj], gamma_[g], right[jb + jj]);
+            stopTimer("GammaRight");
 
             for (int ib = 0; ib < N_i; ib += block)
             {
                 int Nii = std::min(N_i - ib, block);
 
+                startTimer("Allocate + Pack vectors");
                 A2ASpatialSum<SpinColourVector_v> spatial_sum;
                 spatial_sum.Allocate(Nii, Njj, grid);
                 spatial_sum.PackLeftConj(left, ib, Nii);
                 spatial_sum.PackRight(gammaRight, 0, Njj);
+                stopTimer("Allocate + Pack vectors");
 
                 // Reused across all momenta; size is fixed for this (ib, jb) block.
                 Eigen::Tensor<ComplexD, 3> block_result(nt, Nii, Njj);
 
                 for (int m = 0; m < nmom; m++)
                 {
+                    startTimer("Phase");
                     spatial_sum.ApplyPhaseRight(ph_flat[m]);
+                    stopTimer("Phase");
+                    startTimer("Sum");
                     spatial_sum.Sum(block_result);
-
+                    stopTimer("Sum");
+                    startTimer("Phase");
                     spatial_sum.RestorePhaseRight(ph_flat[m]);
+                    stopTimer("Phase");
 
+                    startTimer("IO");
                     A2AMatrixSet<HADRONS_A2AM_IO_TYPE> mf(mBuf.data(), 1, 1, nt, Nii, Njj);
                     for (int t  = 0; t  < nt;  t++)
                     for (int ii = 0; ii < Nii; ii++)
@@ -327,6 +339,7 @@ void TA2ANewMesonField<FImpl>::execute(void)
                     }
                     grid->Barrier();
 #endif
+                    stopTimer("IO");
                 } // m
             } // ib
         } // g

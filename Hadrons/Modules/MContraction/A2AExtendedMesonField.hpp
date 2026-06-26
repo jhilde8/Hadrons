@@ -6,6 +6,8 @@ Grid/algorithms/multigrid/GeneralCoarsenedMatrix.hGrid/algorithms/multigrid/Gene
 
 Copyright (C) 2015-2019
 
+Author: Peter Boyle <paboyle@bnl.gov>
+Author: Jonas Hildebrand <jonas.hildebrand@uconn.edu>
 Author: Masaaki Tomii <masaaki.tomii@uconn.edu>
 *************************************************************************************/
 /*  END LEGAL */
@@ -213,10 +215,6 @@ template <typename FImpl>
 void TA2AExtendedMesonField<FImpl>::execute(void)
 {
   typedef iSpinColourVector<vector_type> SpinColourVector_v;
-  typedef iSpinColourMatrix<vector_type> SpinColourMatrix_v;
-  typedef iSpinMatrix<vector_type> SpinMatrix_v;
-  typedef iSinglet<vector_type> Scalar_v;
-  typedef iSinglet<scalar_type> Scalar_s;
     auto &left  = envGet(std::vector<FermionField>, par().left);
     auto &right = envGet(std::vector<FermionField>, par().right);
     auto &loop1 = envGet(std::vector<FermionField>, par().loop_vw1);
@@ -224,31 +222,13 @@ void TA2AExtendedMesonField<FImpl>::execute(void)
 
     GridBase *grid = left[0].Grid();
 
-    int orthogdim = 3;
-    int rd=grid->_rdimensions[orthogdim];//2
-    int ld=grid->_ldimensions[orthogdim];
-    int Nd=grid->_ndimension;
-    int Nsimd=grid->Nsimd();
-    int e1=    grid->_slice_nblock[orthogdim];//1
-    int e2=    grid->_slice_block [orthogdim];//64 must be 4^3
-    int stride=grid->_slice_stride[orthogdim];//128
     LOG(Message) << "Computing all-to-all EXTENDED meson fields" << std::endl;
-    LOG(Message) << "R dimension: " << rd << std::endl;
-    LOG(Message) << "Slice nblock: " << e1 << std::endl;
-    LOG(Message) << "Slice block: " << e2 << std::endl;
-    LOG(Message) << "Slice stride: " << stride << std::endl;
 
     int nt         = env().getDim().back();
     int N_i        = left.size();
     int N_j        = right.size();
-    //int block      = par().block;
     int cacheBlock = par().cacheBlock;
     Vector<HADRONS_A2AM_IO_TYPE> mBuf; mBuf.resize(nt*N_i*N_j);
-
-  int ngamma = 0;
-    for ( int ig = 0 ; ig < gamma1_.size() ; ++ig ) {
-      ngamma += gamma1_[ig].size();
-    }
 
     LOG(Message) << "Left: '" << par().left << "' Right: '"
 		 << par().right << "'" << std::endl;
@@ -269,12 +249,10 @@ void TA2AExtendedMesonField<FImpl>::execute(void)
                  << "/momentum/bilinear)" << std::endl;
 
     auto &loop = envGet(PropagatorField, "propagatorLoop");
+    startTimer("LoopPropagator");
     Grid::A2AExtendedMesonField<FImpl>::LoopPropagator(loop, loop1, loop2);
+    stopTimer("LoopPropagator");
     LOG(Message) << "Quark loop calculated" << std::endl;
-
-    double t1 = 0.0;
-    double t2 = 0.0;
-    double t3 = 0.0;
 
     std::vector<FermionField> loopRight(cacheBlock, grid);
     PropagatorField tloop(grid);
@@ -288,6 +266,7 @@ void TA2AExtendedMesonField<FImpl>::execute(void)
 	Vector<Gamma::Algebra> gamma1(gamma1_[ig].begin(), gamma1_[ig].end());
 	Vector<Gamma::Algebra> gamma2(gamma2_[ig].begin(), gamma2_[ig].end());
 
+	startTimer("Loop contraction");
 	tloop = Zero();
 	switch (type) {
 	case 0: Grid::A2AExtendedMesonField<FImpl>::LoopContractionType0(tloop, loop);                 break;
@@ -295,15 +274,14 @@ void TA2AExtendedMesonField<FImpl>::execute(void)
 	case 2: Grid::A2AExtendedMesonField<FImpl>::LoopContractionType2(tloop, loop, gamma2);         break;
 	case 3: Grid::A2AExtendedMesonField<FImpl>::LoopContractionType3(tloop, loop, gamma1, gamma2); break;
 	}
+	stopTimer("Loop contraction");
 	LOG(Message) << "tloop contraction done for type " << type << std::endl;
-	t1 = -usecond();
 	LOG(Message) << "Making EMF" << std::endl;
 	A2ASpatialSum<SpinColourVector_v> spatial_sum;
 
 	for ( unsigned int j = 0; j < N_j; j += cacheBlock ){
 	  int Njj = MIN(N_j-j,cacheBlock);
-	  // std::vector<FermionField> loopRight(Njj, grid);
-	  t2 = -usecond();
+	  startTimer("LoopRight contraction");
 	  for (int jj = 0; jj < Njj; jj++) {
 	    switch (type) {
 	    case 0: Grid::A2AExtendedMesonField<FImpl>::LoopRightContractionType0(loopRight[jj], tloop, right[j+jj], gamma1, gamma2); break;
@@ -312,66 +290,56 @@ void TA2AExtendedMesonField<FImpl>::execute(void)
 	    case 3: Grid::A2AExtendedMesonField<FImpl>::LoopRightContractionType3(loopRight[jj], tloop, right[j+jj]);                 break;
 	    }
 	  }
-	  t2 += usecond();
-	  LOG(Message) << "loopRight packed for block "<< j/cacheBlock << "; type " << type << "; t_LR = "<< t2 << " us" << std::endl; //outputs once per j block
+	  stopTimer("LoopRight contraction");
+	  LOG(Message) << "loopRight packed for j-block " << j/cacheBlock << " type " << type << std::endl;
 
-	  t3 = -usecond();
 	  for ( unsigned int i = 0; i < N_i; i += cacheBlock ) {
 	    int Nii = MIN(N_i-i,cacheBlock);
 
+	    startTimer("Allocate + Pack vectors");
 	    spatial_sum.Allocate(Nii, Njj, grid);
 	    spatial_sum.PackLeftConj(left, i, Nii);
 	    spatial_sum.PackRight(loopRight, 0, Njj);
+	    stopTimer("Allocate + Pack vectors");
 
 	    Eigen::Tensor<ComplexD,3> emfBlock(nt, Nii, Njj);
 	    emfBlock.setZero();
+	    startTimer("Sum");
 	    spatial_sum.Sum(emfBlock);
+	    stopTimer("Sum");
 
 	    for(int t =0;t< nt;t++)
 	      for(int ii=0;ii< Nii;ii++)
 		for(int jj=0;jj< Njj;jj++)
 		  emf(0,0,t,i+ii,j+jj) = emfBlock(t,ii,jj);
-	
-	    LOG(Message) << "EMF made for i-block " << i/cacheBlock << "; j-block " << j/cacheBlock << "; type " << type << std::endl; //outputs for each i-j block pair
+
+	    LOG(Message) << "EMF made for i-block " << i/cacheBlock << " j-block " << j/cacheBlock << " type " << type << std::endl;
 	}
-	t3 += usecond();
-	LOG(Message) << "EMF made for all i blocks in j block " << j/cacheBlock << "; t_block = " << t3 << " us" << std::endl;
 	
 	}// i,j
-	t1 += usecond();
-	LOG(Message) << "EMF made, t_emf = " << t1 << " us" << std::endl; //Final output, acting as timer for full blocked sum
-
-        double       blockSize, ioTime;
+	LOG(Message) << "EMF made for type " << type << std::endl;
 
 	std::string ioname = "type" + std::to_string(type) + "_" + nameg1_[ig] + "_" + nameg2_[ig];
 	std::string filename = par().output + "." + std::to_string(vm().getTrajectory()) + "/" + ioname + ".h5";
         LOG(Message) << "Writing block to " << filename << std::endl;
         makeFileDir(filename, grid);
-
-        //ioTime = -GET_TIMER("IO: write block");
-        //START_TIMER("IO: total");
+        startTimer("IO");
 #ifdef HADRONS_A2AM_PARALLEL_IO
         grid->Barrier();
         LOG(Message) << "HADRONS_A2AM_PARALLEL_IO" << std::endl;
 	if ( grid->ThisRank() == 0 ) {
 #endif
-	  // make task list for current node
 	  A2AMatrixIo<HADRONS_A2AM_IO_TYPE> io(filename,ioname,nt, N_i, N_j);
 	  A2AExtendedMesonFieldMetadata md;
 	  md.gamma1 = nameg1_[ig];
 	  md.gamma2 = nameg2_[ig];
-
-	  // memory consuming
 	  io.initFile(md, MAX(N_i,N_j));
-	  //START_TIMER("IO: write block");
 	  io.saveBlock(emf, 0, 0, 0, 0);
-	  //STOP_TIMER("IO: write block");
-
 #ifdef HADRONS_A2AM_PARALLEL_IO
 	}
 	grid->Barrier();
 #endif
-        //STOP_TIMER("IO: total");
+        stopTimer("IO");
       }// ig
     }// type
 
