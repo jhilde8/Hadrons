@@ -294,12 +294,15 @@ void TA2ANewMesonField<FImpl>::execute(void)
             {
                 int Nii = std::min(N_i - ib, block);
 
-                startTimer("Allocate + Pack vectors");
+                startTimer("Allocate");
                 A2ASpatialSum<SpinColourVector_v> spatial_sum;
                 spatial_sum.Allocate(Nii, Njj, grid);
+                stopTimer("Allocate");
+
+                startTimer("Pack vectors");
                 spatial_sum.PackLeftConj(left, ib, Nii);
                 spatial_sum.PackRight(gammaRight, 0, Njj);
-                stopTimer("Allocate + Pack vectors");
+                stopTimer("Pack vectors");
 
                 // Reused across all momenta; size is fixed for this (ib, jb) block.
                 Eigen::Tensor<ComplexD, 3> block_result(nt, Nii, Njj);
