@@ -34,6 +34,7 @@
 #include <Hadrons/ModuleFactory.hpp>
 #include <Hadrons/A2AMatrix.hpp>
 #include <Grid/qcd/utils/A2Autils.h>
+#include <Grid/algorithms/blas/A2ASpatialSum.h>
 
 BEGIN_HADRONS_NAMESPACE
 
@@ -75,10 +76,11 @@ public:
     virtual void setup(void);
     virtual void execute(void);
 private:
-    bool                           hasPhase_{false};
-    std::string                    momphName_;
-    std::vector<Gamma::Algebra>    gamma_;
-    std::vector<std::vector<Real>> mom_;
+    bool                                      hasPhase_{false};
+    std::string                               momphName_;
+    std::vector<Gamma::Algebra>               gamma_;
+    std::vector<std::vector<Real>>            mom_;
+    A2ASpatialSum<typename FImpl::SiteSpinor> spatial_sum_;
 };
 
 MODULE_REGISTER(A2ANewMesonField, ARG(TA2ANewMesonField<FIMPL>), MContraction);
@@ -199,8 +201,10 @@ void TA2ANewMesonField<FImpl>::execute(void)
             }
             ph[j] = exp((Real)(2*M_PI)*i*ph[j]);
         }
+        ComplexField last_abs_ph = ph[nmom - 1];
         for (int j = nmom - 1; j >= 1; --j)
             ph[j] = ph[j] * adj(ph[j - 1]); // apply the phase difference
+        ph.push_back(adj(last_abs_ph)); // restore transition: undo final accumulated phase
         hasPhase_ = true;
         stopTimer("Momentum phases");
     }
@@ -267,61 +271,67 @@ void TA2ANewMesonField<FImpl>::execute(void)
     // Pre-pack flat phase arrays (one per momentum) for in-place buffer multiplication.
     // PackPhase mirrors PackVectors: SIMD/SIMT extraction -> one scalar per spatial site.
     startTimer("Pack phases");
-    std::vector<deviceVector<scalar_t>> ph_flat(nmom);
-    for (int m = 0; m < nmom; m++)
+    std::vector<deviceVector<scalar_t>> ph_flat(ph.size());
+    for (int m = 0; m < (int)ph.size(); m++)
         A2ASpatialSum<SpinColourVector_v>::PackPhase(grid, ph[m], ph_flat[m]);
     stopTimer("Pack phases");
 
+    // One-time allocation for the full block size; subsequent pointer rewrites are cheap.
+    startTimer("Allocate");
+    spatial_sum_.AllocateRight(block, grid);
+    spatial_sum_.AllocateLeft(block);
+    stopTimer("Allocate");
+
     // Loop order (jb, g, ib, m):
-    //   GammaRight       - once per (jb, g), outside ib
-    //   PackLeft         - once per (jb, g, ib)
-    //   PackRight        - once per (jb, g, ib)
-    //   Apply+GEMM+Restore - once per (jb, g, ib, m)
+    //   AllocateRight + PackRight - once per (jb, g)
+    //   AllocateLeft  + PackLeft  - once per ib
+    //   Apply+GEMM+Restore        - once per (jb, g, ib, m)
 
     for (int jb = 0; jb < N_j; jb += block)
     {
         int Njj = std::min(N_j - jb, block);
 
+        startTimer("Allocate");
+        spatial_sum_.AllocateRight(Njj, grid);
+        stopTimer("Allocate");
+
         for (int g = 0; g < ngamma; g++)
         {
-            // Apply gamma only (no phase) to right vectors - once per (jb, g).
             startTimer("GammaRight");
             for (int jj = 0; jj < Njj; jj++)
                 A2Autils<FImpl>::GammaRight(gammaRight[jj], gamma_[g], right[jb + jj]);
             stopTimer("GammaRight");
+
+            startTimer("Pack vectors");
+            spatial_sum_.PackRight(gammaRight, 0, Njj);
+            stopTimer("Pack vectors");
 
             for (int ib = 0; ib < N_i; ib += block)
             {
                 int Nii = std::min(N_i - ib, block);
 
                 startTimer("Allocate");
-                A2ASpatialSum<SpinColourVector_v> spatial_sum;
-                spatial_sum.Allocate(Nii, Njj, grid);
+                spatial_sum_.AllocateLeft(Nii);
                 stopTimer("Allocate");
 
                 startTimer("Pack vectors");
-                spatial_sum.PackLeftConj(left, ib, Nii);
-                spatial_sum.PackRight(gammaRight, 0, Njj);
+                spatial_sum_.PackLeftConj(left, ib, Nii);
                 stopTimer("Pack vectors");
 
-                // Reused across all momenta; size is fixed for this (ib, jb) block.
                 Eigen::Tensor<ComplexD, 3> block_result(nt, Nii, Njj);
 
-                // Apply the first absolute phase before entering the momentum loop.
-                // Subsequent iterations apply the transition phase ph[m]*adj(ph[m-1])
-                // stored in ph_flat[m], stepping LR_buf from one momentum to the next
-                // without a restore pass.  No restore is needed after the final momentum
-                // because PackRight overwrites LR_buf at the start of each (ib,jb) block.
-                if (nmom > 0)
-                {
-                    startTimer("Phase");
-                    spatial_sum.ApplyPhaseRight(ph_flat[0]);
-                    stopTimer("Phase");
-                }
+                // ph_flat[0] is the absolute phase for the first momentum.
+                // ph_flat[nmom] is the restore transition that steps LR_buf back to the
+                // unphased state after the last Sum, so each ib block begins with clean
+                // right vectors without needing a new PackRight call.
+                startTimer("Phase");
+                spatial_sum_.ApplyPhaseRight(ph_flat[0]);
+                stopTimer("Phase");
+
                 for (int m = 0; m < nmom; m++)
                 {
                     startTimer("Sum");
-                    spatial_sum.Sum(block_result);
+                    spatial_sum_.Sum(block_result);
                     stopTimer("Sum");
 
                     startTimer("IO");
@@ -351,12 +361,9 @@ void TA2ANewMesonField<FImpl>::execute(void)
 #endif
                     stopTimer("IO");
 
-                    if (m < nmom - 1)
-                    {
-                        startTimer("Phase");
-                        spatial_sum.ApplyPhaseRight(ph_flat[m + 1]);
-                        stopTimer("Phase");
-                    }
+                    startTimer("Phase");
+                    spatial_sum_.ApplyPhaseRight(ph_flat[m + 1]);
+                    stopTimer("Phase");
                 } // m
             } // ib
         } // g
