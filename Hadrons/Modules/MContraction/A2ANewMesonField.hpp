@@ -240,6 +240,11 @@ void TA2ANewMesonField<FImpl>::execute(void)
     // Scratch right vectors for GammaRight output (zero-momentum base pack).
     std::vector<FermionField> gammaRight(block, grid);
 
+    // Pre-allocated result buffer: one tensor per momentum, reused across all blocks.
+    // Sum() fills only [0..Nii-1][0..Njj-1]; IO fill reads with explicit Nii/Njj bounds.
+    std::vector<Eigen::Tensor<ComplexD, 3>> all_results(nmom,
+        Eigen::Tensor<ComplexD, 3>(nt, block, block));
+
     // Create output directory.
     std::string dirBase = par().output + "." + std::to_string(vm().getTrajectory());
     {
@@ -247,26 +252,24 @@ void TA2ANewMesonField<FImpl>::execute(void)
         makeFileDir(dummy, grid);
     }
 
+    unsigned int myRank = grid->ThisRank();
+    unsigned int nRank  = grid->RankCount();
+
     // Initialise one HDF5 file per (mom, gamma) pair before the block loops.
+    // Each rank initialises only its assigned files; single barrier after.
     for (int m = 0; m < nmom; m++)
     for (int g = 0; g < ngamma; g++)
     {
-        std::string ioname   = ionameFn(m, g);
-        std::string filename = filenameFn(m, g);
-        A2ANewMesonFieldMetadata md = metadataFn(m, g);
-#ifdef HADRONS_A2AM_PARALLEL_IO
-        grid->Barrier();
-        if (grid->ThisRank() == 0) {
-#endif
+        if ((unsigned int)(m * ngamma + g) % nRank == myRank)
         {
+            std::string ioname   = ionameFn(m, g);
+            std::string filename = filenameFn(m, g);
+            A2ANewMesonFieldMetadata md = metadataFn(m, g);
             A2AMatrixIo<HADRONS_A2AM_IO_TYPE> io(filename, ioname, nt, N_i, N_j);
             io.initFile(md, block);
         }
-#ifdef HADRONS_A2AM_PARALLEL_IO
-        }
-        grid->Barrier();
-#endif
     }
+    grid->Barrier();
 
     // Pre-pack flat phase arrays (one per momentum) for in-place buffer multiplication.
     // PackPhase mirrors PackVectors: SIMD/SIMT extraction -> one scalar per spatial site.
@@ -318,8 +321,6 @@ void TA2ANewMesonField<FImpl>::execute(void)
                 spatial_sum_.PackLeftConj(left, ib, Nii);
                 stopTimer("Pack vectors");
 
-                Eigen::Tensor<ComplexD, 3> block_result(nt, Nii, Njj);
-
                 // ph_flat[0] is the absolute phase for the first momentum.
                 // ph_flat[nmom] is the restore transition that steps LR_buf back to the
                 // unphased state after the last Sum, so each ib block begins with clean
@@ -331,40 +332,42 @@ void TA2ANewMesonField<FImpl>::execute(void)
                 for (int m = 0; m < nmom; m++)
                 {
                     startTimer("Sum");
-                    spatial_sum_.Sum(block_result);
+                    spatial_sum_.Sum(all_results[m]);
                     stopTimer("Sum");
-
-                    startTimer("IO");
-                    A2AMatrixSet<HADRONS_A2AM_IO_TYPE> mf(mBuf.data(), 1, 1, nt, Nii, Njj);
-                    for (int t  = 0; t  < nt;  t++)
-                    for (int ii = 0; ii < Nii; ii++)
-                    for (int jj = 0; jj < Njj; jj++)
-                        mf(0, 0, t, ii, jj) = block_result(t, ii, jj);
-
-                    std::string ioname   = ionameFn(m, g);
-                    std::string filename = filenameFn(m, g);
-
-                    LOG(Message) << "MF block i=" << ib << " j=" << jb
-                                 << " g=" << gamma_[g] << " m=" << m << std::endl;
-
-#ifdef HADRONS_A2AM_PARALLEL_IO
-                    grid->Barrier();
-                    if (grid->ThisRank() == 0) {
-#endif
-                    {
-                        A2AMatrixIo<HADRONS_A2AM_IO_TYPE> io(filename, ioname, nt, N_i, N_j);
-                        io.saveBlock(mf, 0, 0, ib, jb);
-                    }
-#ifdef HADRONS_A2AM_PARALLEL_IO
-                    }
-                    grid->Barrier();
-#endif
-                    stopTimer("IO");
 
                     startTimer("Phase");
                     spatial_sum_.ApplyPhaseRight(ph_flat[m + 1]);
                     stopTimer("Phase");
                 } // m
+
+                // Parallel IO: each rank writes its assigned momenta simultaneously.
+                // Barrier count drops from 2*nmom to 2 per outer block.
+                double ioBytes = static_cast<double>(nmom) * nt * Nii * Njj
+                                 * sizeof(HADRONS_A2AM_IO_TYPE);
+                startTimer("IO");
+                double writeTime = -usecond();
+                grid->Barrier();
+                for (int m = (int)myRank; m < nmom; m += (int)nRank)
+                {
+                    A2AMatrixSet<HADRONS_A2AM_IO_TYPE> mf(mBuf.data(), 1, 1, nt, Nii, Njj);
+                    for (int t  = 0; t  < nt;  t++)
+                    for (int ii = 0; ii < Nii; ii++)
+                    for (int jj = 0; jj < Njj; jj++)
+                        mf(0, 0, t, ii, jj) = all_results[m](t, ii, jj);
+                    A2AMatrixIo<HADRONS_A2AM_IO_TYPE> io(filenameFn(m, g), ionameFn(m, g),
+                                                         nt, N_i, N_j);
+                    io.saveBlock(mf, 0, 0, ib, jb);
+                }
+                grid->Barrier();
+                writeTime += usecond();
+                stopTimer("IO");
+                if (writeTime > 0.)
+                    LOG(Message) << "IO block i=" << ib << " j=" << jb
+                                 << " g=" << gamma_[g] << ": "
+                                 << sizeString(ioBytes) << " in "
+                                 << writeTime << " us ("
+                                 << ioBytes / writeTime * 1.e6 / 1024. / 1024.
+                                 << " MB/s)" << std::endl;
             } // ib
         } // g
     } // jb
