@@ -109,9 +109,14 @@ public:
     void initFile(const MetadataType &d, const unsigned int chunkSize);
     // block I/O
     void saveBlock(const T *data, const unsigned int i, const unsigned int j,
-                   const unsigned int blockSizei, const unsigned int blockSizej, std::string datasetName="");
+                   const unsigned int blockSizei, const unsigned int blockSizej,
+                   std::string datasetName="",
+                   std::array<double, 6> *timings = nullptr);
     void saveBlock(const A2AMatrixSet<T> &m, const unsigned int ext, const unsigned int str,
                    const unsigned int i, const unsigned int j);
+    void saveBlock(const A2AMatrixSet<T> &m, const unsigned int ext, const unsigned int str,
+                   const unsigned int i, const unsigned int j,
+                   std::array<double, 6> *timings);
     //distillation overloads and new methods
     template <typename MetadataType>
     void initFile(const MetadataType &d);
@@ -499,35 +504,59 @@ void A2AMatrixIo<T>::initFile(const MetadataType &d)
 
 // block I/O ///////////////////////////////////////////////////////////////////
 template <typename T>
-void A2AMatrixIo<T>::saveBlock(const T *data, 
-                               const unsigned int i, 
+void A2AMatrixIo<T>::saveBlock(const T *data,
+                               const unsigned int i,
                                const unsigned int j,
                                const unsigned int blockSizei,
                                const unsigned int blockSizej,
-                               std::string datasetName)
+                               std::string datasetName,
+                               std::array<double, 6> *timings)
 {
 #ifdef HAVE_HDF5
-    Hdf5Reader           reader(filename_, false);
     std::vector<hsize_t> count = {nt_, blockSizei, blockSizej},
                          offset = {0, static_cast<hsize_t>(i),
                                    static_cast<hsize_t>(j)},
                          stride = {1, 1, 1},
-                         block  = {1, 1, 1}; 
+                         block  = {1, 1, 1};
     H5NS::DataSpace      memspace(count.size(), count.data()), dataspace;
     H5NS::DataSet        dataset;
-    //    size_t               shift;
+    double               dt;
 
     if(datasetName.empty()){
         datasetName = HADRONS_A2AM_NAME;
     }
 
+    dt = -usecond();
+    Hdf5Reader reader(filename_, false);
+    dt += usecond();
+    if (timings) (*timings)[0] += dt;
+
+    dt = -usecond();
     push(reader, dataname_);
     auto &group = reader.getGroup();
-    dataset     = group.openDataSet(datasetName);
-    dataspace   = dataset.getSpace();
+    dt += usecond();
+    if (timings) (*timings)[1] += dt;
+
+    dt = -usecond();
+    dataset = group.openDataSet(datasetName);
+    dt += usecond();
+    if (timings) (*timings)[2] += dt;
+
+    dt = -usecond();
+    dataspace = dataset.getSpace();
+    dt += usecond();
+    if (timings) (*timings)[3] += dt;
+
+    dt = -usecond();
     dataspace.selectHyperslab(H5S_SELECT_SET, count.data(), offset.data(),
                               stride.data(), block.data());
+    dt += usecond();
+    if (timings) (*timings)[4] += dt;
+
+    dt = -usecond();
     dataset.write(data, Hdf5Type<T>::type(), memspace, dataspace);
+    dt += usecond();
+    if (timings) (*timings)[5] += dt;
 #else
     HADRONS_ERROR(Implementation, "all-to-all matrix I/O needs HDF5 library");
 #endif
@@ -544,6 +573,20 @@ void A2AMatrixIo<T>::saveBlock(const A2AMatrixSet<T> &m,
     size_t       offset     = (ext*nstr + str)*nt_*blockSizei*blockSizej;
 
     saveBlock(m.data() + offset, i, j, blockSizei, blockSizej);
+}
+
+template <typename T>
+void A2AMatrixIo<T>::saveBlock(const A2AMatrixSet<T> &m,
+                               const unsigned int ext, const unsigned int str,
+                               const unsigned int i, const unsigned int j,
+                               std::array<double, 6> *timings)
+{
+    unsigned int blockSizei = m.dimension(3);
+    unsigned int blockSizej = m.dimension(4);
+    unsigned int nstr       = m.dimension(1);
+    size_t       offset     = (ext*nstr + str)*nt_*blockSizei*blockSizej;
+
+    saveBlock(m.data() + offset, i, j, blockSizei, blockSizej, "", timings);
 }
 
 //distillation overloads and new methods

@@ -290,6 +290,9 @@ void TA2ANewMesonField<FImpl>::execute(void)
     //   AllocateLeft  + PackLeft  - once per ib
     //   Apply+GEMM+Restore        - once per (jb, g, ib, m)
 
+    double                fillTime  = 0.;
+    std::array<double, 6> ioTimings = {};
+
     for (int jb = 0; jb < N_j; jb += block)
     {
         int Njj = std::min(N_j - jb, block);
@@ -350,13 +353,16 @@ void TA2ANewMesonField<FImpl>::execute(void)
                 for (int m = (int)myRank; m < nmom; m += (int)nRank)
                 {
                     A2AMatrixSet<HADRONS_A2AM_IO_TYPE> mf(mBuf.data(), 1, 1, nt, Nii, Njj);
+                    double dt = -usecond();
                     for (int t  = 0; t  < nt;  t++)
                     for (int ii = 0; ii < Nii; ii++)
                     for (int jj = 0; jj < Njj; jj++)
                         mf(0, 0, t, ii, jj) = all_results[m](t, ii, jj);
+                    dt += usecond();
+                    fillTime += dt;
                     A2AMatrixIo<HADRONS_A2AM_IO_TYPE> io(filenameFn(m, g), ionameFn(m, g),
                                                          nt, N_i, N_j);
-                    io.saveBlock(mf, 0, 0, ib, jb);
+                    io.saveBlock(mf, 0, 0, ib, jb, &ioTimings);
                 }
                 grid->Barrier();
                 writeTime += usecond();
@@ -371,6 +377,15 @@ void TA2ANewMesonField<FImpl>::execute(void)
             } // ib
         } // g
     } // jb
+    LOG(Message) << "IO detail (us):"
+                 << " fill=" << fillTime
+                 << " open=" << ioTimings[0]
+                 << " push/group=" << ioTimings[1]
+                 << " openDataSet=" << ioTimings[2]
+                 << " getSpace=" << ioTimings[3]
+                 << " selectHyperslab=" << ioTimings[4]
+                 << " write=" << ioTimings[5]
+                 << std::endl;
 }
 
 END_MODULE_NAMESPACE
