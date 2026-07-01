@@ -359,13 +359,24 @@ void TA2ANewMesonField<FImpl>::execute(void)
 
                 // Parallel IO: each rank writes its assigned momenta simultaneously.
                 // Barrier count drops from 2*nmom to 2 per outer block.
+                //
+                // Ownership key matches the (m*ngamma+g) % nRank used by the
+                // initFile loop above, so the rank that writes a given (m,g)
+                // file is always the same rank that created it -- creating on
+                // one rank and writing from another would depend on that
+                // file being visible from a different rank's node right
+                // after the barrier, which a plain MPI_Barrier does not
+                // guarantee on a parallel filesystem (client-side metadata
+                // caching can lag), and "file not found" races result.
                 double ioBytes = static_cast<double>(nmom) * nt * Nii * Njj
                                  * sizeof(HADRONS_A2AM_IO_TYPE);
                 startTimer("IO");
                 double writeTime = -usecond();
                 grid->Barrier();
-                for (int m = (int)myRank; m < nmom; m += (int)nRank)
+                for (int m = 0; m < nmom; m++)
                 {
+                    if ((unsigned int)(m * ngamma + g) % nRank != myRank) continue;
+
                     A2AMatrixSet<HADRONS_A2AM_IO_TYPE> mf(mBuf.data(), 1, 1, nt, Nii, Njj);
                     double dt = -usecond();
                     thread_for_collapse(3, t, nt, {
