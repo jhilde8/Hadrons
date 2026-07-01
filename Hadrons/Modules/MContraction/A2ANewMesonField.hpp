@@ -255,6 +255,20 @@ void TA2ANewMesonField<FImpl>::execute(void)
     unsigned int myRank = grid->ThisRank();
     unsigned int nRank  = grid->RankCount();
 
+    // Only rank 0's LOG output survives (Grid_quiesce_nodes suppresses the
+    // rest by default), so any timer read directly off `this` only shows
+    // rank 0's local view. This finds which rank actually holds the max for
+    // a given local value and returns {maxValue, thatRank}; every rank must
+    // call this together since it is collective (two GlobalMax calls).
+    auto crossRankMaxLoc = [grid, myRank](double val) -> std::pair<double, int>
+    {
+        double maxVal = val;
+        grid->GlobalMax(maxVal);
+        double isMaxRank = (val == maxVal) ? (double)myRank : -1.0;
+        grid->GlobalMax(isMaxRank);
+        return {maxVal, (int)isMaxRank};
+    };
+
     // Initialise one HDF5 file per (mom, gamma) pair before the block loops.
     // Each rank initialises only its assigned files; single barrier after.
     for (int m = 0; m < nmom; m++)
@@ -291,7 +305,7 @@ void TA2ANewMesonField<FImpl>::execute(void)
     //   Apply+GEMM+Restore        - once per (jb, g, ib, m)
 
     double                fillTime  = 0.;
-    std::array<double, 6> ioTimings = {};
+    std::array<double, 7> ioTimings = {};
 
     for (int jb = 0; jb < N_j; jb += block)
     {
@@ -354,10 +368,11 @@ void TA2ANewMesonField<FImpl>::execute(void)
                 {
                     A2AMatrixSet<HADRONS_A2AM_IO_TYPE> mf(mBuf.data(), 1, 1, nt, Nii, Njj);
                     double dt = -usecond();
-                    for (int t  = 0; t  < nt;  t++)
-                    for (int ii = 0; ii < Nii; ii++)
-                    for (int jj = 0; jj < Njj; jj++)
-                        mf(0, 0, t, ii, jj) = all_results[m](t, ii, jj);
+                    thread_for_collapse(3, t, nt, {
+                        for (int ii = 0; ii < Nii; ii++)
+                        for (int jj = 0; jj < Njj; jj++)
+                            mf(0, 0, t, ii, jj) = all_results[m](t, ii, jj);
+                    });
                     dt += usecond();
                     fillTime += dt;
                     A2AMatrixIo<HADRONS_A2AM_IO_TYPE> io(filenameFn(m, g), ionameFn(m, g),
@@ -367,17 +382,24 @@ void TA2ANewMesonField<FImpl>::execute(void)
                 grid->Barrier();
                 writeTime += usecond();
                 stopTimer("IO");
-                if (writeTime > 0.)
+                // writeTime is this rank's own wall time from barrier to
+                // barrier; with uneven momenta counts or filesystem
+                // contention some rank other than the one whose LOG we see
+                // can be the straggler setting the pace for everyone else.
+                auto [writeTimeMax, writeTimeRank] = crossRankMaxLoc(writeTime);
+                if (writeTimeMax > 0.)
                     LOG(Message) << "IO block i=" << ib << " j=" << jb
                                  << " g=" << gamma_[g] << ": "
                                  << sizeString(ioBytes) << " in "
-                                 << writeTime << " us ("
-                                 << ioBytes / writeTime * 1.e6 / 1024. / 1024.
-                                 << " MB/s)" << std::endl;
+                                 << writeTime << " us local, "
+                                 << writeTimeMax << " us max (rank "
+                                 << writeTimeRank << ") ("
+                                 << ioBytes / writeTimeMax * 1.e6 / 1024. / 1024.
+                                 << " MB/s effective)" << std::endl;
             } // ib
         } // g
     } // jb
-    LOG(Message) << "IO detail (us):"
+    LOG(Message) << "IO detail (us), rank " << myRank << ":"
                  << " fill=" << fillTime
                  << " open=" << ioTimings[0]
                  << " push/group=" << ioTimings[1]
@@ -385,6 +407,33 @@ void TA2ANewMesonField<FImpl>::execute(void)
                  << " getSpace=" << ioTimings[3]
                  << " selectHyperslab=" << ioTimings[4]
                  << " write=" << ioTimings[5]
+                 << " close(fsync)=" << ioTimings[6]
+                 << std::endl;
+
+    // The block above is only ever seen for rank 0 (Grid_quiesce_nodes mutes
+    // everyone else's stdout by default), so it cannot tell us whether rank 0
+    // was the straggler or just the one we happened to be looking at. Every
+    // rank must reach these crossRankMaxLoc calls together.
+    auto [ioTimerMax,   ioTimerRank]   = crossRankMaxLoc(getDTimer("IO"));
+    auto [fillMax,       fillRank]     = crossRankMaxLoc(fillTime);
+    auto [openMax,       openRank]     = crossRankMaxLoc(ioTimings[0]);
+    auto [pushMax,       pushRank]     = crossRankMaxLoc(ioTimings[1]);
+    auto [dsMax,         dsRank]       = crossRankMaxLoc(ioTimings[2]);
+    auto [spaceMax,      spaceRank]    = crossRankMaxLoc(ioTimings[3]);
+    auto [hyperslabMax,  hyperslabRank]= crossRankMaxLoc(ioTimings[4]);
+    auto [writeMax,      writeRank]    = crossRankMaxLoc(ioTimings[5]);
+    auto [closeMax,      closeRank]    = crossRankMaxLoc(ioTimings[6]);
+
+    LOG(Message) << "IO cross-rank max (us) [straggler rank]:"
+                 << " IO_timer=" << ioTimerMax << "[" << ioTimerRank << "]"
+                 << " fill=" << fillMax << "[" << fillRank << "]"
+                 << " open=" << openMax << "[" << openRank << "]"
+                 << " push/group=" << pushMax << "[" << pushRank << "]"
+                 << " openDataSet=" << dsMax << "[" << dsRank << "]"
+                 << " getSpace=" << spaceMax << "[" << spaceRank << "]"
+                 << " selectHyperslab=" << hyperslabMax << "[" << hyperslabRank << "]"
+                 << " write=" << writeMax << "[" << writeRank << "]"
+                 << " close(fsync)=" << closeMax << "[" << closeRank << "]"
                  << std::endl;
 }
 

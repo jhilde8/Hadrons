@@ -111,12 +111,12 @@ public:
     void saveBlock(const T *data, const unsigned int i, const unsigned int j,
                    const unsigned int blockSizei, const unsigned int blockSizej,
                    std::string datasetName="",
-                   std::array<double, 6> *timings = nullptr);
+                   std::array<double, 7> *timings = nullptr);
     void saveBlock(const A2AMatrixSet<T> &m, const unsigned int ext, const unsigned int str,
                    const unsigned int i, const unsigned int j);
     void saveBlock(const A2AMatrixSet<T> &m, const unsigned int ext, const unsigned int str,
                    const unsigned int i, const unsigned int j,
-                   std::array<double, 6> *timings);
+                   std::array<double, 7> *timings);
     //distillation overloads and new methods
     template <typename MetadataType>
     void initFile(const MetadataType &d);
@@ -510,7 +510,7 @@ void A2AMatrixIo<T>::saveBlock(const T *data,
                                const unsigned int blockSizei,
                                const unsigned int blockSizej,
                                std::string datasetName,
-                               std::array<double, 6> *timings)
+                               std::array<double, 7> *timings)
 {
 #ifdef HAVE_HDF5
     std::vector<hsize_t> count = {nt_, blockSizei, blockSizej},
@@ -518,45 +518,57 @@ void A2AMatrixIo<T>::saveBlock(const T *data,
                                    static_cast<hsize_t>(j)},
                          stride = {1, 1, 1},
                          block  = {1, 1, 1};
-    H5NS::DataSpace      memspace(count.size(), count.data()), dataspace;
-    H5NS::DataSet        dataset;
+    H5NS::DataSpace      memspace(count.size(), count.data());
     double               dt;
 
     if(datasetName.empty()){
         datasetName = HADRONS_A2AM_NAME;
     }
 
-    dt = -usecond();
-    Hdf5Reader reader(filename_, false);
-    dt += usecond();
-    if (timings) (*timings)[0] += dt;
+    // reader, group, dataset and dataspace are scoped to this block so that
+    // their destruction (and in particular ~Hdf5Reader's H5Fclose, which is
+    // where HDF5 actually flushes/fsyncs to storage) happens at a point we
+    // can time, instead of silently at function exit.
+    {
+        dt = -usecond();
+        Hdf5Reader reader(filename_, false);
+        dt += usecond();
+        if (timings) (*timings)[0] += dt;
 
-    dt = -usecond();
-    push(reader, dataname_);
-    auto &group = reader.getGroup();
-    dt += usecond();
-    if (timings) (*timings)[1] += dt;
+        dt = -usecond();
+        push(reader, dataname_);
+        auto &group = reader.getGroup();
+        dt += usecond();
+        if (timings) (*timings)[1] += dt;
 
-    dt = -usecond();
-    dataset = group.openDataSet(datasetName);
-    dt += usecond();
-    if (timings) (*timings)[2] += dt;
+        dt = -usecond();
+        H5NS::DataSet dataset = group.openDataSet(datasetName);
+        dt += usecond();
+        if (timings) (*timings)[2] += dt;
 
-    dt = -usecond();
-    dataspace = dataset.getSpace();
-    dt += usecond();
-    if (timings) (*timings)[3] += dt;
+        dt = -usecond();
+        H5NS::DataSpace dataspace = dataset.getSpace();
+        dt += usecond();
+        if (timings) (*timings)[3] += dt;
 
-    dt = -usecond();
-    dataspace.selectHyperslab(H5S_SELECT_SET, count.data(), offset.data(),
-                              stride.data(), block.data());
-    dt += usecond();
-    if (timings) (*timings)[4] += dt;
+        dt = -usecond();
+        dataspace.selectHyperslab(H5S_SELECT_SET, count.data(), offset.data(),
+                                  stride.data(), block.data());
+        dt += usecond();
+        if (timings) (*timings)[4] += dt;
 
-    dt = -usecond();
-    dataset.write(data, Hdf5Type<T>::type(), memspace, dataspace);
+        dt = -usecond();
+        dataset.write(data, Hdf5Type<T>::type(), memspace, dataspace);
+        dt += usecond();
+        if (timings) (*timings)[5] += dt;
+
+        // Close the dataset explicitly so no object handle other than
+        // reader's own group/file remains open when the block below ends.
+        dataset.close();
+        dt = -usecond();
+    } // reader destructs here: H5Gclose + H5Fclose (flush/fsync)
     dt += usecond();
-    if (timings) (*timings)[5] += dt;
+    if (timings) (*timings)[6] += dt;
 #else
     HADRONS_ERROR(Implementation, "all-to-all matrix I/O needs HDF5 library");
 #endif
@@ -579,7 +591,7 @@ template <typename T>
 void A2AMatrixIo<T>::saveBlock(const A2AMatrixSet<T> &m,
                                const unsigned int ext, const unsigned int str,
                                const unsigned int i, const unsigned int j,
-                               std::array<double, 6> *timings)
+                               std::array<double, 7> *timings)
 {
     unsigned int blockSizei = m.dimension(3);
     unsigned int blockSizej = m.dimension(4);
