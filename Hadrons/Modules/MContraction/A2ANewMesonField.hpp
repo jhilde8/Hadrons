@@ -399,16 +399,15 @@ void TA2ANewMesonField<FImpl>::execute(void)
             } // ib
         } // g
     } // jb
-    LOG(Message) << "IO detail (us), rank " << myRank << ":"
-                 << " fill=" << fillTime
-                 << " open=" << ioTimings[0]
-                 << " push/group=" << ioTimings[1]
-                 << " openDataSet=" << ioTimings[2]
-                 << " getSpace=" << ioTimings[3]
-                 << " selectHyperslab=" << ioTimings[4]
-                 << " write=" << ioTimings[5]
-                 << " close(fsync)=" << ioTimings[6]
-                 << std::endl;
+    LOG(Message) << "IO detail (us), rank " << myRank << ":" << std::endl;
+    LOG(Message) << "  fill            = " << fillTime      << std::endl;
+    LOG(Message) << "  open            = " << ioTimings[0]  << std::endl;
+    LOG(Message) << "  push/group      = " << ioTimings[1]  << std::endl;
+    LOG(Message) << "  openDataSet     = " << ioTimings[2]  << std::endl;
+    LOG(Message) << "  getSpace        = " << ioTimings[3]  << std::endl;
+    LOG(Message) << "  selectHyperslab = " << ioTimings[4]  << std::endl;
+    LOG(Message) << "  write           = " << ioTimings[5]  << std::endl;
+    LOG(Message) << "  close(fsync)    = " << ioTimings[6]  << std::endl;
 
     // The block above is only ever seen for rank 0 (Grid_quiesce_nodes mutes
     // everyone else's stdout by default), so it cannot tell us whether rank 0
@@ -424,17 +423,16 @@ void TA2ANewMesonField<FImpl>::execute(void)
     auto [writeMax,      writeRank]    = crossRankMaxLoc(ioTimings[5]);
     auto [closeMax,      closeRank]    = crossRankMaxLoc(ioTimings[6]);
 
-    LOG(Message) << "IO cross-rank max (us) [straggler rank]:"
-                 << " IO_timer=" << ioTimerMax << "[" << ioTimerRank << "]"
-                 << " fill=" << fillMax << "[" << fillRank << "]"
-                 << " open=" << openMax << "[" << openRank << "]"
-                 << " push/group=" << pushMax << "[" << pushRank << "]"
-                 << " openDataSet=" << dsMax << "[" << dsRank << "]"
-                 << " getSpace=" << spaceMax << "[" << spaceRank << "]"
-                 << " selectHyperslab=" << hyperslabMax << "[" << hyperslabRank << "]"
-                 << " write=" << writeMax << "[" << writeRank << "]"
-                 << " close(fsync)=" << closeMax << "[" << closeRank << "]"
-                 << std::endl;
+    LOG(Message) << "IO cross-rank max (us) [straggler rank]:" << std::endl;
+    LOG(Message) << "  IO_timer        = " << ioTimerMax   << " [" << ioTimerRank   << "]" << std::endl;
+    LOG(Message) << "  fill            = " << fillMax      << " [" << fillRank      << "]" << std::endl;
+    LOG(Message) << "  open            = " << openMax      << " [" << openRank      << "]" << std::endl;
+    LOG(Message) << "  push/group      = " << pushMax      << " [" << pushRank      << "]" << std::endl;
+    LOG(Message) << "  openDataSet     = " << dsMax         << " [" << dsRank        << "]" << std::endl;
+    LOG(Message) << "  getSpace        = " << spaceMax     << " [" << spaceRank     << "]" << std::endl;
+    LOG(Message) << "  selectHyperslab = " << hyperslabMax << " [" << hyperslabRank << "]" << std::endl;
+    LOG(Message) << "  write           = " << writeMax     << " [" << writeRank     << "]" << std::endl;
+    LOG(Message) << "  close(fsync)    = " << closeMax     << " [" << closeRank     << "]" << std::endl;
 }
 
 END_MODULE_NAMESPACE
