@@ -388,13 +388,9 @@ void TA2ANewMesonField<FImpl>::execute(void)
                     A2AMatrixSet<HADRONS_A2AM_IO_TYPE> mf(mBuf.data(), 1, 1, nt, Nii, Njj);
                     double dt = -usecond();
                     thread_for_collapse(3, t, nt, {
-                        // thread_for_collapse's loop variable is uint64_t; Eigen's
-                        // TensorMap::operator() needs a signed Index and narrows via
-                        // brace-init, so cast explicitly rather than pass t directly.
-                        const int tt = (int)t;
                         for (int ii = 0; ii < Nii; ii++)
                         for (int jj = 0; jj < Njj; jj++)
-                            mf(0, 0, tt, ii, jj) = all_results[m](tt, ii, jj);
+                            mf(0, 0, (int)t, ii, jj) = all_results[m]((int)t, ii, jj);
                     });
                     dt += usecond();
                     fillTime += dt;
