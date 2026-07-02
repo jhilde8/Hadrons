@@ -242,15 +242,23 @@ void TA2ANewMesonField<FImpl>::execute(void)
 
     // Pre-allocated result buffer: one tensor per momentum, reused across all blocks.
     // Sum() fills only [0..Nii-1][0..Njj-1]; IO fill reads with explicit Nii/Njj bounds.
-    std::vector<Eigen::Tensor<ComplexD, 3>> all_results(nmom,
-        Eigen::Tensor<ComplexD, 3>(nt, block, block));
+    // RowMajor (jj fastest) to match mf (A2AMatrixSet, RowMajor): the fill
+    // loop below reads this with jj innermost, so a ColMajor tensor here
+    // would make that read stride by nt*block per jj step instead of 1.
+    std::vector<Eigen::Tensor<ComplexD, 3, Eigen::RowMajor>> all_results(nmom,
+        Eigen::Tensor<ComplexD, 3, Eigen::RowMajor>(nt, block, block));
 
-    // Create output directory.
+    // Create output directory. makeFileDir only mkdir()s on the boss rank
+    // and has no synchronization of its own; now that file creation below
+    // is spread across ranks (not boss-only, as it was previously), every
+    // other rank must wait here or it can reach H5Fcreate before the
+    // directory exists (or before it's visible on that rank's node).
     std::string dirBase = par().output + "." + std::to_string(vm().getTrajectory());
     {
         std::string dummy = dirBase + "/mkdir.h5";
         makeFileDir(dummy, grid);
     }
+    grid->Barrier();
 
     unsigned int myRank = grid->ThisRank();
     unsigned int nRank  = grid->RankCount();
