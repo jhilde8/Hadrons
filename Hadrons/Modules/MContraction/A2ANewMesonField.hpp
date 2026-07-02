@@ -29,6 +29,8 @@
 #ifndef Hadrons_MContraction_A2ANewMesonField_hpp_
 #define Hadrons_MContraction_A2ANewMesonField_hpp_
 
+#include <filesystem>
+#include <fstream>
 #include <Hadrons/Global.hpp>
 #include <Hadrons/Module.hpp>
 #include <Hadrons/ModuleFactory.hpp>
@@ -52,7 +54,8 @@ public:
                                     std::string,             right,
                                     std::string,             output,
                                     std::string,             gammas,
-                                    std::vector<std::string>, mom);
+                                    std::vector<std::string>, mom,
+                                    std::string,             localScratch);
 };
 
 class A2ANewMesonFieldMetadata: Serializable
@@ -233,6 +236,31 @@ void TA2ANewMesonField<FImpl>::execute(void)
         return md;
     };
 
+    // Resolve scratch root: explicit parameter takes priority, then $LOCAL_SCRATCH,
+    // then empty (disabled) meaning write directly to Lustre.
+    std::string scratch = par().localScratch;
+    if (scratch.empty())
+    {
+        const char *env = std::getenv("LOCAL_SCRATCH");
+        if (env) scratch = std::string(env);
+    }
+
+    // Node-local scratch path: drops the upper directory prefix so that
+    // e.g. output="mf_2bin/mf_ll" -> scratch="$LOCAL_SCRATCH/mf_ll.575/ioname.h5"
+    auto scratchFn = [this, &ionameFn, &scratch](const int m, const int g)
+    {
+        std::string base = std::filesystem::path(par().output).filename().string();
+        return scratch + "/" + base
+               + "." + std::to_string(vm().getTrajectory())
+               + "/" + ionameFn(m, g) + ".h5";
+    };
+
+    // Routes initFile and saveBlock to scratch when enabled, Lustre otherwise.
+    auto writeFn = [&](const int m, const int g)
+    {
+        return scratch.empty() ? filenameFn(m, g) : scratchFn(m, g);
+    };
+
     // Output buffer: one (nt, Nii, Njj) block at a time.
     Vector<HADRONS_A2AM_IO_TYPE> mBuf;
     mBuf.resize(nt * block * block);
@@ -254,11 +282,21 @@ void TA2ANewMesonField<FImpl>::execute(void)
     // other rank must wait here or it can reach H5Fcreate before the
     // directory exists (or before it's visible on that rank's node).
     std::string dirBase = par().output + "." + std::to_string(vm().getTrajectory());
+    if (!scratch.empty())
+    {
+        // Node-local NVMe: each rank creates its own scratch subdirectory
+        // independently -- no boss restriction, no barrier needed.
+        std::string scratchBase = scratch + "/"
+            + std::filesystem::path(par().output).filename().string()
+            + "." + std::to_string(vm().getTrajectory());
+        Hadrons::mkdir(scratchBase);
+    }
+    else
     {
         std::string dummy = dirBase + "/mkdir.h5";
         makeFileDir(dummy, grid);
+        grid->Barrier();
     }
-    grid->Barrier();
 
     unsigned int myRank = grid->ThisRank();
     unsigned int nRank  = grid->RankCount();
@@ -285,7 +323,7 @@ void TA2ANewMesonField<FImpl>::execute(void)
         if ((unsigned int)(m * ngamma + g) % nRank == myRank)
         {
             std::string ioname   = ionameFn(m, g);
-            std::string filename = filenameFn(m, g);
+            std::string filename = writeFn(m, g);
             A2ANewMesonFieldMetadata md = metadataFn(m, g);
             A2AMatrixIo<HADRONS_A2AM_IO_TYPE> io(filename, ioname, nt, N_i, N_j);
             io.initFile(md, block);
@@ -312,8 +350,10 @@ void TA2ANewMesonField<FImpl>::execute(void)
     //   AllocateLeft  + PackLeft  - once per ib
     //   Apply+GEMM+Restore        - once per (jb, g, ib, m)
 
-    double                fillTime  = 0.;
-    std::array<double, 7> ioTimings = {};
+    double                fillTime     = 0.;
+    std::array<double, 7> ioTimings    = {};
+    std::array<double, 5> sumTimings   = {};
+    double                stageOutTime = 0.;
 
     for (int jb = 0; jb < N_j; jb += block)
     {
@@ -357,7 +397,7 @@ void TA2ANewMesonField<FImpl>::execute(void)
                 for (int m = 0; m < nmom; m++)
                 {
                     startTimer("Sum");
-                    spatial_sum_.Sum(all_results[m]);
+                    spatial_sum_.Sum(all_results[m], &sumTimings);
                     stopTimer("Sum");
 
                     startTimer("Phase");
@@ -394,7 +434,7 @@ void TA2ANewMesonField<FImpl>::execute(void)
                     });
                     dt += usecond();
                     fillTime += dt;
-                    A2AMatrixIo<HADRONS_A2AM_IO_TYPE> io(filenameFn(m, g), ionameFn(m, g),
+                    A2AMatrixIo<HADRONS_A2AM_IO_TYPE> io(writeFn(m, g), ionameFn(m, g),
                                                          nt, N_i, N_j);
                     io.saveBlock(mf, 0, 0, ib, jb, &ioTimings);
                 }
@@ -418,6 +458,51 @@ void TA2ANewMesonField<FImpl>::execute(void)
             } // ib
         } // g
     } // jb
+
+    if (!scratch.empty())
+    {
+        // Lustre output directory created here (boss-only + barrier) so it
+        // exists before any rank begins copying its scratch files.
+        {
+            std::string dummy = dirBase + "/mkdir.h5";
+            makeFileDir(dummy, grid);
+        }
+        grid->Barrier();
+
+        // 4MB copy buffer aligns with the target Lustre stripe size.
+        const size_t copyBufSize = 4ul * 1024 * 1024;
+        auto copyFile = [&](const std::string &src, const std::string &dst)
+        {
+            std::ifstream in(src, std::ios::binary);
+            std::ofstream out(dst, std::ios::binary);
+            if (!in)  HADRONS_ERROR(Io, "stage-out: cannot open " + src);
+            if (!out) HADRONS_ERROR(Io, "stage-out: cannot create " + dst);
+            std::vector<char> buf(copyBufSize);
+            while (in.read(buf.data(), copyBufSize) || in.gcount())
+                out.write(buf.data(), in.gcount());
+            if (out.fail()) HADRONS_ERROR(Io, "stage-out: write failed for " + dst);
+        };
+
+        double dt = -usecond();
+        for (int m = 0; m < nmom; m++)
+        for (int g = 0; g < ngamma; g++)
+        {
+            if ((unsigned int)(m * ngamma + g) % nRank != myRank) continue;
+            std::string src = scratchFn(m, g);
+            copyFile(src, filenameFn(m, g));
+            std::filesystem::remove(src);
+        }
+        dt += usecond();
+        stageOutTime = dt;
+        grid->Barrier();
+    }
+
+    LOG(Message) << "Sum detail (us), rank " << myRank << ":" << std::endl;
+    LOG(Message) << "  GEMM            = " << sumTimings[0] << std::endl;
+    LOG(Message) << "  device->host    = " << sumTimings[1] << std::endl;
+    LOG(Message) << "  transpose-1     = " << sumTimings[2] << std::endl;
+    LOG(Message) << "  GlobalSumVector = " << sumTimings[3] << std::endl;
+    LOG(Message) << "  transpose-2     = " << sumTimings[4] << std::endl;
     LOG(Message) << "IO detail (us), rank " << myRank << ":" << std::endl;
     LOG(Message) << "  fill            = " << fillTime      << std::endl;
     LOG(Message) << "  open            = " << ioTimings[0]  << std::endl;
@@ -427,31 +512,48 @@ void TA2ANewMesonField<FImpl>::execute(void)
     LOG(Message) << "  selectHyperslab = " << ioTimings[4]  << std::endl;
     LOG(Message) << "  write           = " << ioTimings[5]  << std::endl;
     LOG(Message) << "  close(fsync)    = " << ioTimings[6]  << std::endl;
+    if (!scratch.empty())
+        LOG(Message) << "  stage-out       = " << stageOutTime  << std::endl;
 
-    // The block above is only ever seen for rank 0 (Grid_quiesce_nodes mutes
-    // everyone else's stdout by default), so it cannot tell us whether rank 0
-    // was the straggler or just the one we happened to be looking at. Every
-    // rank must reach these crossRankMaxLoc calls together.
-    auto [ioTimerMax,   ioTimerRank]   = crossRankMaxLoc(getDTimer("IO"));
-    auto [fillMax,       fillRank]     = crossRankMaxLoc(fillTime);
-    auto [openMax,       openRank]     = crossRankMaxLoc(ioTimings[0]);
-    auto [pushMax,       pushRank]     = crossRankMaxLoc(ioTimings[1]);
-    auto [dsMax,         dsRank]       = crossRankMaxLoc(ioTimings[2]);
-    auto [spaceMax,      spaceRank]    = crossRankMaxLoc(ioTimings[3]);
-    auto [hyperslabMax,  hyperslabRank]= crossRankMaxLoc(ioTimings[4]);
-    auto [writeMax,      writeRank]    = crossRankMaxLoc(ioTimings[5]);
-    auto [closeMax,      closeRank]    = crossRankMaxLoc(ioTimings[6]);
+    // All crossRankMaxLoc calls are collective (two GlobalMax each) and must
+    // be reached by every rank together. LOG output is only visible from rank 0
+    // so the cross-rank max reveals the true straggler.
+    auto [sumTimerMax,    sumTimerRank]   = crossRankMaxLoc(getDTimer("Sum"));
+    auto [gemmMax,        gemmRank]       = crossRankMaxLoc(sumTimings[0]);
+    auto [d2hMax,         d2hRank]        = crossRankMaxLoc(sumTimings[1]);
+    auto [trans1Max,      trans1Rank]     = crossRankMaxLoc(sumTimings[2]);
+    auto [gsvMax,         gsvRank]        = crossRankMaxLoc(sumTimings[3]);
+    auto [trans2Max,      trans2Rank]     = crossRankMaxLoc(sumTimings[4]);
+    auto [ioTimerMax,     ioTimerRank]    = crossRankMaxLoc(getDTimer("IO"));
+    auto [fillMax,        fillRank]       = crossRankMaxLoc(fillTime);
+    auto [openMax,        openRank]       = crossRankMaxLoc(ioTimings[0]);
+    auto [pushMax,        pushRank]       = crossRankMaxLoc(ioTimings[1]);
+    auto [dsMax,          dsRank]         = crossRankMaxLoc(ioTimings[2]);
+    auto [spaceMax,       spaceRank]      = crossRankMaxLoc(ioTimings[3]);
+    auto [hyperslabMax,   hyperslabRank]  = crossRankMaxLoc(ioTimings[4]);
+    auto [writeMax,       writeRank]      = crossRankMaxLoc(ioTimings[5]);
+    auto [closeMax,       closeRank]      = crossRankMaxLoc(ioTimings[6]);
+    auto [stageOutMax,    stageOutRank]   = crossRankMaxLoc(stageOutTime);
 
+    LOG(Message) << "Sum cross-rank max (us) [straggler rank]:" << std::endl;
+    LOG(Message) << "  Sum_timer       = " << sumTimerMax  << " [" << sumTimerRank  << "]" << std::endl;
+    LOG(Message) << "  GEMM            = " << gemmMax      << " [" << gemmRank      << "]" << std::endl;
+    LOG(Message) << "  device->host    = " << d2hMax       << " [" << d2hRank       << "]" << std::endl;
+    LOG(Message) << "  transpose-1     = " << trans1Max    << " [" << trans1Rank    << "]" << std::endl;
+    LOG(Message) << "  GlobalSumVector = " << gsvMax       << " [" << gsvRank       << "]" << std::endl;
+    LOG(Message) << "  transpose-2     = " << trans2Max    << " [" << trans2Rank    << "]" << std::endl;
     LOG(Message) << "IO cross-rank max (us) [straggler rank]:" << std::endl;
     LOG(Message) << "  IO_timer        = " << ioTimerMax   << " [" << ioTimerRank   << "]" << std::endl;
     LOG(Message) << "  fill            = " << fillMax      << " [" << fillRank      << "]" << std::endl;
     LOG(Message) << "  open            = " << openMax      << " [" << openRank      << "]" << std::endl;
     LOG(Message) << "  push/group      = " << pushMax      << " [" << pushRank      << "]" << std::endl;
-    LOG(Message) << "  openDataSet     = " << dsMax         << " [" << dsRank        << "]" << std::endl;
+    LOG(Message) << "  openDataSet     = " << dsMax        << " [" << dsRank        << "]" << std::endl;
     LOG(Message) << "  getSpace        = " << spaceMax     << " [" << spaceRank     << "]" << std::endl;
     LOG(Message) << "  selectHyperslab = " << hyperslabMax << " [" << hyperslabRank << "]" << std::endl;
     LOG(Message) << "  write           = " << writeMax     << " [" << writeRank     << "]" << std::endl;
     LOG(Message) << "  close(fsync)    = " << closeMax     << " [" << closeRank     << "]" << std::endl;
+    if (!scratch.empty())
+        LOG(Message) << "  stage-out       = " << stageOutMax  << " [" << stageOutRank  << "]" << std::endl;
 }
 
 END_MODULE_NAMESPACE
