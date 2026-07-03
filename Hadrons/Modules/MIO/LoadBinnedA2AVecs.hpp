@@ -75,6 +75,7 @@ public:
 MODULE_REGISTER_TMP(LoadBinnedA2AVecs48, ARG(TLoadBinnedA2AVecs<FIMPL, 48>), MIO);
 MODULE_REGISTER_TMP(LoadBinnedA2AVecs64, ARG(TLoadBinnedA2AVecs<FIMPL, 64>), MIO);
 MODULE_REGISTER_TMP(LoadBinnedA2AVecs96, ARG(TLoadBinnedA2AVecs<FIMPL, 96>), MIO);
+MODULE_REGISTER_TMP(LoadBinnedA2AVecs128, ARG(TLoadBinnedA2AVecs<FIMPL, 128>), MIO);
 MODULE_REGISTER_TMP(LoadBinnedA2AVecs144, ARG(TLoadBinnedA2AVecs<FIMPL, 144>), MIO);
 MODULE_REGISTER_TMP(LoadBinnedA2AVecs149, ARG(TLoadBinnedA2AVecs<FIMPL, 149>), MIO);
 MODULE_REGISTER_TMP(LoadBinnedA2AVecs173, ARG(TLoadBinnedA2AVecs<FIMPL, 173>), MIO);
@@ -82,6 +83,7 @@ MODULE_REGISTER_TMP(LoadBinnedA2AVecs192, ARG(TLoadBinnedA2AVecs<FIMPL, 192>), M
 MODULE_REGISTER_TMP(LoadBinnedA2AVecs196, ARG(TLoadBinnedA2AVecs<FIMPL, 196>), MIO);
 MODULE_REGISTER_TMP(LoadBinnedA2AVecs197, ARG(TLoadBinnedA2AVecs<FIMPL, 197>), MIO);
 MODULE_REGISTER_TMP(LoadBinnedA2AVecs216, ARG(TLoadBinnedA2AVecs<FIMPL, 216>), MIO);
+MODULE_REGISTER_TMP(LoadBinnedA2AVecs221, ARG(TLoadBinnedA2AVecs<FIMPL, 221>), MIO);
 MODULE_REGISTER_TMP(LoadBinnedA2AVecs298, ARG(TLoadBinnedA2AVecs<FIMPL, 298>), MIO);
 
 /******************************************************************************
