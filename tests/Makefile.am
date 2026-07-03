@@ -24,7 +24,7 @@ EXTRA_PROGRAMS = \
   Test_cmof_gpu             \
   Test_mf_gpu               \
   Test_nmf_gpu              \
-  Test_mmf_kernel           \
+  Test_savebinned_gpu       \
   Test_mmf_blas
 
 CLEANFILES = $(EXTRA_PROGRAMS)
@@ -97,8 +97,8 @@ Test_mf_gpu_LDADD=-lHadrons -lGrid
 Test_nmf_gpu_SOURCES=Test_nmf_gpu.cpp
 Test_nmf_gpu_LDADD=-lHadrons -lGrid
 
-Test_mmf_kernel_SOURCES=Test_mmf_kernel.cpp
-Test_mmf_kernel_LDADD=-lHadrons -lGrid
+Test_savebinned_gpu_SOURCES=Test_savebinned_gpu.cpp
+Test_savebinned_gpu_LDADD=-lHadrons -lGrid
 
 Test_mmf_blas_SOURCES=Test_mmf_blas.cpp
 Test_mmf_blas_LDADD=-lHadrons -lGrid
