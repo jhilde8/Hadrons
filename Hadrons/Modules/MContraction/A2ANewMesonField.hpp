@@ -477,10 +477,14 @@ void TA2ANewMesonField<FImpl>::execute(void)
         const size_t copyBufSize = 4ul * 1024 * 1024;
         auto copyFile = [&](const std::string &src, const std::string &dst)
         {
+            errno = 0;
             std::ifstream in(src, std::ios::binary);
+            if (!in)  HADRONS_ERROR(Io, "stage-out: cannot open " + src
+                                    + " (" + std::strerror(errno) + ")");
+            errno = 0;
             std::ofstream out(dst, std::ios::binary);
-            if (!in)  HADRONS_ERROR(Io, "stage-out: cannot open " + src);
-            if (!out) HADRONS_ERROR(Io, "stage-out: cannot create " + dst);
+            if (!out) HADRONS_ERROR(Io, "stage-out: cannot create " + dst
+                                    + " (" + std::strerror(errno) + ")");
             std::vector<char> buf(copyBufSize);
             while (in.read(buf.data(), copyBufSize) || in.gcount())
                 out.write(buf.data(), in.gcount());
