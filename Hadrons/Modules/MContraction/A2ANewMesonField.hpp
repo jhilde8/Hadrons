@@ -285,11 +285,15 @@ void TA2ANewMesonField<FImpl>::execute(void)
     if (!scratch.empty())
     {
         // Node-local NVMe: each rank creates its own scratch subdirectory
-        // independently -- no boss restriction, no barrier needed.
+        // independently, no boss restriction -- but still barrier before any
+        // rank opens a file there, in case the mount isn't strictly private
+        // per node (cross-rank/cross-node visibility lag, same issue as the
+        // Lustre branch below).
         std::string scratchBase = scratch + "/"
             + std::filesystem::path(par().output).filename().string()
             + "." + std::to_string(vm().getTrajectory());
         Hadrons::mkdir(scratchBase);
+        grid->Barrier();
     }
     else
     {
