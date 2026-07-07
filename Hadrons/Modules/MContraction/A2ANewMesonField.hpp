@@ -32,6 +32,8 @@
 #include <filesystem>
 #include <fstream>
 #include <sys/stat.h>
+#include <dirent.h>
+#include <unistd.h>
 #include <Hadrons/Global.hpp>
 #include <Hadrons/Module.hpp>
 #include <Hadrons/ModuleFactory.hpp>
@@ -474,41 +476,58 @@ void TA2ANewMesonField<FImpl>::execute(void)
         }
         grid->Barrier();
 
+        char hostbuf[256];
+        ::gethostname(hostbuf, sizeof(hostbuf));
+        std::string host(hostbuf);
+
+        // errno is unreliable here (some interposed I/O layer on this system
+        // resets it before user code reads it), so diagnose failures by
+        // listing the actual directory contents instead.
+        auto listDir = [](const std::string &path) -> std::string
+        {
+            std::string dir = std::filesystem::path(path).parent_path().string();
+            DIR *d = ::opendir(dir.c_str());
+            if (!d)
+            {
+                return "<cannot open dir '" + dir + "'>";
+            }
+            std::string out;
+            struct dirent *ent;
+            while ((ent = ::readdir(d)) != nullptr)
+            {
+                std::string name(ent->d_name);
+                if (name == "." || name == "..") continue;
+                if (!out.empty()) out += ", ";
+                out += name;
+            }
+            ::closedir(d);
+            return dir + " contains: [" + (out.empty() ? "<empty>" : out) + "]";
+        };
+
         // 4MB copy buffer aligns with the target Lustre stripe size.
         const size_t copyBufSize = 4ul * 1024 * 1024;
         auto copyFile = [&](const std::string &src, const std::string &dst)
         {
-            // HADRONS_ERROR expands to HADRONS_CACHE_BACKTRACE (backtrace(),
-            // backtrace_symbols(), vector/string allocations) *before* msg is
-            // evaluated, so errno must be snapshotted into a local right
-            // after the failing call -- reading errno inside msg itself
-            // reports whatever HADRONS_CACHE_BACKTRACE last left behind, not
-            // the real failure.
             struct stat st;
-            errno = 0;
             if (::stat(src.c_str(), &st) != 0)
             {
-                int e = errno;
                 HADRONS_ERROR(Io, "stage-out: stat failed for " + src
-                                  + " (" + std::strerror(e) + ")");
+                                  + " on host " + host + ", rank " + std::to_string(myRank)
+                                  + "; " + listDir(src));
             }
-            errno = 0;
             std::ifstream in(src, std::ios::binary);
             if (!in)
             {
-                int e = errno;
                 HADRONS_ERROR(Io, "stage-out: cannot open " + src
                                   + " (exists, " + std::to_string(st.st_size)
                                   + " bytes, mode " + std::to_string(st.st_mode & 0777)
-                                  + "; errno " + std::strerror(e) + ")");
+                                  + ") on host " + host);
             }
-            errno = 0;
             std::ofstream out(dst, std::ios::binary);
             if (!out)
             {
-                int e = errno;
                 HADRONS_ERROR(Io, "stage-out: cannot create " + dst
-                                  + " (" + std::strerror(e) + ")");
+                                  + " on host " + host + "; " + listDir(dst));
             }
             std::vector<char> buf(copyBufSize);
             while (in.read(buf.data(), copyBufSize) || in.gcount())
@@ -592,136 +611,5 @@ void TA2ANewMesonField<FImpl>::execute(void)
 END_MODULE_NAMESPACE
 
 END_HADRONS_NAMESPACE
-
-// =============================================================================
-// OLD execute() — loop order (jb, g, m, ib) using PhaseContractRight.
-// Kept for regression comparison.  Restore by swapping with the active execute()
-// above and recompiling.
-// =============================================================================
-#if 0
-template <typename FImpl>
-void TA2ANewMesonField<FImpl>::execute_old(void)
-{
-    typedef typename FImpl::SiteSpinor      vobj;
-    typedef typename vobj::vector_type      vector_type;
-    typedef iSpinColourVector<vector_type>  SpinColourVector_v;
-
-    auto &left  = envGet(std::vector<FermionField>, par().left);
-    auto &right = envGet(std::vector<FermionField>, par().right);
-
-    GridBase *grid = envGetGrid(FermionField);
-
-    int nt     = env().getDim().back();
-    int N_i    = left.size();
-    int N_j    = right.size();
-    int ngamma = gamma_.size();
-    int nmom   = mom_.size();
-    int block  = par().block;
-
-    auto &ph = envGet(std::vector<ComplexField>, momphName_);
-
-    if (!hasPhase_)
-    {
-        startTimer("Momentum phases");
-        for (int j = 0; j < nmom; ++j)
-        {
-            Complex i(0.0, 1.0);
-            envGetTmp(ComplexField, coor);
-            ph[j] = Zero();
-            for (unsigned int mu = 0; mu < mom_[j].size(); mu++)
-            {
-                LatticeCoordinate(coor, mu);
-                ph[j] = ph[j] + (mom_[j][mu]/env().getDim(mu))*coor;
-            }
-            ph[j] = exp((Real)(2*M_PI)*i*ph[j]);
-        }
-        hasPhase_ = true;
-        stopTimer("Momentum phases");
-    }
-
-    auto ionameFn = [this](const int m, const int g)
-    {
-        std::stringstream ss;
-        ss << gamma_[g] << "_";
-        for (unsigned int mu = 0; mu < mom_[m].size(); ++mu)
-            ss << mom_[m][mu] << ((mu == mom_[m].size() - 1) ? "" : "_");
-        return ss.str();
-    };
-
-    auto filenameFn = [this, &ionameFn](const int m, const int g)
-    {
-        return par().output + "." + std::to_string(vm().getTrajectory())
-               + "/" + ionameFn(m, g) + ".h5";
-    };
-
-    auto metadataFn = [this](const int m, const int g)
-    {
-        A2ANewMesonFieldMetadata md;
-        for (auto pmu: mom_[m])
-            md.momentum.push_back(pmu);
-        md.gamma = gamma_[g];
-        return md;
-    };
-
-    Vector<HADRONS_A2AM_IO_TYPE> mBuf;
-    mBuf.resize(nt * block * block);
-
-    std::vector<FermionField> phaseGammaRight(block, grid);
-
-    std::string dirBase = par().output + "." + std::to_string(vm().getTrajectory());
-    { std::string dummy = dirBase + "/mkdir.h5"; makeFileDir(dummy, grid); }
-
-    for (int m = 0; m < nmom; m++)
-    for (int g = 0; g < ngamma; g++)
-    {
-        std::string ioname   = ionameFn(m, g);
-        std::string filename = filenameFn(m, g);
-        A2ANewMesonFieldMetadata md = metadataFn(m, g);
-#ifdef HADRONS_A2AM_PARALLEL_IO
-        grid->Barrier();
-        if (grid->ThisRank() == 0) {
-#endif
-        { A2AMatrixIo<HADRONS_A2AM_IO_TYPE> io(filename, ioname, nt, N_i, N_j); io.initFile(md, block); }
-#ifdef HADRONS_A2AM_PARALLEL_IO
-        } grid->Barrier();
-#endif
-    }
-
-    for (int jb = 0; jb < N_j; jb += block)
-    {
-        int Njj = std::min(N_j - jb, block);
-        for (int g = 0; g < ngamma; g++)
-        for (int m = 0; m < nmom; m++)
-        {
-            for (int jj = 0; jj < Njj; jj++)
-                A2Autils<FImpl>::PhaseContractRight(
-                    phaseGammaRight[jj], ph[m], gamma_[g], right[jb + jj]);
-            std::string ioname   = ionameFn(m, g);
-            std::string filename = filenameFn(m, g);
-            for (int ib = 0; ib < N_i; ib += block)
-            {
-                int Nii = std::min(N_i - ib, block);
-                A2AMatrixSet<HADRONS_A2AM_IO_TYPE> mf(mBuf.data(), 1, 1, nt, Nii, Njj);
-                A2ASpatialSum<SpinColourVector_v> spatial_sum;
-                spatial_sum.Allocate(Nii, Njj, grid);
-                spatial_sum.PackLeftConj(left, ib, Nii);
-                spatial_sum.PackRight(phaseGammaRight, 0, Njj);
-                Eigen::Tensor<ComplexD, 3> block_result(nt, Nii, Njj);
-                spatial_sum.Sum(block_result);
-                for (int t=0;t<nt;t++) for (int ii=0;ii<Nii;ii++) for (int jj=0;jj<Njj;jj++)
-                    mf(0, 0, t, ii, jj) = block_result(t, ii, jj);
-#ifdef HADRONS_A2AM_PARALLEL_IO
-                grid->Barrier();
-                if (grid->ThisRank() == 0) {
-#endif
-                { A2AMatrixIo<HADRONS_A2AM_IO_TYPE> io(filename, ioname, nt, N_i, N_j); io.saveBlock(mf, 0, 0, ib, jb); }
-#ifdef HADRONS_A2AM_PARALLEL_IO
-                } grid->Barrier();
-#endif
-            } // ib
-        } // g, m
-    } // jb
-}
-#endif // 0
 
 #endif // Hadrons_MContraction_A2ANewMesonField_hpp_
