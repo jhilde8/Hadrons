@@ -31,9 +31,6 @@
 
 #include <filesystem>
 #include <fstream>
-#include <sys/stat.h>
-#include <dirent.h>
-#include <unistd.h>
 #include <Hadrons/Global.hpp>
 #include <Hadrons/Module.hpp>
 #include <Hadrons/ModuleFactory.hpp>
@@ -466,88 +463,94 @@ void TA2ANewMesonField<FImpl>::execute(void)
         } // g
     } // jb
 
-    if (!scratch.empty())
-    {
-        // Lustre output directory created here (boss-only + barrier) so it
-        // exists before any rank begins copying its scratch files.
-        {
-            std::string dummy = dirBase + "/mkdir.h5";
-            makeFileDir(dummy, grid);
-        }
-        grid->Barrier();
-
-        char hostbuf[256];
-        ::gethostname(hostbuf, sizeof(hostbuf));
-        std::string host(hostbuf);
-
-        // errno is unreliable here (some interposed I/O layer on this system
-        // resets it before user code reads it), so diagnose failures by
-        // listing the actual directory contents instead.
-        auto listDir = [](const std::string &path) -> std::string
-        {
-            std::string dir = std::filesystem::path(path).parent_path().string();
-            DIR *d = ::opendir(dir.c_str());
-            if (!d)
-            {
-                return "<cannot open dir '" + dir + "'>";
-            }
-            std::string out;
-            struct dirent *ent;
-            while ((ent = ::readdir(d)) != nullptr)
-            {
-                std::string name(ent->d_name);
-                if (name == "." || name == "..") continue;
-                if (!out.empty()) out += ", ";
-                out += name;
-            }
-            ::closedir(d);
-            return dir + " contains: [" + (out.empty() ? "<empty>" : out) + "]";
-        };
-
-        // 4MB copy buffer aligns with the target Lustre stripe size.
-        const size_t copyBufSize = 4ul * 1024 * 1024;
-        auto copyFile = [&](const std::string &src, const std::string &dst)
-        {
-            struct stat st;
-            if (::stat(src.c_str(), &st) != 0)
-            {
-                HADRONS_ERROR(Io, "stage-out: stat failed for " + src
-                                  + " on host " + host + ", rank " + std::to_string(myRank)
-                                  + "; " + listDir(src));
-            }
-            std::ifstream in(src, std::ios::binary);
-            if (!in)
-            {
-                HADRONS_ERROR(Io, "stage-out: cannot open " + src
-                                  + " (exists, " + std::to_string(st.st_size)
-                                  + " bytes, mode " + std::to_string(st.st_mode & 0777)
-                                  + ") on host " + host);
-            }
-            std::ofstream out(dst, std::ios::binary);
-            if (!out)
-            {
-                HADRONS_ERROR(Io, "stage-out: cannot create " + dst
-                                  + " on host " + host + "; " + listDir(dst));
-            }
-            std::vector<char> buf(copyBufSize);
-            while (in.read(buf.data(), copyBufSize) || in.gcount())
-                out.write(buf.data(), in.gcount());
-            if (out.fail()) HADRONS_ERROR(Io, "stage-out: write failed for " + dst);
-        };
-
-        double dt = -usecond();
-        for (int m = 0; m < nmom; m++)
-        for (int g = 0; g < ngamma; g++)
-        {
-            if ((unsigned int)(m * ngamma + g) % nRank != myRank) continue;
-            std::string src = scratchFn(m, g);
-            copyFile(src, filenameFn(m, g));
-            std::filesystem::remove(src);
-        }
-        dt += usecond();
-        stageOutTime = dt;
-        grid->Barrier();
-    }
+    /* Stage-out (NVMe scratch -> Lustre) is now done outside this module,
+     * by an `mv` step in the job submission script after the run completes,
+     * rather than copying file-by-file from inside the code. Kept here for
+     * reference:
+     *
+     * if (!scratch.empty())
+     * {
+     *     // Lustre output directory created here (boss-only + barrier) so it
+     *     // exists before any rank begins copying its scratch files.
+     *     {
+     *         std::string dummy = dirBase + "/mkdir.h5";
+     *         makeFileDir(dummy, grid);
+     *     }
+     *     grid->Barrier();
+     *
+     *     char hostbuf[256];
+     *     ::gethostname(hostbuf, sizeof(hostbuf));
+     *     std::string host(hostbuf);
+     *
+     *     // errno is unreliable here (some interposed I/O layer on this system
+     *     // resets it before user code reads it), so diagnose failures by
+     *     // listing the actual directory contents instead.
+     *     auto listDir = [](const std::string &path) -> std::string
+     *     {
+     *         std::string dir = std::filesystem::path(path).parent_path().string();
+     *         DIR *d = ::opendir(dir.c_str());
+     *         if (!d)
+     *         {
+     *             return "<cannot open dir '" + dir + "'>";
+     *         }
+     *         std::string out;
+     *         struct dirent *ent;
+     *         while ((ent = ::readdir(d)) != nullptr)
+     *         {
+     *             std::string name(ent->d_name);
+     *             if (name == "." || name == "..") continue;
+     *             if (!out.empty()) out += ", ";
+     *             out += name;
+     *         }
+     *         ::closedir(d);
+     *         return dir + " contains: [" + (out.empty() ? "<empty>" : out) + "]";
+     *     };
+     *
+     *     // 4MB copy buffer aligns with the target Lustre stripe size.
+     *     const size_t copyBufSize = 4ul * 1024 * 1024;
+     *     auto copyFile = [&](const std::string &src, const std::string &dst)
+     *     {
+     *         struct stat st;
+     *         if (::stat(src.c_str(), &st) != 0)
+     *         {
+     *             HADRONS_ERROR(Io, "stage-out: stat failed for " + src
+     *                               + " on host " + host + ", rank " + std::to_string(myRank)
+     *                               + "; " + listDir(src));
+     *         }
+     *         std::ifstream in(src, std::ios::binary);
+     *         if (!in)
+     *         {
+     *             HADRONS_ERROR(Io, "stage-out: cannot open " + src
+     *                               + " (exists, " + std::to_string(st.st_size)
+     *                               + " bytes, mode " + std::to_string(st.st_mode & 0777)
+     *                               + ") on host " + host);
+     *         }
+     *         std::ofstream out(dst, std::ios::binary);
+     *         if (!out)
+     *         {
+     *             HADRONS_ERROR(Io, "stage-out: cannot create " + dst
+     *                               + " on host " + host + "; " + listDir(dst));
+     *         }
+     *         std::vector<char> buf(copyBufSize);
+     *         while (in.read(buf.data(), copyBufSize) || in.gcount())
+     *             out.write(buf.data(), in.gcount());
+     *         if (out.fail()) HADRONS_ERROR(Io, "stage-out: write failed for " + dst);
+     *     };
+     *
+     *     double dt = -usecond();
+     *     for (int m = 0; m < nmom; m++)
+     *     for (int g = 0; g < ngamma; g++)
+     *     {
+     *         if ((unsigned int)(m * ngamma + g) % nRank != myRank) continue;
+     *         std::string src = scratchFn(m, g);
+     *         copyFile(src, filenameFn(m, g));
+     *         std::filesystem::remove(src);
+     *     }
+     *     dt += usecond();
+     *     stageOutTime = dt;
+     *     grid->Barrier();
+     * }
+     */
 
     LOG(Message) << "Sum detail (us), rank " << myRank << ":" << std::endl;
     LOG(Message) << "  GEMM            = " << sumTimings[0] << std::endl;
