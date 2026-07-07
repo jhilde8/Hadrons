@@ -478,26 +478,38 @@ void TA2ANewMesonField<FImpl>::execute(void)
         const size_t copyBufSize = 4ul * 1024 * 1024;
         auto copyFile = [&](const std::string &src, const std::string &dst)
         {
-            // std::ifstream's fail state doesn't reliably reflect errno by the
-            // time we can check it -- basic_filebuf::open() does bookkeeping
-            // beyond the raw open() syscall, which can clobber errno even
-            // when the underlying open() itself failed. Stat the path
-            // directly first so a failure here reports the real errno.
+            // HADRONS_ERROR expands to HADRONS_CACHE_BACKTRACE (backtrace(),
+            // backtrace_symbols(), vector/string allocations) *before* msg is
+            // evaluated, so errno must be snapshotted into a local right
+            // after the failing call -- reading errno inside msg itself
+            // reports whatever HADRONS_CACHE_BACKTRACE last left behind, not
+            // the real failure.
             struct stat st;
             errno = 0;
             if (::stat(src.c_str(), &st) != 0)
+            {
+                int e = errno;
                 HADRONS_ERROR(Io, "stage-out: stat failed for " + src
-                                  + " (" + std::strerror(errno) + ")");
+                                  + " (" + std::strerror(e) + ")");
+            }
             errno = 0;
             std::ifstream in(src, std::ios::binary);
-            if (!in)  HADRONS_ERROR(Io, "stage-out: cannot open " + src
-                                    + " (exists, " + std::to_string(st.st_size)
-                                    + " bytes, mode " + std::to_string(st.st_mode & 0777)
-                                    + "; errno " + std::strerror(errno) + ")");
+            if (!in)
+            {
+                int e = errno;
+                HADRONS_ERROR(Io, "stage-out: cannot open " + src
+                                  + " (exists, " + std::to_string(st.st_size)
+                                  + " bytes, mode " + std::to_string(st.st_mode & 0777)
+                                  + "; errno " + std::strerror(e) + ")");
+            }
             errno = 0;
             std::ofstream out(dst, std::ios::binary);
-            if (!out) HADRONS_ERROR(Io, "stage-out: cannot create " + dst
-                                    + " (" + std::strerror(errno) + ")");
+            if (!out)
+            {
+                int e = errno;
+                HADRONS_ERROR(Io, "stage-out: cannot create " + dst
+                                  + " (" + std::strerror(e) + ")");
+            }
             std::vector<char> buf(copyBufSize);
             while (in.read(buf.data(), copyBufSize) || in.gcount())
                 out.write(buf.data(), in.gcount());
