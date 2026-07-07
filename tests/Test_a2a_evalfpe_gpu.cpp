@@ -21,12 +21,21 @@
  * mcg_l mirrors production's mixed-precision solver: a single-precision
  * inner action (mdwf_lf, on a single-precision cast of the gauge field) and
  * a double-precision outer action (mdwf_l), per
- * Hadrons/Modules/MSolver/MixedPrecisionRBPrecCG.hpp. No deflation guessers
- * are wired in (innerGuesser/outerGuesser left empty) -- they only affect
- * the high-mode CG solves, not makeLowModeV/W, which is what's under test
- * and runs first in TA2AVectors::execute(). If the eval division is the
- * culprit this should crash before the solver is ever invoked. If instead
- * you hit a "CG did not converge" HADRONS_ERROR, that's the undeflated
+ * Hadrons/Modules/MSolver/MixedPrecisionRBPrecCG.hpp. Its outerGuesser is
+ * wired to an MGuesser::ExactDeflation guesser built from the same epackD
+ * eigenpack, matching production (which always deflates the high-mode
+ * solve). Leaving outerGuesser empty falls back to Grid's ZeroGuesser,
+ * which -- unlike DeflatedGuesser/ExactDeflatedGuesser -- never sets
+ * guess.Checkerboard(); combined with A2AVectors' automatic use of the
+ * "_subtract" solver whenever Nl_ > 0, that mistagged zero field survives
+ * into SchurRedBlackBase's subGuess subtraction and trips Lattice_ET.h's
+ * checkerboard-consistency GRID_ASSERT. That's a real latent Grid bug but
+ * unrelated to the eval-division FPE this test targets, so it's avoided
+ * here by deflating for real rather than patching Grid's ZeroGuesser.
+ * makeLowModeV/W (what's under test) still runs first in
+ * TA2AVectors::execute(), before the high-mode solve. If the eval division
+ * is the culprit this should crash before the solver is ever invoked. If
+ * instead you hit a "CG did not converge" HADRONS_ERROR, that's the
  * mixed-precision CG struggling on a non-thermalized random gauge field --
  * a normal exception, not a signal, and unrelated to the FPE hypothesis;
  * loosen --residual or raise maxInnerIteration/maxOuterIteration below if
@@ -207,8 +216,8 @@ int main(int argc, char *argv[])
 
     // ------------------------------------------------------------------
     // Mixed-precision solver (registers both "mcg_l" and "mcg_l_subtract"),
-    // matching production's mcg_l shape. No deflation guessers -- see file
-    // header.
+    // matching production's mcg_l shape. outerGuesser is set below once the
+    // eigenpack-backed guesser module exists -- see file header.
     // ------------------------------------------------------------------
     MSolver::MixedPrecisionRBPrecCGPar solverPar;
     solverPar.innerAction       = "mdwf_lf";
@@ -217,7 +226,7 @@ int main(int argc, char *argv[])
     solverPar.maxOuterIteration = 2;
     solverPar.residual          = 1e-4;
     solverPar.innerGuesser      = "";
-    solverPar.outerGuesser      = "";
+    solverPar.outerGuesser      = "guesser";
     solverPar.ifCGD             = false;
     application.createModule<MSolver::MixedPrecisionRBPrecCG>("mcg_l", solverPar);
 
@@ -235,6 +244,22 @@ int main(int argc, char *argv[])
     epackPar.evalMin = evalMin;
     epackPar.evalMax = evalMax;
     application.createModule<MUtilities::RandomFermionEigenPack>("epackD", epackPar);
+
+    // ------------------------------------------------------------------
+    // Exact deflation guesser built from the same eigenpack, wired in as
+    // mcg_l's outerGuesser. Production always configures a real deflation
+    // guesser here; leaving it empty falls back to Grid's ZeroGuesser,
+    // which (unlike DeflatedGuesser/ExactDeflatedGuesser) never sets
+    // guess.Checkerboard() -- that mistagged zero field then survives into
+    // SchurRedBlackBase's subGuess subtraction (active here since A2AVectors
+    // auto-selects the "_subtract" solver whenever Nl_ > 0) and trips
+    // Lattice_ET.h's checkerboard-consistency GRID_ASSERT. Wiring up the
+    // guesser both mirrors production and avoids that unrelated latent bug.
+    // ------------------------------------------------------------------
+    MGuesser::ExactDeflationPar guesserPar;
+    guesserPar.eigenPack = "epackD";
+    guesserPar.size      = Nl;
+    application.createModule<MGuesser::ExactDeflation>("guesser", guesserPar);
 
     // ------------------------------------------------------------------
     // A2A vectors (same module pattern as a2a_l)
