@@ -100,6 +100,13 @@ public:
     virtual void execute(void)
     {
         auto &epack = envGet(Pack, getName());
+        // GridParallelRNG::fill's automatic checkerboard handling builds its
+        // internal temporary on rng4d()'s own (4D) grid, which only matches
+        // a checkerboarded *4D* target. For a 5D redblack eigenvector grid
+        // that temporary is the wrong dimensionality, so fill it on the full
+        // 5D grid ourselves (same pattern as RandomVectors.hpp for Ls>1) and
+        // project down, exactly as makeLowModeV does internally.
+        FermionField full(envGetGrid(FermionField, par().Ls));
 
         LOG(Message) << "Generating " << par().size
                      << " random low-mode eigenvectors, eval in ["
@@ -107,8 +114,8 @@ public:
                      << std::endl;
         for (unsigned int i = 0; i < par().size; ++i)
         {
-            random(rng4d(), epack.evec[i]);
-            epack.evec[i].Checkerboard() = Odd;
+            random(rng4d(), full);
+            pickCheckerboard(Odd, epack.evec[i], full);
             double frac  = (par().size > 1) ?
                            double(i) / double(par().size - 1) : 0.;
             epack.eval[i] = par().evalMin + frac * (par().evalMax - par().evalMin);
