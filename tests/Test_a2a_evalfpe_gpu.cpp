@@ -117,7 +117,13 @@ public:
     }
 };
 
-MODULE_REGISTER_TMP(RandomFermionEigenPack, TRandomFermionEigenPack<FIMPL>, MUtilities);
+// Plain MODULE_REGISTER (not MODULE_REGISTER_TMP): the _TMP variant emits an
+// "extern template class" declaration that assumes an explicit out-of-line
+// instantiation exists in a companion .cpp compiled into libHadrons (as real
+// modules have). Since TRandomFermionEigenPack only exists in this test
+// file, that promise goes unmet and the linker can't find the vtable. Plain
+// MODULE_REGISTER lets the compiler instantiate it normally, right here.
+MODULE_REGISTER(RandomFermionEigenPack, ARG(TRandomFermionEigenPack<FIMPL>), MUtilities);
 
 END_MODULE_NAMESPACE
 END_HADRONS_NAMESPACE

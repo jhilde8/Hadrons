@@ -31,6 +31,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <sys/stat.h>
 #include <Hadrons/Global.hpp>
 #include <Hadrons/Module.hpp>
 #include <Hadrons/ModuleFactory.hpp>
@@ -477,10 +478,22 @@ void TA2ANewMesonField<FImpl>::execute(void)
         const size_t copyBufSize = 4ul * 1024 * 1024;
         auto copyFile = [&](const std::string &src, const std::string &dst)
         {
+            // std::ifstream's fail state doesn't reliably reflect errno by the
+            // time we can check it -- basic_filebuf::open() does bookkeeping
+            // beyond the raw open() syscall, which can clobber errno even
+            // when the underlying open() itself failed. Stat the path
+            // directly first so a failure here reports the real errno.
+            struct stat st;
+            errno = 0;
+            if (::stat(src.c_str(), &st) != 0)
+                HADRONS_ERROR(Io, "stage-out: stat failed for " + src
+                                  + " (" + std::strerror(errno) + ")");
             errno = 0;
             std::ifstream in(src, std::ios::binary);
             if (!in)  HADRONS_ERROR(Io, "stage-out: cannot open " + src
-                                    + " (" + std::strerror(errno) + ")");
+                                    + " (exists, " + std::to_string(st.st_size)
+                                    + " bytes, mode " + std::to_string(st.st_mode & 0777)
+                                    + "; errno " + std::strerror(errno) + ")");
             errno = 0;
             std::ofstream out(dst, std::ios::binary);
             if (!out) HADRONS_ERROR(Io, "stage-out: cannot create " + dst
