@@ -107,6 +107,27 @@ void TTimeDilutedSpinColorDiagonal<FImpl>::execute(void)
 
     LOG(Message) << "Generating time-diluted, spin-color diagonal noise" << std::endl;
     noise.generateNoise(rng4d());
+
+    // Sanity check: every site of the raw (pre-dilution) noise is a Z2xiZ2
+    // value with |eta|=1, so norm2() summed over the whole field must equal
+    // the global site count exactly. A mismatch or non-finite result means
+    // the RNG fill produced bad data.
+    auto &vec = noise.getNoise();
+    for (unsigned int n = 0; n < vec.size(); ++n)
+    {
+        RealD n2       = norm2(vec[n]);
+        RealD expected = static_cast<RealD>(vec[n].Grid()->gSites());
+        RealD relDiff  = std::abs(n2 - expected)/expected;
+
+        LOG(Message) << "Noise vector " << n << " norm2 = " << n2
+                     << " (expected " << expected << ", relative diff "
+                     << relDiff << ")" << std::endl;
+        if (!std::isfinite(n2) || (relDiff > 1.0e-10))
+        {
+            LOG(Warning) << "Noise vector " << n << " failed the norm2 sanity "
+                         << "check (non-finite or |eta|!=1 somewhere)" << std::endl;
+        }
+    }
 }
 
 END_MODULE_NAMESPACE
