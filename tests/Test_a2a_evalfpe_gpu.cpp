@@ -220,28 +220,9 @@ int main(int argc, char *argv[])
     application.createModule<MAction::MobiusDWFF>("mdwf_lf", actionParF);
 
     // ------------------------------------------------------------------
-    // Mixed-precision solver (registers both "mcg_l" and "mcg_l_subtract"),
-    // matching production's mcg_l shape. outerGuesser is set below once the
-    // eigenpack-backed guesser module exists -- see file header.
-    // ------------------------------------------------------------------
-    MSolver::MixedPrecisionRBPrecCGPar solverPar;
-    solverPar.innerAction       = "mdwf_lf";
-    solverPar.outerAction       = "mdwf_l";
-    solverPar.maxInnerIteration = 2000;
-    solverPar.maxOuterIteration = 2;
-    solverPar.residual          = 1e-4;
-    solverPar.innerGuesser      = "";
-    solverPar.outerGuesser      = "guesser";
-    solverPar.ifCGD             = false;
-    application.createModule<MSolver::MixedPrecisionRBPrecCG>("mcg_l", solverPar);
-
-    // ------------------------------------------------------------------
-    // Time-diluted noise (same as noise_ud)
-    // ------------------------------------------------------------------
-    application.createModule<MNoise::TimeDilutedSpinColorDiagonal>("noise_ud");
-
-    // ------------------------------------------------------------------
-    // Synthetic eigenpack (stand-in for epackD)
+    // Synthetic eigenpack (stand-in for epackD). Created before mcg_l/guesser
+    // below -- with the naive (sequential) scheduler, creation order *is*
+    // execution order, so every module's dependencies must already exist.
     // ------------------------------------------------------------------
     MUtilities::RandomFermionEigenPackPar epackPar;
     epackPar.size    = Nl;
@@ -265,6 +246,27 @@ int main(int argc, char *argv[])
     guesserPar.eigenPack = "epackD";
     guesserPar.size      = Nl;
     application.createModule<MGuesser::ExactDeflation>("guesser", guesserPar);
+
+    // ------------------------------------------------------------------
+    // Mixed-precision solver (registers both "mcg_l" and "mcg_l_subtract"),
+    // matching production's mcg_l shape. outerGuesser references the
+    // eigenpack-backed guesser module created above.
+    // ------------------------------------------------------------------
+    MSolver::MixedPrecisionRBPrecCGPar solverPar;
+    solverPar.innerAction       = "mdwf_lf";
+    solverPar.outerAction       = "mdwf_l";
+    solverPar.maxInnerIteration = 2000;
+    solverPar.maxOuterIteration = 2;
+    solverPar.residual          = 1e-4;
+    solverPar.innerGuesser      = "";
+    solverPar.outerGuesser      = "guesser";
+    solverPar.ifCGD             = false;
+    application.createModule<MSolver::MixedPrecisionRBPrecCG>("mcg_l", solverPar);
+
+    // ------------------------------------------------------------------
+    // Time-diluted noise (same as noise_ud)
+    // ------------------------------------------------------------------
+    application.createModule<MNoise::TimeDilutedSpinColorDiagonal>("noise_ud");
 
     // ------------------------------------------------------------------
     // A2A vectors (same module pattern as a2a_l)
