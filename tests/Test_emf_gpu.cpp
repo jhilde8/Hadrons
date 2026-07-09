@@ -10,7 +10,7 @@
  * Hadrons application: runs A2AExtendedMesonField (GPU path) on
  * random A2A vectors and writes HDF5 output to emf_gpu_out.<traj>/.
  *
- * Run alongside Test_emf_mt_cpu.cpp (same seed → identical random vectors)
+ * Run alongside Test_emf_mt_cpu.cpp (same seed -> identical random vectors)
  * then diff the HDF5 outputs to validate the GPU module.
  *
  * Usage:
@@ -40,7 +40,7 @@ int main(int argc, char *argv[])
     Application application;
 
     // ------------------------------------------------------------------
-    // Global parameters — must match Test_emf_mt_cpu.cpp exactly so that
+    // Global parameters - must match Test_emf_mt_cpu.cpp exactly so that
     // the RNG produces the same random vectors in both runs.
     // ------------------------------------------------------------------
     Application::GlobalPar globalPar;
@@ -48,6 +48,11 @@ int main(int argc, char *argv[])
     globalPar.trajCounter.end      = 1;
     globalPar.trajCounter.step     = 1;
     globalPar.runId                = "emf_regression";
+    // Modules below are created in dependency order, so the naive
+    // (sequential, non-genetic) scheduler is valid here and sidesteps
+    // GeneticScheduler entirely -- useful while GeneticScheduler trips
+    // the --debug-signals FPE trap (see doMutation()/selectPair()).
+    globalPar.scheduler.schedulerType = "naive";
     globalPar.genetic.maxGen       = 1000;
     globalPar.genetic.maxCstGen    = 200;
     globalPar.genetic.popSize      = 20;
@@ -86,7 +91,7 @@ int main(int argc, char *argv[])
     application.createModule<MUtilities::RandomFermions>("loop_vw2", rvLoop);
 
     // ------------------------------------------------------------------
-    // A2AExtendedMesonField — GPU path (new module)
+    // A2AExtendedMesonField - GPU path (new module)
     // ------------------------------------------------------------------
     MContraction::A2AExtendedMesonFieldPar emfPar;
     emfPar.cacheBlock = Ncb;

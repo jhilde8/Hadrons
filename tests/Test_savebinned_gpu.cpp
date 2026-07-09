@@ -49,6 +49,11 @@ int main(int argc, char *argv[])
     globalPar.trajCounter.end      = 1;
     globalPar.trajCounter.step     = 1;
     globalPar.runId                = "savebinned_regression";
+    // Modules below are created in dependency order, so the naive
+    // (sequential, non-genetic) scheduler is valid here and sidesteps
+    // GeneticScheduler entirely -- useful while GeneticScheduler trips
+    // the --debug-signals FPE trap (see doMutation()/selectPair()).
+    globalPar.scheduler.schedulerType = "naive";
     globalPar.genetic.maxGen       = 1000;
     globalPar.genetic.maxCstGen    = 200;
     globalPar.genetic.popSize      = 20;
