@@ -30,7 +30,6 @@
 #define Hadrons_MContraction_A2ANewMesonField_hpp_
 
 #include <filesystem>
-#include <fstream>
 #include <Hadrons/Global.hpp>
 #include <Hadrons/Module.hpp>
 #include <Hadrons/ModuleFactory.hpp>
@@ -54,8 +53,7 @@ public:
                                     std::string,             right,
                                     std::string,             output,
                                     std::string,             gammas,
-                                    std::vector<std::string>, mom,
-                                    std::string,             localScratch);
+                                    std::vector<std::string>, mom);
 };
 
 class A2ANewMesonFieldMetadata: Serializable
@@ -221,12 +219,6 @@ void TA2ANewMesonField<FImpl>::execute(void)
         return ss.str();
     };
 
-    auto filenameFn = [this, &ionameFn](const int m, const int g)
-    {
-        return par().output + "." + std::to_string(vm().getTrajectory())
-               + "/" + ionameFn(m, g) + ".h5";
-    };
-
     auto metadataFn = [this](const int m, const int g)
     {
         A2ANewMesonFieldMetadata md;
@@ -236,29 +228,28 @@ void TA2ANewMesonField<FImpl>::execute(void)
         return md;
     };
 
-    // Resolve scratch root: explicit parameter takes priority, then $LOCAL_SCRATCH,
-    // then empty (disabled) meaning write directly to Lustre.
-    std::string scratch = par().localScratch;
-    if (scratch.empty())
-    {
-        const char *env = std::getenv("LOCAL_SCRATCH");
-        if (env) scratch = std::string(env);
-    }
+    // The burst buffer is only mounted when the job actually requested it
+    // (-C nvme), so its presence is a reliable signal -- no allocation means
+    // this path simply isn't there. When present, the job submission script
+    // is responsible for mv'ing the output back to Lustre after the run.
+    const char *scratchEnv = std::getenv("LOCAL_SCRATCH");
+    std::string scratch = (scratchEnv && std::filesystem::is_directory(scratchEnv))
+                           ? std::string(scratchEnv) : std::string();
 
-    // Node-local scratch path: drops the upper directory prefix so that
+    // Node-local scratch path drops the upper directory prefix so that
     // e.g. output="mf_2bin/mf_ll" -> scratch="$LOCAL_SCRATCH/mf_ll.575/ioname.h5"
-    auto scratchFn = [this, &ionameFn, &scratch](const int m, const int g)
+    // Falls back to writing directly to Lustre when scratch isn't available.
+    auto filenameFn = [this, &ionameFn, &scratch](const int m, const int g)
     {
+        if (scratch.empty())
+        {
+            return par().output + "." + std::to_string(vm().getTrajectory())
+                   + "/" + ionameFn(m, g) + ".h5";
+        }
         std::string base = std::filesystem::path(par().output).filename().string();
         return scratch + "/" + base
                + "." + std::to_string(vm().getTrajectory())
                + "/" + ionameFn(m, g) + ".h5";
-    };
-
-    // Routes initFile and saveBlock to scratch when enabled, Lustre otherwise.
-    auto writeFn = [&](const int m, const int g)
-    {
-        return scratch.empty() ? filenameFn(m, g) : scratchFn(m, g);
     };
 
     // Output buffer: one (nt, Nii, Njj) block at a time.
@@ -276,31 +267,27 @@ void TA2ANewMesonField<FImpl>::execute(void)
     std::vector<Eigen::Tensor<ComplexD, 3, Eigen::RowMajor>> all_results(nmom,
         Eigen::Tensor<ComplexD, 3, Eigen::RowMajor>(nt, block, block));
 
-    // Create output directory. makeFileDir only mkdir()s on the boss rank
-    // and has no synchronization of its own; now that file creation below
-    // is spread across ranks (not boss-only, as it was previously), every
-    // other rank must wait here or it can reach H5Fcreate before the
-    // directory exists (or before it's visible on that rank's node).
-    std::string dirBase = par().output + "." + std::to_string(vm().getTrajectory());
-    if (!scratch.empty())
+    // When scratch is available, each rank creates its own scratch
+    // subdirectory independently, no boss restriction -- but still barrier
+    // before any rank opens a file there, in case the mount isn't strictly
+    // private per node (cross-rank/cross-node visibility lag). Otherwise
+    // makeFileDir only mkdir()s on the boss rank and has no synchronization
+    // of its own, so every other rank must wait here or it can reach
+    // H5Fcreate before the directory exists (or before it's visible on that
+    // rank's node).
+    if (scratch.empty())
     {
-        // Node-local NVMe: each rank creates its own scratch subdirectory
-        // independently, no boss restriction -- but still barrier before any
-        // rank opens a file there, in case the mount isn't strictly private
-        // per node (cross-rank/cross-node visibility lag, same issue as the
-        // Lustre branch below).
+        std::string dummy = par().output + "." + std::to_string(vm().getTrajectory()) + "/mkdir.h5";
+        makeFileDir(dummy, grid);
+    }
+    else
+    {
         std::string scratchBase = scratch + "/"
             + std::filesystem::path(par().output).filename().string()
             + "." + std::to_string(vm().getTrajectory());
         Hadrons::mkdir(scratchBase);
-        grid->Barrier();
     }
-    else
-    {
-        std::string dummy = dirBase + "/mkdir.h5";
-        makeFileDir(dummy, grid);
-        grid->Barrier();
-    }
+    grid->Barrier();
 
     unsigned int myRank = grid->ThisRank();
     unsigned int nRank  = grid->RankCount();
@@ -327,7 +314,7 @@ void TA2ANewMesonField<FImpl>::execute(void)
         if ((unsigned int)(m * ngamma + g) % nRank == myRank)
         {
             std::string ioname   = ionameFn(m, g);
-            std::string filename = writeFn(m, g);
+            std::string filename = filenameFn(m, g);
             A2ANewMesonFieldMetadata md = metadataFn(m, g);
             A2AMatrixIo<HADRONS_A2AM_IO_TYPE> io(filename, ioname, nt, N_i, N_j);
             io.initFile(md, block);
@@ -357,7 +344,6 @@ void TA2ANewMesonField<FImpl>::execute(void)
     double                fillTime     = 0.;
     std::array<double, 7> ioTimings    = {};
     std::array<double, 5> sumTimings   = {};
-    double                stageOutTime = 0.;
 
     for (int jb = 0; jb < N_j; jb += block)
     {
@@ -438,7 +424,7 @@ void TA2ANewMesonField<FImpl>::execute(void)
                     });
                     dt += usecond();
                     fillTime += dt;
-                    A2AMatrixIo<HADRONS_A2AM_IO_TYPE> io(writeFn(m, g), ionameFn(m, g),
+                    A2AMatrixIo<HADRONS_A2AM_IO_TYPE> io(filenameFn(m, g), ionameFn(m, g),
                                                          nt, N_i, N_j);
                     io.saveBlock(mf, 0, 0, ib, jb, &ioTimings);
                 }
@@ -463,95 +449,6 @@ void TA2ANewMesonField<FImpl>::execute(void)
         } // g
     } // jb
 
-    /* Stage-out (NVMe scratch -> Lustre) is now done outside this module,
-     * by an `mv` step in the job submission script after the run completes,
-     * rather than copying file-by-file from inside the code. Kept here for
-     * reference:
-     *
-     * if (!scratch.empty())
-     * {
-     *     // Lustre output directory created here (boss-only + barrier) so it
-     *     // exists before any rank begins copying its scratch files.
-     *     {
-     *         std::string dummy = dirBase + "/mkdir.h5";
-     *         makeFileDir(dummy, grid);
-     *     }
-     *     grid->Barrier();
-     *
-     *     char hostbuf[256];
-     *     ::gethostname(hostbuf, sizeof(hostbuf));
-     *     std::string host(hostbuf);
-     *
-     *     // errno is unreliable here (some interposed I/O layer on this system
-     *     // resets it before user code reads it), so diagnose failures by
-     *     // listing the actual directory contents instead.
-     *     auto listDir = [](const std::string &path) -> std::string
-     *     {
-     *         std::string dir = std::filesystem::path(path).parent_path().string();
-     *         DIR *d = ::opendir(dir.c_str());
-     *         if (!d)
-     *         {
-     *             return "<cannot open dir '" + dir + "'>";
-     *         }
-     *         std::string out;
-     *         struct dirent *ent;
-     *         while ((ent = ::readdir(d)) != nullptr)
-     *         {
-     *             std::string name(ent->d_name);
-     *             if (name == "." || name == "..") continue;
-     *             if (!out.empty()) out += ", ";
-     *             out += name;
-     *         }
-     *         ::closedir(d);
-     *         return dir + " contains: [" + (out.empty() ? "<empty>" : out) + "]";
-     *     };
-     *
-     *     // 4MB copy buffer aligns with the target Lustre stripe size.
-     *     const size_t copyBufSize = 4ul * 1024 * 1024;
-     *     auto copyFile = [&](const std::string &src, const std::string &dst)
-     *     {
-     *         struct stat st;
-     *         if (::stat(src.c_str(), &st) != 0)
-     *         {
-     *             HADRONS_ERROR(Io, "stage-out: stat failed for " + src
-     *                               + " on host " + host + ", rank " + std::to_string(myRank)
-     *                               + "; " + listDir(src));
-     *         }
-     *         std::ifstream in(src, std::ios::binary);
-     *         if (!in)
-     *         {
-     *             HADRONS_ERROR(Io, "stage-out: cannot open " + src
-     *                               + " (exists, " + std::to_string(st.st_size)
-     *                               + " bytes, mode " + std::to_string(st.st_mode & 0777)
-     *                               + ") on host " + host);
-     *         }
-     *         std::ofstream out(dst, std::ios::binary);
-     *         if (!out)
-     *         {
-     *             HADRONS_ERROR(Io, "stage-out: cannot create " + dst
-     *                               + " on host " + host + "; " + listDir(dst));
-     *         }
-     *         std::vector<char> buf(copyBufSize);
-     *         while (in.read(buf.data(), copyBufSize) || in.gcount())
-     *             out.write(buf.data(), in.gcount());
-     *         if (out.fail()) HADRONS_ERROR(Io, "stage-out: write failed for " + dst);
-     *     };
-     *
-     *     double dt = -usecond();
-     *     for (int m = 0; m < nmom; m++)
-     *     for (int g = 0; g < ngamma; g++)
-     *     {
-     *         if ((unsigned int)(m * ngamma + g) % nRank != myRank) continue;
-     *         std::string src = scratchFn(m, g);
-     *         copyFile(src, filenameFn(m, g));
-     *         std::filesystem::remove(src);
-     *     }
-     *     dt += usecond();
-     *     stageOutTime = dt;
-     *     grid->Barrier();
-     * }
-     */
-
     LOG(Message) << "Sum detail (us), rank " << myRank << ":" << std::endl;
     LOG(Message) << "  GEMM            = " << sumTimings[0] << std::endl;
     LOG(Message) << "  device->host    = " << sumTimings[1] << std::endl;
@@ -567,8 +464,6 @@ void TA2ANewMesonField<FImpl>::execute(void)
     LOG(Message) << "  selectHyperslab = " << ioTimings[4]  << std::endl;
     LOG(Message) << "  write           = " << ioTimings[5]  << std::endl;
     LOG(Message) << "  close(fsync)    = " << ioTimings[6]  << std::endl;
-    if (!scratch.empty())
-        LOG(Message) << "  stage-out       = " << stageOutTime  << std::endl;
 
     // All crossRankMaxLoc calls are collective (two GlobalMax each) and must
     // be reached by every rank together. LOG output is only visible from rank 0
@@ -588,7 +483,6 @@ void TA2ANewMesonField<FImpl>::execute(void)
     auto [hyperslabMax,   hyperslabRank]  = crossRankMaxLoc(ioTimings[4]);
     auto [writeMax,       writeRank]      = crossRankMaxLoc(ioTimings[5]);
     auto [closeMax,       closeRank]      = crossRankMaxLoc(ioTimings[6]);
-    auto [stageOutMax,    stageOutRank]   = crossRankMaxLoc(stageOutTime);
 
     LOG(Message) << "Sum cross-rank max (us) [straggler rank]:" << std::endl;
     LOG(Message) << "  Sum_timer       = " << sumTimerMax  << " [" << sumTimerRank  << "]" << std::endl;
@@ -607,8 +501,6 @@ void TA2ANewMesonField<FImpl>::execute(void)
     LOG(Message) << "  selectHyperslab = " << hyperslabMax << " [" << hyperslabRank << "]" << std::endl;
     LOG(Message) << "  write           = " << writeMax     << " [" << writeRank     << "]" << std::endl;
     LOG(Message) << "  close(fsync)    = " << closeMax     << " [" << closeRank     << "]" << std::endl;
-    if (!scratch.empty())
-        LOG(Message) << "  stage-out       = " << stageOutMax  << " [" << stageOutRank  << "]" << std::endl;
 }
 
 END_MODULE_NAMESPACE
