@@ -11,7 +11,7 @@
  * random A2A vectors with a random gauge field and writes HDF5 output to
  * cmof_gpu_out.<traj>/.
  *
- * Run alongside Test_cmof_mt_cpu.cpp (same seed → identical random vectors
+ * Run alongside Test_cmof_mt_cpu.cpp (same seed -> identical random vectors
  * and gauge configuration) then diff the HDF5 outputs to validate the GPU
  * module.
  *
@@ -42,7 +42,7 @@ int main(int argc, char *argv[])
     Application application;
 
     // ------------------------------------------------------------------
-    // Global parameters — must match Test_cmof_mt_cpu.cpp exactly so that
+    // Global parameters - must match Test_cmof_mt_cpu.cpp exactly so that
     // the RNG produces the same random fields in both runs.
     // ------------------------------------------------------------------
     Application::GlobalPar globalPar;
@@ -88,7 +88,7 @@ int main(int argc, char *argv[])
     application.createModule<MUtilities::RandomFermions>("right", rvRight);
 
     // ------------------------------------------------------------------
-    // A2AChromoMagneticOperatorField — GPU path
+    // A2AChromoMagneticOperatorField - GPU path
     // ------------------------------------------------------------------
     MContraction::A2AChromoMagneticOperatorFieldPar cmofPar;
     cmofPar.cacheBlock = cacheBlock;

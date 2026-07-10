@@ -1,12 +1,12 @@
 /*
  * A2AMesonField.hpp, part of Hadrons (https://github.com/aportelli/Hadrons)
  *
- * Copyright (C) 2015 - 2023
+ * Copyright (C) 2015 - 2024
  *
  * Author: Antonin Portelli <antonin.portelli@me.com>
  * Author: Peter Boyle <paboyle@ph.ed.ac.uk>
- * Author: ferben <ferben@debian.felix.com>
- * Author: paboyle <paboyle@ph.ed.ac.uk>
+ * Author: Felix Erben <ferben@debian.felix.com>
+ * Author: Jonas Hildebrand <jonas.hildebrand@uconn.edu>
  *
  * Hadrons is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,7 +21,7 @@
  * You should have received a copy of the GNU General Public License
  * along with Hadrons.  If not, see <http://www.gnu.org/licenses/>.
  *
- * See the full license in the file "LICENSE" in the top level distribution 
+ * See the full license in the file "LICENSE" in the top level distribution
  * directory.
  */
 
@@ -33,11 +33,13 @@
 #include <Hadrons/Module.hpp>
 #include <Hadrons/ModuleFactory.hpp>
 #include <Hadrons/A2AMatrix.hpp>
+#include <Grid/qcd/utils/A2Autils.h>
+#include <Grid/algorithms/blas/A2ASpatialSum.h>
 
 BEGIN_HADRONS_NAMESPACE
 
 /******************************************************************************
- *                     All-to-all meson field creation                        *
+ *                     All-to-all meson field (GPU path, phase-trick BLAS)
  ******************************************************************************/
 BEGIN_MODULE_NAMESPACE(MContraction)
 
@@ -45,12 +47,11 @@ class A2AMesonFieldPar: Serializable
 {
 public:
     GRID_SERIALIZABLE_CLASS_MEMBERS(A2AMesonFieldPar,
-                                    int, cacheBlock,
-                                    int, block,
-                                    std::string, left,
-                                    std::string, right,
-                                    std::string, output,
-                                    std::string, gammas,
+                                    int,                     block,
+                                    std::string,             left,
+                                    std::string,             right,
+                                    std::string,             output,
+                                    std::string,             gammas,
                                     std::vector<std::string>, mom);
 };
 
@@ -59,50 +60,7 @@ class A2AMesonFieldMetadata: Serializable
 public:
     GRID_SERIALIZABLE_CLASS_MEMBERS(A2AMesonFieldMetadata,
                                     std::vector<RealF>, momentum,
-                                    Gamma::Algebra, gamma);
-};
-
-template <typename T, typename FImpl>
-class MesonFieldKernel: public A2AKernel<T, typename FImpl::FermionField>
-{
-public:
-    typedef typename FImpl::FermionField FermionField;
-public:
-    MesonFieldKernel(const std::vector<Gamma::Algebra> &gamma,
-                     const std::vector<LatticeComplex> &mom,
-                     GridBase *grid)
-    : gamma_(gamma), mom_(mom), grid_(grid)
-    {
-        vol_ = 1.;
-        for (auto &d: grid_->GlobalDimensions())
-        {
-            vol_ *= d;
-        }
-    }
-
-    virtual ~MesonFieldKernel(void) = default;
-    virtual void operator()(A2AMatrixSet<T> &m, const FermionField *left, 
-                            const FermionField *right,
-                            const unsigned int orthogDim, double &t)
-    {
-        A2Autils<FImpl>::MesonField(m, left, right, gamma_, mom_, orthogDim, &t);
-    }
-
-    virtual double flops(const unsigned int blockSizei, const unsigned int blockSizej)
-    {
-        return vol_*(2*8.0+6.0+8.0*mom_.size())*blockSizei*blockSizej*gamma_.size();
-    }
-
-    virtual double bytes(const unsigned int blockSizei, const unsigned int blockSizej)
-    {
-        return vol_*(12.0*sizeof(T))*blockSizei*blockSizej
-               +  vol_*(2.0*sizeof(T)*mom_.size())*blockSizei*blockSizej*gamma_.size();
-    }
-private:
-    const std::vector<Gamma::Algebra> &gamma_;
-    const std::vector<LatticeComplex> &mom_;
-    GridBase                          *grid_;
-    double                            vol_;
+                                    Gamma::Algebra,     gamma);
 };
 
 template <typename FImpl>
@@ -110,61 +68,44 @@ class TA2AMesonField : public Module<A2AMesonFieldPar>
 {
 public:
     FERM_TYPE_ALIASES(FImpl,);
-    typedef A2AMatrixBlockComputation<Complex, 
-                                      FermionField, 
-                                      A2AMesonFieldMetadata, 
-                                      HADRONS_A2AM_IO_TYPE> Computation;
-    typedef MesonFieldKernel<Complex, FImpl> Kernel;
 public:
-    // constructor
     TA2AMesonField(const std::string name);
-    // destructor
     virtual ~TA2AMesonField(void){};
-    // dependency relation
     virtual std::vector<std::string> getInput(void);
     virtual std::vector<std::string> getOutput(void);
-    // setup
     virtual void setup(void);
-    // execution
     virtual void execute(void);
 private:
-    bool                               hasPhase_{false};
-    std::string                        momphName_;
-    std::vector<Gamma::Algebra>        gamma_;
-    std::vector<std::vector<Real>>     mom_;
+    bool                                      hasPhase_{false};
+    std::string                               momphName_;
+    std::vector<Gamma::Algebra>               gamma_;
+    std::vector<std::vector<Real>>            mom_;
+    A2ASpatialSum<typename FImpl::SiteSpinor> spatial_sum_;
 };
 
 MODULE_REGISTER(A2AMesonField, ARG(TA2AMesonField<FIMPL>), MContraction);
 
 /******************************************************************************
-*                  TA2AMesonField implementation                             *
-******************************************************************************/
-// constructor /////////////////////////////////////////////////////////////////
+ *                  TA2AMesonField implementation                          *
+ ******************************************************************************/
 template <typename FImpl>
 TA2AMesonField<FImpl>::TA2AMesonField(const std::string name)
 : Module<A2AMesonFieldPar>(name)
 , momphName_(name + "_momph")
-{
-}
+{}
 
-// dependencies/products ///////////////////////////////////////////////////////
 template <typename FImpl>
 std::vector<std::string> TA2AMesonField<FImpl>::getInput(void)
 {
-    std::vector<std::string> in = {par().left, par().right};
-
-    return in;
+    return {par().left, par().right};
 }
 
 template <typename FImpl>
 std::vector<std::string> TA2AMesonField<FImpl>::getOutput(void)
 {
-    std::vector<std::string> out = {};
-
-    return out;
+    return {};
 }
 
-// setup ///////////////////////////////////////////////////////////////////////
 template <typename FImpl>
 void TA2AMesonField<FImpl>::setup(void)
 {
@@ -174,7 +115,7 @@ void TA2AMesonField<FImpl>::setup(void)
     {
         gamma_ = {
             Gamma::Algebra::Gamma5,
-            Gamma::Algebra::Identity,    
+            Gamma::Algebra::Identity,
             Gamma::Algebra::GammaX,
             Gamma::Algebra::GammaY,
             Gamma::Algebra::GammaZ,
@@ -198,57 +139,49 @@ void TA2AMesonField<FImpl>::setup(void)
     for (auto &pstr: par().mom)
     {
         auto p = strToVec<Real>(pstr);
-
         if (p.size() != env().getNd() - 1)
         {
             HADRONS_ERROR(Size, "Momentum has " + std::to_string(p.size())
-                                + " components instead of " 
+                                + " components instead of "
                                 + std::to_string(env().getNd() - 1));
         }
         mom_.push_back(p);
     }
-    envCache(std::vector<ComplexField>, momphName_, 1, 
+    envCache(std::vector<ComplexField>, momphName_, 1,
              par().mom.size(), envGetGrid(ComplexField));
     envTmpLat(ComplexField, "coor");
-    envTmp(Computation, "computation", 1, envGetGrid(FermionField), 
-           env().getNd() - 1, mom_.size(), gamma_.size(), par().block, 
-           par().cacheBlock, this);
 }
 
-// execution ///////////////////////////////////////////////////////////////////
 template <typename FImpl>
 void TA2AMesonField<FImpl>::execute(void)
 {
+    typedef typename FImpl::SiteSpinor      vobj;
+    typedef typename vobj::vector_type      vector_type;
+    typedef iSpinColourVector<vector_type>  SpinColourVector_v;
+    typedef typename SpinColourVector_v::scalar_type scalar_t;
+
     auto &left  = envGet(std::vector<FermionField>, par().left);
     auto &right = envGet(std::vector<FermionField>, par().right);
 
-    int nt         = env().getDim().back();
-    int N_i        = left.size();
-    int N_j        = right.size();
-    int ngamma     = gamma_.size();
-    int nmom       = mom_.size();
-    int block      = par().block;
-    int cacheBlock = par().cacheBlock;
+    GridBase *grid = envGetGrid(FermionField);
 
-    if (N_i < block || N_j < block)
-    {
-        HADRONS_ERROR(Range, "blockSize must not exceed size of input vector.");
-    }
+    int nt     = env().getDim().back();
+    int N_i    = left.size();
+    int N_j    = right.size();
+    int ngamma = gamma_.size();
+    int nmom   = mom_.size();
+    int block  = par().block;
 
     LOG(Message) << "Computing all-to-all meson fields" << std::endl;
     LOG(Message) << "Left: '" << par().left << "' Right: '" << par().right << "'" << std::endl;
     LOG(Message) << "Momenta:" << std::endl;
     for (auto &p: mom_)
-    {
         LOG(Message) << "  " << p << std::endl;
-    }
     LOG(Message) << "Spin bilinears:" << std::endl;
     for (auto &g: gamma_)
-    {
         LOG(Message) << "  " << g << std::endl;
-    }
-    LOG(Message) << "Meson field size: " << nt << "*" << N_i << "*" << N_j 
-                 << " (filesize " << sizeString(nt*N_i*N_j*sizeof(HADRONS_A2AM_IO_TYPE)) 
+    LOG(Message) << "Meson field size: " << nt << "*" << N_i << "*" << N_j
+                 << " (filesize " << sizeString(nt*N_i*N_j*sizeof(HADRONS_A2AM_IO_TYPE))
                  << "/momentum/bilinear)" << std::endl;
 
     auto &ph = envGet(std::vector<ComplexField>, momphName_);
@@ -256,60 +189,289 @@ void TA2AMesonField<FImpl>::execute(void)
     if (!hasPhase_)
     {
         startTimer("Momentum phases");
-        for (unsigned int j = 0; j < nmom; ++j)
+        for (int j = 0; j < nmom; ++j)
         {
-            Complex           i(0.0,1.0);
-            std::vector<Real> p;
-
+            Complex i(0.0, 1.0);
             envGetTmp(ComplexField, coor);
             ph[j] = Zero();
-            for(unsigned int mu = 0; mu < mom_[j].size(); mu++)
+            for (unsigned int mu = 0; mu < mom_[j].size(); mu++)
             {
                 LatticeCoordinate(coor, mu);
                 ph[j] = ph[j] + (mom_[j][mu]/env().getDim(mu))*coor;
             }
             ph[j] = exp((Real)(2*M_PI)*i*ph[j]);
         }
+        ComplexField last_abs_ph = ph[nmom - 1];
+        for (int j = nmom - 1; j >= 1; --j)
+            ph[j] = ph[j] * adj(ph[j - 1]); // apply the phase difference
+        ph.push_back(adj(last_abs_ph)); // restore transition: undo final accumulated phase
         hasPhase_ = true;
         stopTimer("Momentum phases");
     }
 
-    auto ionameFn = [this](const unsigned int m, const unsigned int g)
+    auto ionameFn = [this](const int m, const int g)
     {
         std::stringstream ss;
-
         ss << gamma_[g] << "_";
         for (unsigned int mu = 0; mu < mom_[m].size(); ++mu)
-        {
             ss << mom_[m][mu] << ((mu == mom_[m].size() - 1) ? "" : "_");
-        }
-
         return ss.str();
     };
 
-    auto filenameFn = [this, &ionameFn](const unsigned int m, const unsigned int g)
+    auto filenameFn = [this, &ionameFn](const int m, const int g)
     {
-        return par().output + "." + std::to_string(vm().getTrajectory()) 
+        return par().output + "." + std::to_string(vm().getTrajectory())
                + "/" + ionameFn(m, g) + ".h5";
     };
 
-    auto metadataFn = [this](const unsigned int m, const unsigned int g)
+    auto metadataFn = [this](const int m, const int g)
     {
         A2AMesonFieldMetadata md;
-
         for (auto pmu: mom_[m])
-        {
             md.momentum.push_back(pmu);
-        }
         md.gamma = gamma_[g];
-        
         return md;
     };
 
-    Kernel      kernel(gamma_, ph, envGetGrid(FermionField));
+    // Output buffer: one (nt, Nii, Njj) block at a time.
+    Vector<HADRONS_A2AM_IO_TYPE> mBuf;
+    mBuf.resize(nt * block * block);
 
-    envGetTmp(Computation, computation);
-    computation.execute(left, right, kernel, ionameFn, filenameFn, metadataFn);
+    // Scratch right vectors for GammaRight output (zero-momentum base pack).
+    std::vector<FermionField> gammaRight(block, grid);
+
+    // Pre-allocated result buffer: one tensor per momentum, reused across all blocks.
+    // Sum() fills only [0..Nii-1][0..Njj-1]; IO fill reads with explicit Nii/Njj bounds.
+    // RowMajor (jj fastest) to match mf (A2AMatrixSet, RowMajor): the fill
+    // loop below reads this with jj innermost, so a ColMajor tensor here
+    // would make that read stride by nt*block per jj step instead of 1.
+    std::vector<Eigen::Tensor<ComplexD, 3, Eigen::RowMajor>> all_results(nmom,
+        Eigen::Tensor<ComplexD, 3, Eigen::RowMajor>(nt, block, block));
+
+    // Create output directory. makeFileDir only mkdir()s on the boss rank
+    // and has no synchronization of its own; now that file creation below
+    // is spread across ranks (not boss-only, as it was previously), every
+    // other rank must wait here or it can reach H5Fcreate before the
+    // directory exists (or before it's visible on that rank's node).
+    std::string dirBase = par().output + "." + std::to_string(vm().getTrajectory());
+    {
+        std::string dummy = dirBase + "/mkdir.h5";
+        makeFileDir(dummy, grid);
+    }
+    grid->Barrier();
+
+    unsigned int myRank = grid->ThisRank();
+    unsigned int nRank  = grid->RankCount();
+
+    // Only rank 0's LOG output survives (Grid_quiesce_nodes suppresses the
+    // rest by default), so any timer read directly off `this` only shows
+    // rank 0's local view. This finds which rank actually holds the max for
+    // a given local value and returns {maxValue, thatRank}; every rank must
+    // call this together since it is collective (two GlobalMax calls).
+    auto crossRankMaxLoc = [grid, myRank](double val) -> std::pair<double, int>
+    {
+        double maxVal = val;
+        grid->GlobalMax(maxVal);
+        double isMaxRank = (val == maxVal) ? (double)myRank : -1.0;
+        grid->GlobalMax(isMaxRank);
+        return {maxVal, (int)isMaxRank};
+    };
+
+    // Initialise one HDF5 file per (mom, gamma) pair before the block loops.
+    // Each rank initialises only its assigned files; single barrier after.
+    for (int m = 0; m < nmom; m++)
+    for (int g = 0; g < ngamma; g++)
+    {
+        if ((unsigned int)(m * ngamma + g) % nRank == myRank)
+        {
+            std::string ioname   = ionameFn(m, g);
+            std::string filename = filenameFn(m, g);
+            A2AMesonFieldMetadata md = metadataFn(m, g);
+            A2AMatrixIo<HADRONS_A2AM_IO_TYPE> io(filename, ioname, nt, N_i, N_j);
+            io.initFile(md, block);
+        }
+    }
+    grid->Barrier();
+
+    // Pre-pack flat phase arrays (one per momentum) for in-place buffer multiplication.
+    // PackPhase mirrors PackVectors: SIMD/SIMT extraction -> one scalar per spatial site.
+    startTimer("Pack phases");
+    std::vector<deviceVector<scalar_t>> ph_flat(ph.size());
+    for (int m = 0; m < (int)ph.size(); m++)
+        A2ASpatialSum<SpinColourVector_v>::PackPhase(grid, ph[m], ph_flat[m]);
+    stopTimer("Pack phases");
+
+    // One-time allocation for the full block size; subsequent pointer rewrites are cheap.
+    startTimer("Allocate");
+    spatial_sum_.AllocateRight(block, grid);
+    spatial_sum_.AllocateLeft(block);
+    stopTimer("Allocate");
+
+    // Loop order (jb, g, ib, m):
+    //   AllocateRight + PackRight - once per (jb, g)
+    //   AllocateLeft  + PackLeft  - once per ib
+    //   Apply+GEMM+Restore        - once per (jb, g, ib, m)
+
+    double                fillTime   = 0.;
+    std::array<double, 7> ioTimings  = {};
+    std::array<double, 5> sumTimings = {};
+
+    for (int jb = 0; jb < N_j; jb += block)
+    {
+        int Njj = std::min(N_j - jb, block);
+
+        startTimer("Allocate");
+        spatial_sum_.AllocateRight(Njj, grid);
+        stopTimer("Allocate");
+
+        for (int g = 0; g < ngamma; g++)
+        {
+            startTimer("GammaRight");
+            for (int jj = 0; jj < Njj; jj++)
+                A2Autils<FImpl>::GammaRight(gammaRight[jj], gamma_[g], right[jb + jj]);
+            stopTimer("GammaRight");
+
+            startTimer("Pack vectors");
+            spatial_sum_.PackRight(gammaRight, 0, Njj);
+            stopTimer("Pack vectors");
+
+            for (int ib = 0; ib < N_i; ib += block)
+            {
+                int Nii = std::min(N_i - ib, block);
+
+                startTimer("Allocate");
+                spatial_sum_.AllocateLeft(Nii);
+                stopTimer("Allocate");
+
+                startTimer("Pack vectors");
+                spatial_sum_.PackLeftConj(left, ib, Nii);
+                stopTimer("Pack vectors");
+
+                // ph_flat[0] is the absolute phase for the first momentum.
+                // ph_flat[nmom] is the restore transition that steps LR_buf back to the
+                // unphased state after the last Sum, so each ib block begins with clean
+                // right vectors without needing a new PackRight call.
+                startTimer("Phase");
+                spatial_sum_.ApplyPhaseRight(ph_flat[0]);
+                stopTimer("Phase");
+
+                for (int m = 0; m < nmom; m++)
+                {
+                    startTimer("Sum");
+                    spatial_sum_.Sum(all_results[m], &sumTimings);
+                    stopTimer("Sum");
+
+                    startTimer("Phase");
+                    spatial_sum_.ApplyPhaseRight(ph_flat[m + 1]);
+                    stopTimer("Phase");
+                } // m
+
+                // Parallel IO: each rank writes its assigned momenta simultaneously.
+                // Barrier count drops from 2*nmom to 2 per outer block.
+                //
+                // Ownership key matches the (m*ngamma+g) % nRank used by the
+                // initFile loop above, so the rank that writes a given (m,g)
+                // file is always the same rank that created it -- creating on
+                // one rank and writing from another would depend on that
+                // file being visible from a different rank's node right
+                // after the barrier, which a plain MPI_Barrier does not
+                // guarantee on a parallel filesystem (client-side metadata
+                // caching can lag), and "file not found" races result.
+                double ioBytes = static_cast<double>(nmom) * nt * Nii * Njj
+                                 * sizeof(HADRONS_A2AM_IO_TYPE);
+                startTimer("IO");
+                double writeTime = -usecond();
+                grid->Barrier();
+                for (int m = 0; m < nmom; m++)
+                {
+                    if ((unsigned int)(m * ngamma + g) % nRank != myRank) continue;
+
+                    A2AMatrixSet<HADRONS_A2AM_IO_TYPE> mf(mBuf.data(), 1, 1, nt, Nii, Njj);
+                    double dt = -usecond();
+                    thread_for_collapse(3, t, nt, {
+                        for (int ii = 0; ii < Nii; ii++)
+                        for (int jj = 0; jj < Njj; jj++)
+                            mf(0, 0, (int)t, ii, jj) = all_results[m]((int)t, ii, jj);
+                    });
+                    dt += usecond();
+                    fillTime += dt;
+                    A2AMatrixIo<HADRONS_A2AM_IO_TYPE> io(filenameFn(m, g), ionameFn(m, g),
+                                                         nt, N_i, N_j);
+                    io.saveBlock(mf, 0, 0, ib, jb, &ioTimings);
+                }
+                grid->Barrier();
+                writeTime += usecond();
+                stopTimer("IO");
+                // writeTime is this rank's own wall time from barrier to
+                // barrier; with uneven momenta counts or filesystem
+                // contention some rank other than the one whose LOG we see
+                // can be the straggler setting the pace for everyone else.
+                auto [writeTimeMax, writeTimeRank] = crossRankMaxLoc(writeTime);
+                if (writeTimeMax > 0.)
+                    LOG(Message) << "IO block i=" << ib << " j=" << jb
+                                 << " g=" << gamma_[g] << ": "
+                                 << sizeString(ioBytes) << " in "
+                                 << writeTime << " us local, "
+                                 << writeTimeMax << " us max (rank "
+                                 << writeTimeRank << ") ("
+                                 << ioBytes / writeTimeMax * 1.e6 / 1024. / 1024.
+                                 << " MB/s effective)" << std::endl;
+            } // ib
+        } // g
+    } // jb
+
+    LOG(Message) << "Sum detail (us), rank " << myRank << ":" << std::endl;
+    LOG(Message) << "  GEMM            = " << sumTimings[0] << std::endl;
+    LOG(Message) << "  device->host    = " << sumTimings[1] << std::endl;
+    LOG(Message) << "  transpose-1     = " << sumTimings[2] << std::endl;
+    LOG(Message) << "  GlobalSumVector = " << sumTimings[3] << std::endl;
+    LOG(Message) << "  transpose-2     = " << sumTimings[4] << std::endl;
+    LOG(Message) << "IO detail (us), rank " << myRank << ":" << std::endl;
+    LOG(Message) << "  fill            = " << fillTime      << std::endl;
+    LOG(Message) << "  open            = " << ioTimings[0]  << std::endl;
+    LOG(Message) << "  push/group      = " << ioTimings[1]  << std::endl;
+    LOG(Message) << "  openDataSet     = " << ioTimings[2]  << std::endl;
+    LOG(Message) << "  getSpace        = " << ioTimings[3]  << std::endl;
+    LOG(Message) << "  selectHyperslab = " << ioTimings[4]  << std::endl;
+    LOG(Message) << "  write           = " << ioTimings[5]  << std::endl;
+    LOG(Message) << "  close(fsync)    = " << ioTimings[6]  << std::endl;
+
+    // All crossRankMaxLoc calls are collective (two GlobalMax each) and must
+    // be reached by every rank together. LOG output is only visible from rank 0
+    // so the cross-rank max reveals the true straggler.
+    auto [sumTimerMax,    sumTimerRank]   = crossRankMaxLoc(getDTimer("Sum"));
+    auto [gemmMax,        gemmRank]       = crossRankMaxLoc(sumTimings[0]);
+    auto [d2hMax,         d2hRank]        = crossRankMaxLoc(sumTimings[1]);
+    auto [trans1Max,      trans1Rank]     = crossRankMaxLoc(sumTimings[2]);
+    auto [gsvMax,         gsvRank]        = crossRankMaxLoc(sumTimings[3]);
+    auto [trans2Max,      trans2Rank]     = crossRankMaxLoc(sumTimings[4]);
+    auto [ioTimerMax,     ioTimerRank]    = crossRankMaxLoc(getDTimer("IO"));
+    auto [fillMax,        fillRank]       = crossRankMaxLoc(fillTime);
+    auto [openMax,        openRank]       = crossRankMaxLoc(ioTimings[0]);
+    auto [pushMax,        pushRank]       = crossRankMaxLoc(ioTimings[1]);
+    auto [dsMax,          dsRank]         = crossRankMaxLoc(ioTimings[2]);
+    auto [spaceMax,       spaceRank]      = crossRankMaxLoc(ioTimings[3]);
+    auto [hyperslabMax,   hyperslabRank]  = crossRankMaxLoc(ioTimings[4]);
+    auto [writeMax,       writeRank]      = crossRankMaxLoc(ioTimings[5]);
+    auto [closeMax,       closeRank]      = crossRankMaxLoc(ioTimings[6]);
+
+    LOG(Message) << "Sum cross-rank max (us) [straggler rank]:" << std::endl;
+    LOG(Message) << "  Sum_timer       = " << sumTimerMax  << " [" << sumTimerRank  << "]" << std::endl;
+    LOG(Message) << "  GEMM            = " << gemmMax      << " [" << gemmRank      << "]" << std::endl;
+    LOG(Message) << "  device->host    = " << d2hMax       << " [" << d2hRank       << "]" << std::endl;
+    LOG(Message) << "  transpose-1     = " << trans1Max    << " [" << trans1Rank    << "]" << std::endl;
+    LOG(Message) << "  GlobalSumVector = " << gsvMax       << " [" << gsvRank       << "]" << std::endl;
+    LOG(Message) << "  transpose-2     = " << trans2Max    << " [" << trans2Rank    << "]" << std::endl;
+    LOG(Message) << "IO cross-rank max (us) [straggler rank]:" << std::endl;
+    LOG(Message) << "  IO_timer        = " << ioTimerMax   << " [" << ioTimerRank   << "]" << std::endl;
+    LOG(Message) << "  fill            = " << fillMax      << " [" << fillRank      << "]" << std::endl;
+    LOG(Message) << "  open            = " << openMax      << " [" << openRank      << "]" << std::endl;
+    LOG(Message) << "  push/group      = " << pushMax      << " [" << pushRank      << "]" << std::endl;
+    LOG(Message) << "  openDataSet     = " << dsMax        << " [" << dsRank        << "]" << std::endl;
+    LOG(Message) << "  getSpace        = " << spaceMax     << " [" << spaceRank     << "]" << std::endl;
+    LOG(Message) << "  selectHyperslab = " << hyperslabMax << " [" << hyperslabRank << "]" << std::endl;
+    LOG(Message) << "  write           = " << writeMax     << " [" << writeRank     << "]" << std::endl;
+    LOG(Message) << "  close(fsync)    = " << closeMax     << " [" << closeRank     << "]" << std::endl;
 }
 
 END_MODULE_NAMESPACE

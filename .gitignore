@@ -16,6 +16,7 @@ Makefile.in
 /Hadrons/modules.inc
 .DS_Store
 /install
+/install*
 *~
 rebuild.sh
 log.*

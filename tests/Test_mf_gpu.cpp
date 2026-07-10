@@ -5,20 +5,27 @@
 #endif
 
 /*
- * Test_mf_gpu.cpp
+ * Test_nmf_gpu.cpp
  *
- * Hadrons application: runs A2AMesonField (GPU path) on random A2A vectors
- * and writes HDF5 output to mf_gpu_out.<traj>/.
+ * Hadrons application: runs A2AMesonField (GPU path via A2ASpatialSum)
+ * on random A2A vectors and writes HDF5 output to nmf_gpu_out.<traj>/.
  *
- * Run alongside Test_fmf_cpu.cpp (same seed → identical random vectors)
- * then diff the HDF5 outputs to validate agreement between the two modules.
+ * Run alongside Test_fmf_cpu.cpp (same seed -> identical random vectors) then
+ * diff the HDF5 outputs to validate agreement between CPU and GPU paths.
  *
  * Usage:
- *   mpirun -n 1 ./Test_mf_gpu --grid 4.4.4.8 --mpi 1.1.1.1 --seed "1 2 3 4"
+ *   mpirun -n 1 ./Test_nmf_gpu --grid 4.4.4.8 --mpi 1.1.1.1 --seed "1 2 3 4"
  *
  * The --seed argument must match Test_fmf_cpu.cpp to get identical random
- * vectors in both runs. The runId and trajectory counter are already
- * hard-coded to match.
+ * vectors in both runs. The runId and trajectory counter are hard-coded to
+ * match.
+ *
+ * Output files: nmf_gpu_out.0/<gamma>_<mom>.h5
+ *   e.g. nmf_gpu_out.0/Gamma5_0_0_0.h5, nmf_gpu_out.0/Identity_0_0_0.h5
+ *
+ * Compare against Test_fmf_cpu output with h5diff, e.g.:
+ *   h5diff nmf_gpu_out.0/Gamma5_0_0_0.h5 fmf_cpu_out.0/Gamma5_0_0_0.h5 \
+ *          /Gamma5_0_0_0 /Gamma5_0_0_0
  */
 
 #define HADRONS_A2AM_IO_TYPE ComplexD
@@ -41,7 +48,7 @@ int main(int argc, char *argv[])
     Application application;
 
     // ------------------------------------------------------------------
-    // Global parameters — must match Test_fmf_cpu.cpp exactly so that
+    // Global parameters - must match Test_mf_gpu.cpp exactly so that
     // the RNG produces the same random vectors in both runs.
     // ------------------------------------------------------------------
     Application::GlobalPar globalPar;
@@ -56,33 +63,30 @@ int main(int argc, char *argv[])
     application.setPar(globalPar);
 
     // ------------------------------------------------------------------
-    // Parse optional CLI arguments (must match Test_fmf_cpu.cpp values
+    // Parse optional CLI arguments (must match Test_mf_gpu.cpp values
     // to get identical random vectors in both runs).
     // ------------------------------------------------------------------
-    int         N_i        = 16;
-    int         N_j        = 16;
-    int         block      = 16;
-    int         cacheBlock = 8;
-    int         momShell   = 0;
-    std::string gammas     = "Gamma5 Identity";
+    int         N_i      = 16;
+    int         N_j      = 16;
+    int         block    = 16;
+    int         momShell = 0;
+    std::string gammas   = "Gamma5 Identity";
     if (GridCmdOptionExists(argv, argv + argc, "--Ni"))
-        N_i        = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--Ni"));
+        N_i      = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--Ni"));
     if (GridCmdOptionExists(argv, argv + argc, "--Nj"))
-        N_j        = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--Nj"));
+        N_j      = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--Nj"));
     if (GridCmdOptionExists(argv, argv + argc, "--block"))
-        block      = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--block"));
-    if (GridCmdOptionExists(argv, argv + argc, "--cacheBlock"))
-        cacheBlock = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--cacheBlock"));
+        block    = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--block"));
     if (GridCmdOptionExists(argv, argv + argc, "--mom"))
-        momShell   = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--mom"));
+        momShell = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--mom"));
     if (GridCmdOptionExists(argv, argv + argc, "--gammas"))
-        gammas     = GridCmdOptionPayload(argv, argv + argc, "--gammas");
+        gammas   = GridCmdOptionPayload(argv, argv + argc, "--gammas");
 
     std::vector<std::string> momenta = momentumShells(momShell);
 
     // ------------------------------------------------------------------
     // Random A2A vectors
-    // Names and sizes must match Test_fmf_cpu.cpp exactly.
+    // Names and sizes must match Test_mf_gpu.cpp exactly.
     // ------------------------------------------------------------------
     MUtilities::RandomVectorsPar rvLeft, rvRight;
     rvLeft.size  = N_i; rvLeft.Ls  = 1; rvLeft.output  = ""; rvLeft.multiFile  = false;
@@ -92,18 +96,17 @@ int main(int argc, char *argv[])
     application.createModule<MUtilities::RandomFermions>("right", rvRight);
 
     // ------------------------------------------------------------------
-    // A2AMesonField — GPU path
+    // A2AMesonField - GPU path (no A2AMatrixBlockComputation)
     // ------------------------------------------------------------------
-    MContraction::A2AMesonFieldPar mfPar;
-    mfPar.cacheBlock = cacheBlock;
-    mfPar.block      = block;
-    mfPar.left       = "left";
-    mfPar.right      = "right";
-    mfPar.output     = "mf_gpu_out";
-    mfPar.gammas     = gammas;
-    mfPar.mom        = momenta;
+    MContraction::A2AMesonFieldPar nmfPar;
+    nmfPar.block  = block;
+    nmfPar.left   = "left";
+    nmfPar.right  = "right";
+    nmfPar.output = "nmf_gpu_out";
+    nmfPar.gammas = gammas;
+    nmfPar.mom    = momenta;
 
-    application.createModule<MContraction::A2AMesonField>("mf_gpu", mfPar);
+    application.createModule<MContraction::A2AMesonField>("nmf_gpu", nmfPar);
 
     application.run();
 
