@@ -30,7 +30,7 @@ class A2AChromoMagneticOperatorFieldPar: Serializable
 {
 public:
     GRID_SERIALIZABLE_CLASS_MEMBERS(A2AChromoMagneticOperatorFieldPar,
-                                    int,         cacheBlock,
+                                    int,         block,
                                     std::string, parities,
                                     std::string, left,
                                     std::string, right,
@@ -126,7 +126,7 @@ void TA2AChromoMagneticOperatorField<GImpl,FImpl>::execute(void)
   int nt         = env().getDim().back();
   int N_i        = left.size();
   int N_j        = right.size();
-  int cacheBlock = par().cacheBlock;
+  int block = par().block;
   Vector<HADRONS_A2AM_IO_TYPE> mBuf; mBuf.resize(nt*N_i*N_j);
 
   LOG(Message) << "Left: '"        << par().left  << "' Right: '"
@@ -138,7 +138,10 @@ void TA2AChromoMagneticOperatorField<GImpl,FImpl>::execute(void)
   LOG(Message) << "CMO field size: " << nt << "*" << N_i << "*" << N_j
                << " (filesize " << sizeString(nt*N_i*N_j*sizeof(HADRONS_A2AM_IO_TYPE)) << std::endl;
 
-  std::vector<FermionField> loopRight(cacheBlock, grid);
+  std::vector<FermionField> loopRight(block, grid);
+
+  std::array<double, 5> sumTimings = {};
+  std::array<double, 7> ioTimings  = {};
 
   for (auto &ifOrthog: ifOrthogs_) {
     std::vector<GaugeMat>  G;
@@ -160,30 +163,38 @@ void TA2AChromoMagneticOperatorField<GImpl,FImpl>::execute(void)
 
       LOG(Message) << "Making CMF" << std::endl;
 
-      for (unsigned int j = 0; j < N_j; j += cacheBlock) {
-        int Njj = MIN(N_j-j, cacheBlock);
+      for (unsigned int j = 0; j < N_j; j += block) {
+        int Njj = MIN(N_j-j, block);
 
         startTimer("CMOContractRight");
         for (int jj = 0; jj < Njj; jj++)
           Grid::A2AChromoMagneticOperator<GImpl,FImpl>::CMOContractRight(
               loopRight[jj], G, Sigma, right[j+jj], parity);
         stopTimer("CMOContractRight");
-        LOG(Message) << "loopRight packed for j-block " << j/cacheBlock
+        LOG(Message) << "loopRight packed for j-block " << j/block
                      << " ifOrthog=" << ifOrthog << " parity=" << parity << std::endl;
 
-        for (unsigned int i = 0; i < N_i; i += cacheBlock) {
-          int Nii = MIN(N_i-i, cacheBlock);
+        startTimer("Allocate");
+        spatial_sum.AllocateRight(Njj, grid);
+        stopTimer("Allocate");
+        startTimer("Pack vectors");
+        spatial_sum.PackRight(loopRight, 0, Njj);
+        stopTimer("Pack vectors");
 
-          startTimer("Allocate + Pack vectors");
-          spatial_sum.Allocate(Nii, Njj, grid);
+        for (unsigned int i = 0; i < N_i; i += block) {
+          int Nii = MIN(N_i-i, block);
+
+          startTimer("Allocate");
+          spatial_sum.AllocateLeft(Nii);
+          stopTimer("Allocate");
+          startTimer("Pack vectors");
           spatial_sum.PackLeftConj(left, i, Nii);
-          spatial_sum.PackRight(loopRight, 0, Njj);
-          stopTimer("Allocate + Pack vectors");
+          stopTimer("Pack vectors");
 
           Eigen::Tensor<ComplexD,3> cmfBlock(nt, Nii, Njj);
           cmfBlock.setZero();
           startTimer("Sum");
-          spatial_sum.Sum(cmfBlock);
+          spatial_sum.Sum(cmfBlock, &sumTimings);
           stopTimer("Sum");
 
           for (int t  = 0; t  < nt;  t++)
@@ -191,8 +202,8 @@ void TA2AChromoMagneticOperatorField<GImpl,FImpl>::execute(void)
           for (int jj = 0; jj < Njj; jj++)
             cmf(0,0,t,i+ii,j+jj) = cmfBlock(t,ii,jj);
 
-          LOG(Message) << "CMF made for i-block " << i/cacheBlock
-                       << " j-block "             << j/cacheBlock
+          LOG(Message) << "CMF made for i-block " << i/block
+                       << " j-block "             << j/block
                        << " ifOrthog="            << ifOrthog
                        << " parity="              << parity << std::endl;
         }// i
@@ -217,7 +228,7 @@ void TA2AChromoMagneticOperatorField<GImpl,FImpl>::execute(void)
       A2AChromoMagneticOperatorFieldMetadata md;
       md.meta = ioname;
       io.initFile(md, MAX(N_i,N_j));
-      io.saveBlock(cmf, 0, 0, 0, 0);
+      io.saveBlock(cmf, 0, 0, 0, 0, &ioTimings);
 #ifdef HADRONS_A2AM_PARALLEL_IO
       }
       grid->Barrier();
@@ -225,6 +236,21 @@ void TA2AChromoMagneticOperatorField<GImpl,FImpl>::execute(void)
       stopTimer("IO");
     }// parity
   }// ifOrthog
+
+  LOG(Message) << "Sum detail (us), rank 0:" << std::endl;
+  LOG(Message) << "  GEMM            = " << sumTimings[0] << std::endl;
+  LOG(Message) << "  device->host    = " << sumTimings[1] << std::endl;
+  LOG(Message) << "  transpose-1     = " << sumTimings[2] << std::endl;
+  LOG(Message) << "  GlobalSumVector = " << sumTimings[3] << std::endl;
+  LOG(Message) << "  transpose-2     = " << sumTimings[4] << std::endl;
+  LOG(Message) << "IO detail (us), rank 0:" << std::endl;
+  LOG(Message) << "  open            = " << ioTimings[0]  << std::endl;
+  LOG(Message) << "  push/group      = " << ioTimings[1]  << std::endl;
+  LOG(Message) << "  openDataSet     = " << ioTimings[2]  << std::endl;
+  LOG(Message) << "  getSpace        = " << ioTimings[3]  << std::endl;
+  LOG(Message) << "  selectHyperslab = " << ioTimings[4]  << std::endl;
+  LOG(Message) << "  write           = " << ioTimings[5]  << std::endl;
+  LOG(Message) << "  close(fsync)    = " << ioTimings[6]  << std::endl;
 }
 
 END_MODULE_NAMESPACE

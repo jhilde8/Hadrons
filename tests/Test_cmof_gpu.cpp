@@ -60,15 +60,15 @@ int main(int argc, char *argv[])
     // Parse optional CLI arguments (must match Test_cmof_mt_cpu.cpp values
     // to get identical random fields in both runs).
     // ------------------------------------------------------------------
-    int N_i        = 8;
-    int N_j        = 8;
-    int cacheBlock = 3;
+    int N_i   = 8;
+    int N_j   = 8;
+    int block = 3;
     if (GridCmdOptionExists(argv, argv + argc, "--Ni"))
-        N_i        = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--Ni"));
+        N_i   = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--Ni"));
     if (GridCmdOptionExists(argv, argv + argc, "--Nj"))
-        N_j        = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--Nj"));
-    if (GridCmdOptionExists(argv, argv + argc, "--cacheBlock"))
-        cacheBlock = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--cacheBlock"));
+        N_j   = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--Nj"));
+    if (GridCmdOptionExists(argv, argv + argc, "--block"))
+        block = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--block"));
 
     // ------------------------------------------------------------------
     // Random gauge configuration
@@ -91,7 +91,7 @@ int main(int argc, char *argv[])
     // A2AChromoMagneticOperatorField - GPU path
     // ------------------------------------------------------------------
     MContraction::A2AChromoMagneticOperatorFieldPar cmofPar;
-    cmofPar.cacheBlock = cacheBlock;
+    cmofPar.block      = block;
     cmofPar.parities   = "0 1";
     cmofPar.left       = "left";
     cmofPar.right      = "right";

@@ -465,42 +465,18 @@ void TA2AMesonField<FImpl>::execute(void)
     LOG(Message) << "  write           = " << ioTimings[5]  << std::endl;
     LOG(Message) << "  close(fsync)    = " << ioTimings[6]  << std::endl;
 
-    // All crossRankMaxLoc calls are collective (two GlobalMax each) and must
-    // be reached by every rank together. LOG output is only visible from rank 0
-    // so the cross-rank max reveals the true straggler.
-    auto [sumTimerMax,    sumTimerRank]   = crossRankMaxLoc(getDTimer("Sum"));
-    auto [gemmMax,        gemmRank]       = crossRankMaxLoc(sumTimings[0]);
-    auto [d2hMax,         d2hRank]        = crossRankMaxLoc(sumTimings[1]);
-    auto [trans1Max,      trans1Rank]     = crossRankMaxLoc(sumTimings[2]);
-    auto [gsvMax,         gsvRank]        = crossRankMaxLoc(sumTimings[3]);
-    auto [trans2Max,      trans2Rank]     = crossRankMaxLoc(sumTimings[4]);
-    auto [ioTimerMax,     ioTimerRank]    = crossRankMaxLoc(getDTimer("IO"));
-    auto [fillMax,        fillRank]       = crossRankMaxLoc(fillTime);
-    auto [openMax,        openRank]       = crossRankMaxLoc(ioTimings[0]);
-    auto [pushMax,        pushRank]       = crossRankMaxLoc(ioTimings[1]);
-    auto [dsMax,          dsRank]         = crossRankMaxLoc(ioTimings[2]);
-    auto [spaceMax,       spaceRank]      = crossRankMaxLoc(ioTimings[3]);
-    auto [hyperslabMax,   hyperslabRank]  = crossRankMaxLoc(ioTimings[4]);
-    auto [writeMax,       writeRank]      = crossRankMaxLoc(ioTimings[5]);
-    auto [closeMax,       closeRank]      = crossRankMaxLoc(ioTimings[6]);
+    // The per-component breakdown above is already rank 0's local view (only
+    // rank 0's LOG output survives), which is what we want to read day to
+    // day -- cross-rank-maxing all 13 sub-timer components just to find an
+    // occasional straggler clogs the log. Keep the collective max only for
+    // the two aggregate block timers, as a cheap "is anything unbalanced"
+    // check.
+    auto [sumTimerMax, sumTimerRank] = crossRankMaxLoc(getDTimer("Sum"));
+    auto [ioTimerMax,  ioTimerRank]  = crossRankMaxLoc(getDTimer("IO"));
 
-    LOG(Message) << "Sum cross-rank max (us) [straggler rank]:" << std::endl;
-    LOG(Message) << "  Sum_timer       = " << sumTimerMax  << " [" << sumTimerRank  << "]" << std::endl;
-    LOG(Message) << "  GEMM            = " << gemmMax      << " [" << gemmRank      << "]" << std::endl;
-    LOG(Message) << "  device->host    = " << d2hMax       << " [" << d2hRank       << "]" << std::endl;
-    LOG(Message) << "  transpose-1     = " << trans1Max    << " [" << trans1Rank    << "]" << std::endl;
-    LOG(Message) << "  GlobalSumVector = " << gsvMax       << " [" << gsvRank       << "]" << std::endl;
-    LOG(Message) << "  transpose-2     = " << trans2Max    << " [" << trans2Rank    << "]" << std::endl;
-    LOG(Message) << "IO cross-rank max (us) [straggler rank]:" << std::endl;
-    LOG(Message) << "  IO_timer        = " << ioTimerMax   << " [" << ioTimerRank   << "]" << std::endl;
-    LOG(Message) << "  fill            = " << fillMax      << " [" << fillRank      << "]" << std::endl;
-    LOG(Message) << "  open            = " << openMax      << " [" << openRank      << "]" << std::endl;
-    LOG(Message) << "  push/group      = " << pushMax      << " [" << pushRank      << "]" << std::endl;
-    LOG(Message) << "  openDataSet     = " << dsMax        << " [" << dsRank        << "]" << std::endl;
-    LOG(Message) << "  getSpace        = " << spaceMax     << " [" << spaceRank     << "]" << std::endl;
-    LOG(Message) << "  selectHyperslab = " << hyperslabMax << " [" << hyperslabRank << "]" << std::endl;
-    LOG(Message) << "  write           = " << writeMax     << " [" << writeRank     << "]" << std::endl;
-    LOG(Message) << "  close(fsync)    = " << closeMax     << " [" << closeRank     << "]" << std::endl;
+    LOG(Message) << "Sum/IO cross-rank max (us) [straggler rank]:" << std::endl;
+    LOG(Message) << "  Sum_timer       = " << sumTimerMax << " [" << sumTimerRank << "]" << std::endl;
+    LOG(Message) << "  IO_timer        = " << ioTimerMax  << " [" << ioTimerRank  << "]" << std::endl;
 }
 
 END_MODULE_NAMESPACE

@@ -36,7 +36,7 @@ class A2AExtendedMesonFieldPar: Serializable
 {
 public:
     GRID_SERIALIZABLE_CLASS_MEMBERS(A2AExtendedMesonFieldPar,
-                                    int, cacheBlock,
+                                    int, block,
 				    std::string, types,
                                     std::string, left,
                                     std::string, right,
@@ -227,7 +227,7 @@ void TA2AExtendedMesonField<FImpl>::execute(void)
     int nt         = env().getDim().back();
     int N_i        = left.size();
     int N_j        = right.size();
-    int cacheBlock = par().cacheBlock;
+    int block = par().block;
     Vector<HADRONS_A2AM_IO_TYPE> mBuf; mBuf.resize(nt*N_i*N_j);
 
     LOG(Message) << "Left: '" << par().left << "' Right: '"
@@ -254,8 +254,11 @@ void TA2AExtendedMesonField<FImpl>::execute(void)
     stopTimer("LoopPropagator");
     LOG(Message) << "Quark loop calculated" << std::endl;
 
-    std::vector<FermionField> loopRight(cacheBlock, grid);
+    std::vector<FermionField> loopRight(block, grid);
     PropagatorField tloop(grid);
+
+    std::array<double, 5> sumTimings = {};
+    std::array<double, 7> ioTimings  = {};
 
     for (int &type: types_){
 
@@ -279,8 +282,8 @@ void TA2AExtendedMesonField<FImpl>::execute(void)
 	LOG(Message) << "Making EMF" << std::endl;
 	A2ASpatialSum<SpinColourVector_v> spatial_sum;
 
-	for ( unsigned int j = 0; j < N_j; j += cacheBlock ){
-	  int Njj = MIN(N_j-j,cacheBlock);
+	for ( unsigned int j = 0; j < N_j; j += block ){
+	  int Njj = MIN(N_j-j,block);
 	  startTimer("LoopRight contraction");
 	  for (int jj = 0; jj < Njj; jj++) {
 	    switch (type) {
@@ -291,21 +294,29 @@ void TA2AExtendedMesonField<FImpl>::execute(void)
 	    }
 	  }
 	  stopTimer("LoopRight contraction");
-	  LOG(Message) << "loopRight packed for j-block " << j/cacheBlock << " type " << type << std::endl;
+	  LOG(Message) << "loopRight packed for j-block " << j/block << " type " << type << std::endl;
 
-	  for ( unsigned int i = 0; i < N_i; i += cacheBlock ) {
-	    int Nii = MIN(N_i-i,cacheBlock);
+	  startTimer("Allocate");
+	  spatial_sum.AllocateRight(Njj, grid);
+	  stopTimer("Allocate");
+	  startTimer("Pack vectors");
+	  spatial_sum.PackRight(loopRight, 0, Njj);
+	  stopTimer("Pack vectors");
 
-	    startTimer("Allocate + Pack vectors");
-	    spatial_sum.Allocate(Nii, Njj, grid);
+	  for ( unsigned int i = 0; i < N_i; i += block ) {
+	    int Nii = MIN(N_i-i,block);
+
+	    startTimer("Allocate");
+	    spatial_sum.AllocateLeft(Nii);
+	    stopTimer("Allocate");
+	    startTimer("Pack vectors");
 	    spatial_sum.PackLeftConj(left, i, Nii);
-	    spatial_sum.PackRight(loopRight, 0, Njj);
-	    stopTimer("Allocate + Pack vectors");
+	    stopTimer("Pack vectors");
 
 	    Eigen::Tensor<ComplexD,3> emfBlock(nt, Nii, Njj);
 	    emfBlock.setZero();
 	    startTimer("Sum");
-	    spatial_sum.Sum(emfBlock);
+	    spatial_sum.Sum(emfBlock, &sumTimings);
 	    stopTimer("Sum");
 
 	    for(int t =0;t< nt;t++)
@@ -313,7 +324,7 @@ void TA2AExtendedMesonField<FImpl>::execute(void)
 		for(int jj=0;jj< Njj;jj++)
 		  emf(0,0,t,i+ii,j+jj) = emfBlock(t,ii,jj);
 
-	    LOG(Message) << "EMF made for i-block " << i/cacheBlock << " j-block " << j/cacheBlock << " type " << type << std::endl;
+	    LOG(Message) << "EMF made for i-block " << i/block << " j-block " << j/block << " type " << type << std::endl;
 	}
 	
 	}// i,j
@@ -334,7 +345,7 @@ void TA2AExtendedMesonField<FImpl>::execute(void)
 	  md.gamma1 = nameg1_[ig];
 	  md.gamma2 = nameg2_[ig];
 	  io.initFile(md, MAX(N_i,N_j));
-	  io.saveBlock(emf, 0, 0, 0, 0);
+	  io.saveBlock(emf, 0, 0, 0, 0, &ioTimings);
 #ifdef HADRONS_A2AM_PARALLEL_IO
 	}
 	grid->Barrier();
@@ -343,6 +354,20 @@ void TA2AExtendedMesonField<FImpl>::execute(void)
       }// ig
     }// type
 
+    LOG(Message) << "Sum detail (us), rank 0:" << std::endl;
+    LOG(Message) << "  GEMM            = " << sumTimings[0] << std::endl;
+    LOG(Message) << "  device->host    = " << sumTimings[1] << std::endl;
+    LOG(Message) << "  transpose-1     = " << sumTimings[2] << std::endl;
+    LOG(Message) << "  GlobalSumVector = " << sumTimings[3] << std::endl;
+    LOG(Message) << "  transpose-2     = " << sumTimings[4] << std::endl;
+    LOG(Message) << "IO detail (us), rank 0:" << std::endl;
+    LOG(Message) << "  open            = " << ioTimings[0]  << std::endl;
+    LOG(Message) << "  push/group      = " << ioTimings[1]  << std::endl;
+    LOG(Message) << "  openDataSet     = " << ioTimings[2]  << std::endl;
+    LOG(Message) << "  getSpace        = " << ioTimings[3]  << std::endl;
+    LOG(Message) << "  selectHyperslab = " << ioTimings[4]  << std::endl;
+    LOG(Message) << "  write           = " << ioTimings[5]  << std::endl;
+    LOG(Message) << "  close(fsync)    = " << ioTimings[6]  << std::endl;
 }
 
 END_MODULE_NAMESPACE
