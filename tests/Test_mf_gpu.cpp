@@ -5,26 +5,26 @@
 #endif
 
 /*
- * Test_nmf_gpu.cpp
+ * Test_mf_gpu.cpp
  *
  * Hadrons application: runs A2AMesonField (GPU path via A2ASpatialSum)
- * on random A2A vectors and writes HDF5 output to nmf_gpu_out.<traj>/.
+ * on random A2A vectors and writes HDF5 output to mf_gpu_out.<traj>/.
  *
  * Run alongside Test_fmf_cpu.cpp (same seed -> identical random vectors) then
  * diff the HDF5 outputs to validate agreement between CPU and GPU paths.
  *
  * Usage:
- *   mpirun -n 1 ./Test_nmf_gpu --grid 4.4.4.8 --mpi 1.1.1.1 --seed "1 2 3 4"
+ *   mpirun -n 1 ./Test_mf_gpu --grid 4.4.4.8 --mpi 1.1.1.1 --seed "1 2 3 4"
  *
  * The --seed argument must match Test_fmf_cpu.cpp to get identical random
  * vectors in both runs. The runId and trajectory counter are hard-coded to
  * match.
  *
- * Output files: nmf_gpu_out.0/<gamma>_<mom>.h5
- *   e.g. nmf_gpu_out.0/Gamma5_0_0_0.h5, nmf_gpu_out.0/Identity_0_0_0.h5
+ * Output files: mf_gpu_out.0/<gamma>_<mom>.h5
+ *   e.g. mf_gpu_out.0/Gamma5_0_0_0.h5, mf_gpu_out.0/Identity_0_0_0.h5
  *
  * Compare against Test_fmf_cpu output with h5diff, e.g.:
- *   h5diff nmf_gpu_out.0/Gamma5_0_0_0.h5 fmf_cpu_out.0/Gamma5_0_0_0.h5 \
+ *   h5diff mf_gpu_out.0/Gamma5_0_0_0.h5 fmf_cpu_out.0/Gamma5_0_0_0.h5 \
  *          /Gamma5_0_0_0 /Gamma5_0_0_0
  */
 
@@ -98,15 +98,15 @@ int main(int argc, char *argv[])
     // ------------------------------------------------------------------
     // A2AMesonField - GPU path (no A2AMatrixBlockComputation)
     // ------------------------------------------------------------------
-    MContraction::A2AMesonFieldPar nmfPar;
-    nmfPar.block  = block;
-    nmfPar.left   = "left";
-    nmfPar.right  = "right";
-    nmfPar.output = "nmf_gpu_out";
-    nmfPar.gammas = gammas;
-    nmfPar.mom    = momenta;
+    MContraction::A2AMesonFieldPar mfPar;
+    mfPar.block  = block;
+    mfPar.left   = "left";
+    mfPar.right  = "right";
+    mfPar.output = "mf_gpu_out";
+    mfPar.gammas = gammas;
+    mfPar.mom    = momenta;
 
-    application.createModule<MContraction::A2AMesonField>("nmf_gpu", nmfPar);
+    application.createModule<MContraction::A2AMesonField>("mf_gpu", mfPar);
 
     application.run();
 

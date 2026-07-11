@@ -5,8 +5,8 @@
  *
  * Author: Antonin Portelli <antonin.portelli@me.com>
  * Author: Peter Boyle <paboyle@ph.ed.ac.uk>
- * Author: Felix Erben <ferben@debian.felix.com>
- * Author: Jonas Hildebrand <jonas.hildebrand@uconn.edu>
+ * Author: ferben <ferben@debian.felix.com>
+ * Author: paboyle <paboyle@ph.ed.ac.uk>
  *
  * Hadrons is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -29,6 +29,7 @@
 #ifndef Hadrons_MContraction_A2AMesonField_hpp_
 #define Hadrons_MContraction_A2AMesonField_hpp_
 
+#include <filesystem>
 #include <Hadrons/Global.hpp>
 #include <Hadrons/Module.hpp>
 #include <Hadrons/ModuleFactory.hpp>
@@ -39,7 +40,7 @@
 BEGIN_HADRONS_NAMESPACE
 
 /******************************************************************************
- *                     All-to-all meson field (GPU path, phase-trick BLAS)
+ *                     All-to-all meson field creation (new, no A2AMatrixBlockComputation)
  ******************************************************************************/
 BEGIN_MODULE_NAMESPACE(MContraction)
 
@@ -218,12 +219,6 @@ void TA2AMesonField<FImpl>::execute(void)
         return ss.str();
     };
 
-    auto filenameFn = [this, &ionameFn](const int m, const int g)
-    {
-        return par().output + "." + std::to_string(vm().getTrajectory())
-               + "/" + ionameFn(m, g) + ".h5";
-    };
-
     auto metadataFn = [this](const int m, const int g)
     {
         A2AMesonFieldMetadata md;
@@ -231,6 +226,30 @@ void TA2AMesonField<FImpl>::execute(void)
             md.momentum.push_back(pmu);
         md.gamma = gamma_[g];
         return md;
+    };
+
+    // The burst buffer is only mounted when the job actually requested it
+    // (-C nvme), so its presence is a reliable signal -- no allocation means
+    // this path simply isn't there. When present, the job submission script
+    // is responsible for mv'ing the output back to Lustre after the run.
+    const char *scratchEnv = std::getenv("LOCAL_SCRATCH");
+    std::string scratch = (scratchEnv && std::filesystem::is_directory(scratchEnv))
+                           ? std::string(scratchEnv) : std::string();
+
+    // Node-local scratch path drops the upper directory prefix so that
+    // e.g. output="mf_2bin/mf_ll" -> scratch="$LOCAL_SCRATCH/mf_ll.575/ioname.h5"
+    // Falls back to writing directly to Lustre when scratch isn't available.
+    auto filenameFn = [this, &ionameFn, &scratch](const int m, const int g)
+    {
+        if (scratch.empty())
+        {
+            return par().output + "." + std::to_string(vm().getTrajectory())
+                   + "/" + ionameFn(m, g) + ".h5";
+        }
+        std::string base = std::filesystem::path(par().output).filename().string();
+        return scratch + "/" + base
+               + "." + std::to_string(vm().getTrajectory())
+               + "/" + ionameFn(m, g) + ".h5";
     };
 
     // Output buffer: one (nt, Nii, Njj) block at a time.
@@ -248,15 +267,25 @@ void TA2AMesonField<FImpl>::execute(void)
     std::vector<Eigen::Tensor<ComplexD, 3, Eigen::RowMajor>> all_results(nmom,
         Eigen::Tensor<ComplexD, 3, Eigen::RowMajor>(nt, block, block));
 
-    // Create output directory. makeFileDir only mkdir()s on the boss rank
-    // and has no synchronization of its own; now that file creation below
-    // is spread across ranks (not boss-only, as it was previously), every
-    // other rank must wait here or it can reach H5Fcreate before the
-    // directory exists (or before it's visible on that rank's node).
-    std::string dirBase = par().output + "." + std::to_string(vm().getTrajectory());
+    // When scratch is available, each rank creates its own scratch
+    // subdirectory independently, no boss restriction -- but still barrier
+    // before any rank opens a file there, in case the mount isn't strictly
+    // private per node (cross-rank/cross-node visibility lag). Otherwise
+    // makeFileDir only mkdir()s on the boss rank and has no synchronization
+    // of its own, so every other rank must wait here or it can reach
+    // H5Fcreate before the directory exists (or before it's visible on that
+    // rank's node).
+    if (scratch.empty())
     {
-        std::string dummy = dirBase + "/mkdir.h5";
+        std::string dummy = par().output + "." + std::to_string(vm().getTrajectory()) + "/mkdir.h5";
         makeFileDir(dummy, grid);
+    }
+    else
+    {
+        std::string scratchBase = scratch + "/"
+            + std::filesystem::path(par().output).filename().string()
+            + "." + std::to_string(vm().getTrajectory());
+        Hadrons::mkdir(scratchBase);
     }
     grid->Barrier();
 
@@ -312,9 +341,9 @@ void TA2AMesonField<FImpl>::execute(void)
     //   AllocateLeft  + PackLeft  - once per ib
     //   Apply+GEMM+Restore        - once per (jb, g, ib, m)
 
-    double                fillTime   = 0.;
-    std::array<double, 7> ioTimings  = {};
-    std::array<double, 5> sumTimings = {};
+    double                fillTime     = 0.;
+    std::array<double, 7> ioTimings    = {};
+    std::array<double, 5> sumTimings   = {};
 
     for (int jb = 0; jb < N_j; jb += block)
     {

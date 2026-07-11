@@ -10,7 +10,7 @@
  * Hadrons application: runs A2ACovariantSmear (stencil path) and
  * A2ACovariantSmearMT (sequential Cshift/GaussianSmear path) on the same
  * random A2A vectors and random gauge field, then contracts each smeared set
- * into a meson field via A2ANewMesonField and writes HDF5 output.
+ * into a meson field via A2AMesonField and writes HDF5 output.
  *
  * h5diff the two meson field outputs to verify that both smearing paths
  * produce identical results.
@@ -114,9 +114,9 @@ int main(int argc, char *argv[])
     application.createModule<MUtilities::A2ACovariantSmearMT>("smear_mt", mtPar);
 
     // ------------------------------------------------------------------
-    // A2ANewMesonField on stencil-smeared vectors
+    // A2AMesonField on stencil-smeared vectors
     // ------------------------------------------------------------------
-    MContraction::A2ANewMesonFieldPar mfStencilPar;
+    MContraction::A2AMesonFieldPar mfStencilPar;
     mfStencilPar.block  = block;
     mfStencilPar.left   = "smear_stencil";
     mfStencilPar.right  = "smear_stencil";
@@ -124,12 +124,12 @@ int main(int argc, char *argv[])
     mfStencilPar.gammas = gammas;
     mfStencilPar.mom    = {"0 0 0"};
 
-    application.createModule<MContraction::A2ANewMesonField>("mf_stencil", mfStencilPar);
+    application.createModule<MContraction::A2AMesonField>("mf_stencil", mfStencilPar);
 
     // ------------------------------------------------------------------
-    // A2ANewMesonField on MT-smeared vectors
+    // A2AMesonField on MT-smeared vectors
     // ------------------------------------------------------------------
-    MContraction::A2ANewMesonFieldPar mfMtPar;
+    MContraction::A2AMesonFieldPar mfMtPar;
     mfMtPar.block  = block;
     mfMtPar.left   = "smear_mt";
     mfMtPar.right  = "smear_mt";
@@ -137,7 +137,7 @@ int main(int argc, char *argv[])
     mfMtPar.gammas = gammas;
     mfMtPar.mom    = {"0 0 0"};
 
-    application.createModule<MContraction::A2ANewMesonField>("mf_mt", mfMtPar);
+    application.createModule<MContraction::A2AMesonField>("mf_mt", mfMtPar);
 
     application.run();
 
