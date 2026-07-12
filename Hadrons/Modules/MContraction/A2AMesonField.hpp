@@ -29,7 +29,6 @@
 #ifndef Hadrons_MContraction_A2AMesonField_hpp_
 #define Hadrons_MContraction_A2AMesonField_hpp_
 
-#include <filesystem>
 #include <Hadrons/Global.hpp>
 #include <Hadrons/Module.hpp>
 #include <Hadrons/ModuleFactory.hpp>
@@ -228,27 +227,9 @@ void TA2AMesonField<FImpl>::execute(void)
         return md;
     };
 
-    // The burst buffer is only mounted when the job actually requested it
-    // (-C nvme), so its presence is a reliable signal -- no allocation means
-    // this path simply isn't there. When present, the job submission script
-    // is responsible for mv'ing the output back to Lustre after the run.
-    const char *scratchEnv = std::getenv("LOCAL_SCRATCH");
-    std::string scratch = (scratchEnv && std::filesystem::is_directory(scratchEnv))
-                           ? std::string(scratchEnv) : std::string();
-
-    // Node-local scratch path drops the upper directory prefix so that
-    // e.g. output="mf_2bin/mf_ll" -> scratch="$LOCAL_SCRATCH/mf_ll.575/ioname.h5"
-    // Falls back to writing directly to Lustre when scratch isn't available.
-    auto filenameFn = [this, &ionameFn, &scratch](const int m, const int g)
+    auto filenameFn = [this, &ionameFn](const int m, const int g)
     {
-        if (scratch.empty())
-        {
-            return par().output + "." + std::to_string(vm().getTrajectory())
-                   + "/" + ionameFn(m, g) + ".h5";
-        }
-        std::string base = std::filesystem::path(par().output).filename().string();
-        return scratch + "/" + base
-               + "." + std::to_string(vm().getTrajectory())
+        return par().output + "." + std::to_string(vm().getTrajectory())
                + "/" + ionameFn(m, g) + ".h5";
     };
 
@@ -267,26 +248,18 @@ void TA2AMesonField<FImpl>::execute(void)
     std::vector<Eigen::Tensor<ComplexD, 3, Eigen::RowMajor>> all_results(nmom,
         Eigen::Tensor<ComplexD, 3, Eigen::RowMajor>(nt, block, block));
 
-    // When scratch is available, each rank creates its own scratch
-    // subdirectory independently, no boss restriction -- but still barrier
-    // before any rank opens a file there, in case the mount isn't strictly
-    // private per node (cross-rank/cross-node visibility lag). Otherwise
-    // makeFileDir only mkdir()s on the boss rank and has no synchronization
-    // of its own, so every other rank must wait here or it can reach
-    // H5Fcreate before the directory exists (or before it's visible on that
-    // rank's node).
-    if (scratch.empty())
-    {
-        std::string dummy = par().output + "." + std::to_string(vm().getTrajectory()) + "/mkdir.h5";
-        makeFileDir(dummy, grid);
-    }
-    else
-    {
-        std::string scratchBase = scratch + "/"
-            + std::filesystem::path(par().output).filename().string()
-            + "." + std::to_string(vm().getTrajectory());
-        Hadrons::mkdir(scratchBase);
-    }
+    // Every rank creates the output directory itself, rather than relying
+    // on makeFileDir's boss-rank-only mkdir. File writes below are spread
+    // across ranks (owned by (m*ngamma+g) % nRank), and output can land on
+    // physically separate per-node storage (e.g. a node-local NVMe burst
+    // buffer) where a directory created on the boss rank's node is simply
+    // absent on every other node -- no barrier can fix that, since it isn't
+    // a visibility-lag problem, the directory really doesn't exist there.
+    // Hadrons::mkdir checks access() first and only costs a few redundant
+    // syscalls when the directory already exists, so doing this on every
+    // rank is harmless (if a little repetitive) on a shared filesystem too.
+    std::string dirBase = par().output + "." + std::to_string(vm().getTrajectory());
+    Hadrons::mkdir(dirBase);
     grid->Barrier();
 
     unsigned int myRank = grid->ThisRank();
