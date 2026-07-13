@@ -323,10 +323,9 @@ void TA2AExtendedMesonField<FImpl>::execute(void)
 	      for(int ii=0;ii< Nii;ii++)
 		for(int jj=0;jj< Njj;jj++)
 		  emf(0,0,t,i+ii,j+jj) = emfBlock(t,ii,jj);
-
-	    LOG(Message) << "EMF made for i-block " << i/block << " j-block " << j/block << " type " << type << std::endl;
 	}
-	
+	LOG(Message) << "EMF made for j-block " << j/block << " type " << type << std::endl;
+
 	}// i,j
 	LOG(Message) << "EMF made for type " << type << std::endl;
 
@@ -334,7 +333,9 @@ void TA2AExtendedMesonField<FImpl>::execute(void)
 	std::string filename = par().output + "." + std::to_string(vm().getTrajectory()) + "/" + ioname + ".h5";
         LOG(Message) << "Writing block to " << filename << std::endl;
         makeFileDir(filename, grid);
+        double ioBytes = static_cast<double>(nt) * N_i * N_j * sizeof(HADRONS_A2AM_IO_TYPE);
         startTimer("IO");
+        double writeTime = -usecond();
 #ifdef HADRONS_A2AM_PARALLEL_IO
         startTimer("Barrier");
         grid->Barrier();
@@ -356,7 +357,16 @@ void TA2AExtendedMesonField<FImpl>::execute(void)
 	grid->Barrier();
 	stopTimer("Barrier");
 #endif
+        writeTime += usecond();
         stopTimer("IO");
+        // writeTime is this rank's own wall time from barrier to barrier
+        // (only rank 0's LOG output survives, since Grid_quiesce_nodes
+        // suppresses the rest by default).
+        if (writeTime > 0.)
+            LOG(Message) << "IO type=" << type << " ig=" << ig << ": "
+                         << sizeString(ioBytes) << " in " << writeTime
+                         << " us local (" << ioBytes / writeTime * 1.e6 / 1024. / 1024.
+                         << " MB/s effective)" << std::endl;
       }// ig
     }// type
 

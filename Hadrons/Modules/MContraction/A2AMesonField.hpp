@@ -265,20 +265,6 @@ void TA2AMesonField<FImpl>::execute(void)
     unsigned int myRank = grid->ThisRank();
     unsigned int nRank  = grid->RankCount();
 
-    // Only rank 0's LOG output survives (Grid_quiesce_nodes suppresses the
-    // rest by default), so any timer read directly off `this` only shows
-    // rank 0's local view. This finds which rank actually holds the max for
-    // a given local value and returns {maxValue, thatRank}; every rank must
-    // call this together since it is collective (two GlobalMax calls).
-    auto crossRankMaxLoc = [grid, myRank](double val) -> std::pair<double, int>
-    {
-        double maxVal = val;
-        grid->GlobalMax(maxVal);
-        double isMaxRank = (val == maxVal) ? (double)myRank : -1.0;
-        grid->GlobalMax(isMaxRank);
-        return {maxVal, (int)isMaxRank};
-    };
-
     // Initialise one HDF5 file per (mom, gamma) pair before the block loops.
     // Each rank initialises only its assigned files; single barrier after.
     for (int m = 0; m < nmom; m++)
@@ -405,18 +391,14 @@ void TA2AMesonField<FImpl>::execute(void)
                 writeTime += usecond();
                 stopTimer("IO");
                 // writeTime is this rank's own wall time from barrier to
-                // barrier; with uneven momenta counts or filesystem
-                // contention some rank other than the one whose LOG we see
-                // can be the straggler setting the pace for everyone else.
-                auto [writeTimeMax, writeTimeRank] = crossRankMaxLoc(writeTime);
-                if (writeTimeMax > 0.)
+                // barrier (only rank 0's LOG output survives, since
+                // Grid_quiesce_nodes suppresses the rest by default).
+                if (writeTime > 0.)
                     LOG(Message) << "IO block i=" << ib << " j=" << jb
                                  << " g=" << gamma_[g] << ": "
                                  << sizeString(ioBytes) << " in "
-                                 << writeTime << " us local, "
-                                 << writeTimeMax << " us max (rank "
-                                 << writeTimeRank << ") ("
-                                 << ioBytes / writeTimeMax * 1.e6 / 1024. / 1024.
+                                 << writeTime << " us local ("
+                                 << ioBytes / writeTime * 1.e6 / 1024. / 1024.
                                  << " MB/s effective)" << std::endl;
             } // ib
         } // g
@@ -437,19 +419,6 @@ void TA2AMesonField<FImpl>::execute(void)
     LOG(Message) << "  selectHyperslab = " << ioTimings[4]  << std::endl;
     LOG(Message) << "  write           = " << ioTimings[5]  << std::endl;
     LOG(Message) << "  close(fsync)    = " << ioTimings[6]  << std::endl;
-
-    // The per-component breakdown above is already rank 0's local view (only
-    // rank 0's LOG output survives), which is what we want to read day to
-    // day -- cross-rank-maxing all 13 sub-timer components just to find an
-    // occasional straggler clogs the log. Keep the collective max only for
-    // the two aggregate block timers, as a cheap "is anything unbalanced"
-    // check.
-    auto [sumTimerMax, sumTimerRank] = crossRankMaxLoc(getDTimer("Sum"));
-    auto [ioTimerMax,  ioTimerRank]  = crossRankMaxLoc(getDTimer("IO"));
-
-    LOG(Message) << "Sum/IO cross-rank max (us) [straggler rank]:" << std::endl;
-    LOG(Message) << "  Sum_timer       = " << sumTimerMax << " [" << sumTimerRank << "]" << std::endl;
-    LOG(Message) << "  IO_timer        = " << ioTimerMax  << " [" << ioTimerRank  << "]" << std::endl;
 }
 
 END_MODULE_NAMESPACE
