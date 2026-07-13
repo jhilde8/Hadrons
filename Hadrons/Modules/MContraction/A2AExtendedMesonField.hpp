@@ -336,7 +336,9 @@ void TA2AExtendedMesonField<FImpl>::execute(void)
         makeFileDir(filename, grid);
         startTimer("IO");
 #ifdef HADRONS_A2AM_PARALLEL_IO
+        startTimer("Barrier");
         grid->Barrier();
+        stopTimer("Barrier");
         LOG(Message) << "HADRONS_A2AM_PARALLEL_IO" << std::endl;
 	if ( grid->ThisRank() == 0 ) {
 #endif
@@ -344,11 +346,15 @@ void TA2AExtendedMesonField<FImpl>::execute(void)
 	  A2AExtendedMesonFieldMetadata md;
 	  md.gamma1 = nameg1_[ig];
 	  md.gamma2 = nameg2_[ig];
+	  startTimer("initFile");
 	  io.initFile(md, MAX(N_i,N_j));
+	  stopTimer("initFile");
 	  io.saveBlock(emf, 0, 0, 0, 0, &ioTimings);
 #ifdef HADRONS_A2AM_PARALLEL_IO
 	}
+	startTimer("Barrier");
 	grid->Barrier();
+	stopTimer("Barrier");
 #endif
         stopTimer("IO");
       }// ig

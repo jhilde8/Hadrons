@@ -221,17 +221,23 @@ void TA2AChromoMagneticOperatorField<GImpl,FImpl>::execute(void)
       makeFileDir(filename, grid);
       startTimer("IO");
 #ifdef HADRONS_A2AM_PARALLEL_IO
+      startTimer("Barrier");
       grid->Barrier();
+      stopTimer("Barrier");
       if (grid->ThisRank() == 0) {
 #endif
       A2AMatrixIo<HADRONS_A2AM_IO_TYPE> io(filename, ioname, nt, N_i, N_j);
       A2AChromoMagneticOperatorFieldMetadata md;
       md.meta = ioname;
+      startTimer("initFile");
       io.initFile(md, MAX(N_i,N_j));
+      stopTimer("initFile");
       io.saveBlock(cmf, 0, 0, 0, 0, &ioTimings);
 #ifdef HADRONS_A2AM_PARALLEL_IO
       }
+      startTimer("Barrier");
       grid->Barrier();
+      stopTimer("Barrier");
 #endif
       stopTimer("IO");
     }// parity
