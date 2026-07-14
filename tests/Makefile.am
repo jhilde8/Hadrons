@@ -24,7 +24,8 @@ EXTRA_PROGRAMS = \
   Test_cmof_gpu             \
   Test_mf_gpu               \
   Test_savebinned_gpu       \
-  Test_a2a_evalfpe_gpu
+  Test_a2a_evalfpe_gpu      \
+  Test_coarsedeflation_gpu
 
 CLEANFILES = $(EXTRA_PROGRAMS)
 
@@ -98,3 +99,6 @@ Test_savebinned_gpu_LDADD=-lHadrons -lGrid
 
 Test_a2a_evalfpe_gpu_SOURCES=Test_a2a_evalfpe_gpu.cpp
 Test_a2a_evalfpe_gpu_LDADD=-lHadrons -lGrid
+
+Test_coarsedeflation_gpu_SOURCES=Test_coarsedeflation_gpu.cpp
+Test_coarsedeflation_gpu_LDADD=-lHadrons -lGrid
