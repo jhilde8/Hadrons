@@ -1,10 +1,9 @@
 /*
- * PrecisionCastCoarseEPack.cpp, part of Hadrons (https://github.com/aportelli/Hadrons)
+ * A2AVectorsCoarse.cpp, part of Hadrons (https://github.com/aportelli/Hadrons)
  *
  * Copyright (C) 2015 - 2023
  *
  * Author: Antonin Portelli <antonin.portelli@me.com>
- * Author: Fionn O hOgain <fionn.o.hogain@ed.ac.uk>
  * Author: Jonas Hildebrand <jonas.hildebrand@uconn.edu>
  *
  * Hadrons is free software: you can redistribute it and/or modify
@@ -25,10 +24,11 @@
  */
 
 /*  END LEGAL */
-#include <Hadrons/Modules/MUtilities/PrecisionCastCoarseEPack.hpp>
+#include <Hadrons/Modules/MSolver/A2AVectorsCoarse.hpp>
 
 using namespace Grid;
 using namespace Hadrons;
-using namespace MUtilities;
+using namespace MSolver;
 
-template class HADRONS_NAMESPACE::MUtilities::TPrecisionCastCoarseEPack<FIMPLF, FIMPLD, 200>;
+template class HADRONS_NAMESPACE::MSolver::TA2AVectorsCoarse<FIMPL, FIMPLF, 200>;
+template class HADRONS_NAMESPACE::MSolver::TA2AVectorsCoarse<ZFIMPL, ZFIMPLF, 200>;

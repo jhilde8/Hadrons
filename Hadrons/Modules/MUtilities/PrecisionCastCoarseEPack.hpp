@@ -3,6 +3,8 @@
  *
  * Copyright (C) 2015 - 2023
  *
+ * Author: Antonin Portelli <antonin.portelli@me.com>
+ * Author: Fionn O hOgain <fionn.o.hogain@ed.ac.uk>
  * Author: Jonas Hildebrand <jonas.hildebrand@uconn.edu>
  *
  * Hadrons is free software: you can redistribute it and/or modify
