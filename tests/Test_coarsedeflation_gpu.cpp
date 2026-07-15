@@ -7,10 +7,9 @@
  * Test_coarsedeflation_gpu.cpp
  *
  * Regression test for the 64I CGl memory redesign: checks that
- * MGuesser::CoarseDeflation200F/CoarseDeflation200 (deflating directly
- * against the compressed coarse eigenpack, epack_coarse/epack_coarseD)
- * reproduce the same guess -- and the same downstream mixed-precision CG
- * solve -- as the current production path of
+ * MGuesser::CoarseDeflation200F (deflating directly against the compressed
+ * coarse eigenpack, epack_coarse) reproduces the same guess -- and the same
+ * downstream mixed-precision CG solve -- as the current production path of
  * MUtilities::EigenPackLCDecompress200F + MGuesser::ExactDeflationF/
  * ExactDeflation (dense decompression into a resident array, epack/epackD).
  *
@@ -23,12 +22,17 @@
  *   - Double-precision noise/source fields throughout (production's
  *     A2AVectors requires double V/W vectors, which is why mcg_l takes and
  *     returns double fields even though the inner solve is single).
- *   - Both branches get a double-precision guesser fed by a double-precision
- *     eigenpack: the old path via MUtilities::FermionDoublePrecisionCastEPack
- *     (already in production, casts the dense decompressed epack -> epackD),
- *     the new path via the new MUtilities::CoarseFermionDoublePrecisionCastEPack200
- *     (casts the compressed epack_coarse -> epack_coarseD directly -- no
- *     second disk read, no dense decompression).
+ *   - Both branches get a double-precision outer guesser, but built two
+ *     different ways. The old path casts the whole dense decompressed
+ *     eigenpack (MUtilities::FermionDoublePrecisionCastEPack, epack ->
+ *     epackD) and deflates against that resident double pack
+ *     (MGuesser::ExactDeflation). The new path never holds a double
+ *     eigenpack at all -- only epack_coarse (single) stays resident;
+ *     guesser_new (single) deflates directly against it, and
+ *     MGuesser::DeflationSrcCastEPackF wraps guesser_new to cast just the
+ *     input source down and the output guess up around a single-precision
+ *     deflation call -- one fermion field's worth of casting per solve
+ *     (~7GB) instead of a whole second copy of the eigenpack.
  *
  * This also sidesteps a real bug found while running the earlier
  * single-precision-only version of this test: Hadrons::ModuleBase::rng4d()
@@ -37,7 +41,12 @@
  * single-precision field with it trips GRID_ASSERT(fine->Nsimd() ==
  * coarse->Nsimd()) in Grid/lattice/Lattice_rng.h. Going back to
  * double-precision noise/source fields (as production actually does) means
- * rng4d() matches the field's own grid again, no workaround needed.
+ * rng4d() matches the field's own grid again for src_full, no workaround
+ * needed there. src_odd still needs to be genuinely single precision,
+ * though (it feeds guesser_old/guesser_new directly, both single), so
+ * TRandomOddFermion<FIMPLF> fills a double-precision scratch via rng4d()
+ * (always grid-matched) and precisionChange's it down, rather than filling
+ * a single-precision field with rng4d() directly.
  *
  * sizeFine is intentionally left at the full 200 (matches the local
  * coherence basis dimension baked into CoarseField's per-site type, see
@@ -142,15 +151,36 @@ public:
         LOG(Message) << "Generating random field on the Odd checkerboard"
                      << std::endl;
 
-        FermionField full(envGetGrid(FermionField, par().Ls));
-        auto         &odd = envGet(FermionField, getName());
+        auto &odd = envGet(FermionField, getName());
 
-        random(rng4d(), full);
-        pickCheckerboard(Odd, odd, full);
+        if constexpr (std::is_same<FermionField, FIMPL::FermionField>::value)
+        {
+            // rng4d()'s grid already matches this module's own (double)
+            // grid -- no cast needed.
+            FermionField full(envGetGrid(FermionField, par().Ls));
+            random(rng4d(), full);
+            pickCheckerboard(Odd, odd, full);
+        }
+        else
+        {
+            // rng4d() always returns the environment's RNG on the
+            // *default* (double) 4D grid, which does not match this
+            // module's own (single) grid -- filling directly here trips
+            // GRID_ASSERT(fine->Nsimd() == coarse->Nsimd()) in
+            // Grid/lattice/Lattice_rng.h. Fill a double-precision scratch
+            // on the grid rng4d() actually matches, then cast down.
+            FIMPL::FermionField fullD(envGetGrid(FIMPL::FermionField, par().Ls));
+            random(rng4d(), fullD);
+
+            FermionField full(envGetGrid(FermionField, par().Ls));
+            precisionChange(full, fullD);
+            pickCheckerboard(Odd, odd, full);
+        }
     }
 };
 
 MODULE_REGISTER(RandomOddFermion, ARG(TRandomOddFermion<FIMPL>), MUtilities);
+MODULE_REGISTER(RandomOddFermionF, ARG(TRandomOddFermion<FIMPLF>), MUtilities);
 
 // Calls a named LinearFunction<FermionField> (i.e. a Hadrons guesser module)
 // directly on a named source field and stores the result -- no CG involved.
@@ -200,6 +230,7 @@ public:
 };
 
 MODULE_REGISTER(CallGuesser, ARG(TCallGuesser<FIMPL>), MUtilities);
+MODULE_REGISTER(CallGuesserF, ARG(TCallGuesser<FIMPLF>), MUtilities);
 
 // Calls a named Solver<FermionField> (i.e. a Hadrons solver module, here
 // MixedPrecisionRBPrecCG) directly on a named full (non-checkerboarded)
@@ -303,6 +334,7 @@ public:
 };
 
 MODULE_REGISTER(FieldDiff, ARG(TFieldDiff<FIMPL>), MUtilities);
+MODULE_REGISTER(FieldDiffF, ARG(TFieldDiff<FIMPLF>), MUtilities);
 
 END_MODULE_NAMESPACE
 END_HADRONS_NAMESPACE
@@ -383,14 +415,6 @@ int main(int argc, char *argv[])
     epackCoarsePar.gaugeXform    = "";
     application.createModule<MIO::LoadCoarseFermionEigenPack200F>("epack_coarse", epackCoarsePar);
 
-    // Double-precision cast of the *compressed* pack -- no second disk read,
-    // no dense decompression. Feeds the new path's outer (double) guesser.
-    MUtilities::PrecisionCastCoarseEPackPar epackCoarseDPar;
-    epackCoarseDPar.in        = "epack_coarse";
-    epackCoarseDPar.blockSize = "4 4 4 4 12";
-    epackCoarseDPar.redBlack  = true;
-    application.createModule<MUtilities::CoarseFermionDoublePrecisionCastEPack200>("epack_coarseD", epackCoarseDPar);
-
     // ------------------------------------------------------------------
     // Old path: dense decompression into a resident single-precision array,
     // then a double-precision cast of that array -- exactly production's
@@ -423,17 +447,18 @@ int main(int argc, char *argv[])
 
     // ------------------------------------------------------------------
     // New path: deflate directly against the compressed coarse eigenpack,
-    // no dense decompression at all, in either precision.
+    // no dense decompression and no double-precision eigenpack at all --
+    // guesserD_new casts only the single guess field produced by
+    // guesser_new, per solve, instead of casting the eigenpack up front.
     // ------------------------------------------------------------------
     MGuesser::CoarseDeflationPar guesserNewPar;
     guesserNewPar.eigenPack = "epack_coarse";
     guesserNewPar.size      = sizeCoarse;
     application.createModule<MGuesser::CoarseDeflation200F>("guesser_new", guesserNewPar);
 
-    MGuesser::CoarseDeflationPar guesserDNewPar;
-    guesserDNewPar.eigenPack = "epack_coarseD";
-    guesserDNewPar.size      = sizeCoarse;
-    application.createModule<MGuesser::CoarseDeflation200>("guesserD_new", guesserDNewPar);
+    MGuesser::DeflationSrcCastPar guesserDNewPar;
+    guesserDNewPar.guesser = "guesser_new";
+    application.createModule<MGuesser::DeflationSrcCastEPackF>("guesserD_new", guesserDNewPar);
 
     // ------------------------------------------------------------------
     // Mobius DWF action, standard 64I parameters, matching production's
@@ -468,7 +493,7 @@ int main(int argc, char *argv[])
     // ------------------------------------------------------------------
     MUtilities::RandomOddFermionPar srcOddPar;
     srcOddPar.Ls = Ls;
-    application.createModule<MUtilities::RandomOddFermion>("src_odd", srcOddPar);
+    application.createModule<MUtilities::RandomOddFermionF>("src_odd", srcOddPar);
 
     MUtilities::RandomFieldPar srcFullPar;
     srcFullPar.Ls = Ls;
@@ -483,18 +508,18 @@ int main(int argc, char *argv[])
     guessOldPar.guesser = "guesser_old";
     guessOldPar.source  = "src_odd";
     guessOldPar.Ls      = Ls;
-    application.createModule<MUtilities::CallGuesser>("guess_old", guessOldPar);
+    application.createModule<MUtilities::CallGuesserF>("guess_old", guessOldPar);
 
     MUtilities::CallGuesserPar guessNewPar;
     guessNewPar.guesser = "guesser_new";
     guessNewPar.source  = "src_odd";
     guessNewPar.Ls      = Ls;
-    application.createModule<MUtilities::CallGuesser>("guess_new", guessNewPar);
+    application.createModule<MUtilities::CallGuesserF>("guess_new", guessNewPar);
 
     MUtilities::FieldDiffPar guessDiffPar;
     guessDiffPar.a = "guess_old";
     guessDiffPar.b = "guess_new";
-    application.createModule<MUtilities::FieldDiff>("guess_diff", guessDiffPar);
+    application.createModule<MUtilities::FieldDiffF>("guess_diff", guessDiffPar);
 
     // ------------------------------------------------------------------
     // Secondary/tertiary checks: full MixedPrecisionRBPrecCG solves off the
