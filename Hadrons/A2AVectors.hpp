@@ -92,7 +92,7 @@ public:
     // single-growing-file (multiFile=false) counterpart, since that would
     // require keeping a ScidacWriter open across calls.
     template <typename Field>
-    static void writeElement(const std::string fileStem, const Field &elem,
+    static void writeElement(const std::string fileStem, Field &elem,
                              const unsigned int index, const int trajectory = -1);
     template <typename Field>
     static void read(std::vector<Field> &vec, const std::string fileStem,
@@ -304,7 +304,7 @@ void A2AVectorsIo::write(const std::string fileStem, std::vector<Field> &vec,
 }
 
 template <typename Field>
-void A2AVectorsIo::writeElement(const std::string fileStem, const Field &elem,
+void A2AVectorsIo::writeElement(const std::string fileStem, Field &elem,
                                 const unsigned int index, const int trajectory)
 {
     Record       record;
