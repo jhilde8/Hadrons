@@ -83,8 +83,17 @@ public:
     };
 public:
     template <typename Field>
-    static void write(const std::string fileStem, std::vector<Field> &vec, 
+    static void write(const std::string fileStem, std::vector<Field> &vec,
                       const bool multiFile, const int trajectory = -1);
+    // Write a single element under an explicit, caller-supplied index, without
+    // ever holding a full std::vector<Field> resident -- used by modules that
+    // stream their output bin by bin. Always writes one file per element
+    // (i.e. the multiFile=true layout of write() above); there is no
+    // single-growing-file (multiFile=false) counterpart, since that would
+    // require keeping a ScidacWriter open across calls.
+    template <typename Field>
+    static void writeElement(const std::string fileStem, const Field &elem,
+                             const unsigned int index, const int trajectory = -1);
     template <typename Field>
     static void read(std::vector<Field> &vec, const std::string fileStem,
                      const bool multiFile, const int trajectory = -1);
@@ -295,7 +304,25 @@ void A2AVectorsIo::write(const std::string fileStem, std::vector<Field> &vec,
 }
 
 template <typename Field>
-void A2AVectorsIo::read(std::vector<Field> &vec, const std::string fileStem, 
+void A2AVectorsIo::writeElement(const std::string fileStem, const Field &elem,
+                                const unsigned int index, const int trajectory)
+{
+    Record       record;
+    GridBase     *grid = elem.Grid();
+    ScidacWriter binWriter(grid->IsBoss());
+    std::string  filename     = vecFilename(fileStem, trajectory, true);
+    std::string  fullFilename = filename + "/elem" + std::to_string(index) + ".bin";
+
+    LOG(Message) << "Writing vector " << index << std::endl;
+    makeFileDir(fullFilename, grid);
+    binWriter.open(fullFilename);
+    record.index = index;
+    binWriter.writeScidacFieldRecord(elem, record);
+    binWriter.close();
+}
+
+template <typename Field>
+void A2AVectorsIo::read(std::vector<Field> &vec, const std::string fileStem,
                         const bool multiFile, const int trajectory)
 {
     Record       record;
