@@ -111,12 +111,14 @@ TA2AVectorsCoarseHigh<FImpl, binSize>::TA2AVectorsCoarseHigh(const std::string n
 template <typename FImpl, int binSize>
 std::vector<std::string> TA2AVectorsCoarseHigh<FImpl, binSize>::getInput(void)
 {
-    // Same "_subtract" solver convention as MSolver::A2AVectors/A2AVectorsCoarse
-    // for the hasLowModes=true case: the deflation contribution is subtracted
-    // out of the source before this high-mode CG solve, so it estimates only
-    // the complement of the (separately computed) low-mode subspace.
-    std::vector<std::string> in = {par().action, par().solver + "_subtract",
-                                   par().noise};
+    // MSolver::MixedPrecisionRBPrecCG always creates both a plain and a
+    // "_subtract" solver object regardless of whether an outer guesser was
+    // configured, so both are safe to list here. setup() below picks
+    // whichever one actually has a guesser attached (Solver::hasGuesser()) --
+    // subtracting a guess only makes sense, and is only checkerboard-safe,
+    // when a real (non-Zero) outer guesser produced that guess.
+    std::vector<std::string> in = {par().action, par().solver,
+                                   par().solver + "_subtract", par().noise};
 
     return in;
 }
@@ -133,9 +135,15 @@ std::vector<std::string> TA2AVectorsCoarseHigh<FImpl, binSize>::getOutput(void)
 template <typename FImpl, int binSize>
 void TA2AVectorsCoarseHigh<FImpl, binSize>::setup(void)
 {
-    auto        &noise  = envGet(SpinColorDiagonalNoise<FImpl>, par().noise);
-    auto        &action = envGet(FMat, par().action);
-    auto        &solver = envGet(Solver, par().solver + "_subtract");
+    auto        &noise          = envGet(SpinColorDiagonalNoise<FImpl>, par().noise);
+    auto        &action         = envGet(FMat, par().action);
+    auto        &solverPlain    = envGet(Solver, par().solver);
+    auto        &solverSubtract = envGet(Solver, par().solver + "_subtract");
+    // Only take the guess-subtracting path if a real outer guesser was
+    // configured. With no guesser, "_subtract" would subtract a ZeroGuesser
+    // guess whose Checkerboard tag is never set to match the RB solution,
+    // tripping the checkerboard-consistency assert in Lattice_ET.h.
+    auto        &solver = solverSubtract.hasGuesser() ? solverSubtract : solverPlain;
     int         Ls      = env().getObjectLs(par().action);
 
     Nh_ = noise.fermSize();

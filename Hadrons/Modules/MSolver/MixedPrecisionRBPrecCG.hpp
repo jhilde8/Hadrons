@@ -219,12 +219,13 @@ void TMixedPrecisionRBPrecCG<FImplInner, FImplOuter>::setup(void)
             SOLVER_BODY;
         };
     };
+    bool hasOuterGuesser = (oguesserPt != nullptr);
     auto solver    = makeSolver(false);
     auto vecSolver = makeVecSolver(false);
-    envCreate(Solver, getName(), Ls, solver, vecSolver, omat);
+    envCreate(Solver, getName(), Ls, solver, vecSolver, omat, hasOuterGuesser);
     auto solver_subtract    = makeSolver(true);
     auto vecSolver_subtract = makeVecSolver(true);
-    envCreate(Solver, getName() + "_subtract", Ls, solver_subtract, vecSolver_subtract, omat);
+    envCreate(Solver, getName() + "_subtract", Ls, solver_subtract, vecSolver_subtract, omat, hasOuterGuesser);
 }
 
 #undef SOLVER_BODY

@@ -41,8 +41,10 @@ public:
     typedef std::function<void(std::vector<FermionField> &, 
                                const std::vector<FermionField> &)> SolverVFn;
 public:
-    Solver(SolverFn fn, FMat &mat): mat_(mat), fn_(fn), vfn_(nullptr) {}
-    Solver(SolverFn fn, SolverVFn vfn, FMat &mat): mat_(mat), fn_(fn), vfn_(vfn) {}
+    Solver(SolverFn fn, FMat &mat, bool hasGuesser = false)
+    : mat_(mat), fn_(fn), vfn_(nullptr), hasGuesser_(hasGuesser) {}
+    Solver(SolverFn fn, SolverVFn vfn, FMat &mat, bool hasGuesser = false)
+    : mat_(mat), fn_(fn), vfn_(vfn), hasGuesser_(hasGuesser) {}
 
     void operator()(FermionField &sol, const FermionField &src)
     {
@@ -72,10 +74,17 @@ public:
     {
         return mat_;
     }
+
+    // True if this solver was constructed with a non-trivial (non-Zero) guesser.
+    bool hasGuesser(void) const
+    {
+        return hasGuesser_;
+    }
 private:
     FMat      &mat_;
     SolverFn  fn_;
     SolverVFn vfn_;
+    bool      hasGuesser_;
 };
 
 END_HADRONS_NAMESPACE
