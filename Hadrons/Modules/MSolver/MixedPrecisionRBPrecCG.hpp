@@ -28,6 +28,8 @@
 #ifndef Hadrons_MSolver_MixedPrecisionRBPrecCG_hpp_
 #define Hadrons_MSolver_MixedPrecisionRBPrecCG_hpp_
 
+#include <memory>
+
 #include <Hadrons/Global.hpp>
 #include <Hadrons/Module.hpp>
 #include <Hadrons/ModuleFactory.hpp>
@@ -51,7 +53,8 @@ public:
                                     double      , residual,
                                     std::string , innerGuesser,
                                     std::string , outerGuesser,
-				    bool, ifCGD );
+				    bool, ifCGD,
+                                    std::string , schurConvention );
 };
 
 template <typename FImplInner, typename FImplOuter>
@@ -61,8 +64,6 @@ public:
     FERM_TYPE_ALIASES(FImplInner, Inner);
     FERM_TYPE_ALIASES(FImplOuter, Outer);
     SOLVER_TYPE_ALIASES(FImplOuter,);
-    typedef HADRONS_DEFAULT_SCHUR_OP<FMatInner, FermionFieldInner> SchurFMatInner;
-    typedef HADRONS_DEFAULT_SCHUR_OP<FMatOuter, FermionFieldOuter> SchurFMatOuter;
 private:
     template <typename Field>
     class OperatorFunctionWrapper: public OperatorFunction<Field>
@@ -165,27 +166,65 @@ ZeroGuesser<FermionFieldInner> iguesserDefault;                                 
 ZeroGuesser<FermionFieldOuter> oguesserDefault;                                                       \
 LinearFunction<FermionFieldInner> &iguesser = (iguesserPt == nullptr) ? iguesserDefault : *iguesserPt;\
 LinearFunction<FermionFieldOuter> &oguesser = (oguesserPt == nullptr) ? oguesserDefault : *oguesserPt;\
-SchurFMatInner simat(imat);                                                                           \
-SchurFMatOuter somat(omat);                                                                           \
+const std::string &schurConv = par().schurConvention;                                                \
+const bool useDiagOne = (schurConv == "DiagOne");                                                    \
+const bool useDiagTwo = (schurConv == "DiagTwo");                                                    \
+if (!schurConv.empty() && !useDiagOne && !useDiagTwo)                                                \
+{                                                                                                     \
+    HADRONS_ERROR(Argument, "unknown schurConvention '" + schurConv                                  \
+                  + "' (expected 'DiagOne', 'DiagTwo', or empty for the compiled-in default)");       \
+}                                                                                                     \
+std::unique_ptr<SchurOperatorBase<FermionFieldInner>> simat;                                         \
+std::unique_ptr<SchurOperatorBase<FermionFieldOuter>> somat;                                         \
+if (useDiagOne)                                                                                       \
+{                                                                                                     \
+    simat.reset(new SchurDiagOneOperator<FMatInner, FermionFieldInner>(imat));                       \
+    somat.reset(new SchurDiagOneOperator<FMatOuter, FermionFieldOuter>(omat));                        \
+}                                                                                                     \
+else if (useDiagTwo)                                                                                  \
+{                                                                                                     \
+    simat.reset(new SchurDiagTwoOperator<FMatInner, FermionFieldInner>(imat));                        \
+    somat.reset(new SchurDiagTwoOperator<FMatOuter, FermionFieldOuter>(omat));                        \
+}                                                                                                     \
+else                                                                                                   \
+{                                                                                                     \
+    simat.reset(new HADRONS_DEFAULT_SCHUR_OP<FMatInner, FermionFieldInner>(imat));                    \
+    somat.reset(new HADRONS_DEFAULT_SCHUR_OP<FMatOuter, FermionFieldOuter>(omat));                    \
+}                                                                                                     \
 MixedPrecisionConjugateGradient<FermionFieldOuter, FermionFieldInner>                                 \
     mpcg(par().residual, par().maxInnerIteration,                                                     \
          par().maxOuterIteration,                                                                     \
          getGrid<FermionFieldInner>(true, Ls),                                                        \
-         simat, somat, ifCGD);						\
+         *simat, *somat, ifCGD);						\
 mpcg.useGuesser(iguesser);                                                                            \
 OperatorFunctionWrapper<FermionFieldOuter> wmpcg(mpcg);                                               \
-HADRONS_DEFAULT_SCHUR_SOLVE<FermionFieldOuter> schurSolver(wmpcg);                                    \
-schurSolver.subtractGuess(subGuess);                                                                  \
-schurSolver(omat, source, sol, oguesser);
+std::unique_ptr<SchurRedBlackBase<FermionFieldOuter>> schurSolver;                                    \
+if (useDiagOne)                                                                                       \
+{                                                                                                     \
+    schurSolver.reset(new SchurRedBlackDiagOneSolve<FermionFieldOuter>(wmpcg));                       \
+}                                                                                                     \
+else if (useDiagTwo)                                                                                  \
+{                                                                                                     \
+    schurSolver.reset(new SchurRedBlackDiagTwoSolve<FermionFieldOuter>(wmpcg));                       \
+}                                                                                                     \
+else                                                                                                   \
+{                                                                                                     \
+    schurSolver.reset(new HADRONS_DEFAULT_SCHUR_SOLVE<FermionFieldOuter>(wmpcg));                     \
+}                                                                                                     \
+schurSolver->subtractGuess(subGuess);                                                                 \
+(*schurSolver)(omat, source, sol, oguesser);
 
 template <typename FImplInner, typename FImplOuter>
 void TMixedPrecisionRBPrecCG<FImplInner, FImplOuter>::setup(void)
 {
     LOG(Message) << "Setting up Schur red-black preconditioned mixed-precision "
-                 << "CG for inner/outer action '" << par().innerAction 
+                 << "CG for inner/outer action '" << par().innerAction
                  << "'/'" << par().outerAction << "', residual "
-                 << par().residual << ", and maximum inner/outer iteration " 
+                 << par().residual << ", and maximum inner/outer iteration "
                  << par().maxInnerIteration << "/" << par().maxOuterIteration
+                 << ", Schur convention '"
+                 << (par().schurConvention.empty() ? "compiled-in default" : par().schurConvention)
+                 << "'"
                  << std::endl;
 
     auto                              Ls          = env().getObjectLs(par().innerAction);

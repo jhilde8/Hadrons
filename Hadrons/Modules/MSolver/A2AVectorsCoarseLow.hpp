@@ -27,6 +27,8 @@
 #ifndef Hadrons_MSolver_A2AVectorsCoarseLow_hpp_
 #define Hadrons_MSolver_A2AVectorsCoarseLow_hpp_
 
+#include <memory>
+
 #include <Hadrons/Global.hpp>
 #include <Hadrons/Module.hpp>
 #include <Hadrons/ModuleFactory.hpp>
@@ -54,7 +56,9 @@ public:
                                     std::string, eigenPack,
                                     std::string, action,
                                     std::string, solver,
-                                    std::string, output);
+                                    std::string, output,
+                                    std::string, schurConvention,
+                                    unsigned int, checkInterval);
 };
 
 template <typename FImpl, typename FImplPack, int nBasis, int binSize>
@@ -83,6 +87,14 @@ public:
 private:
     unsigned int Nl_{0};
     unsigned int Nb_{0};
+    // built once in setup() from 'action' + par().schurConvention when
+    // par().checkInterval > 0; held here (rather than rebuilt per mode) since
+    // neither the action nor the convention change over the module's
+    // lifetime. See MSolver::MixedPrecisionRBPrecCG for why this has to be a
+    // pointer to the shared base class rather than a concrete stack object:
+    // the concrete Schur convention is only known at runtime (from XML), and
+    // a C++ variable's type must be fixed at compile time.
+    std::unique_ptr<SchurOperatorBase<FermionField>> checkOp_;
 };
 
 MODULE_REGISTER_TMP(A2AVectorsCoarseLow200Bin200,
@@ -139,6 +151,33 @@ void TA2AVectorsCoarseLow<FImpl, FImplPack, nBasis, binSize>::setup(void)
         HADRONS_ERROR(Size, "eigenPack and action Ls mismatch");
     }
 
+    if (par().checkInterval > 0)
+    {
+        const std::string &schurConv = par().schurConvention;
+
+        if (schurConv == "DiagOne")
+        {
+            checkOp_.reset(new SchurDiagOneOperator<FMat, FermionField>(action));
+        }
+        else if (schurConv == "DiagTwo")
+        {
+            checkOp_.reset(new SchurDiagTwoOperator<FMat, FermionField>(action));
+        }
+        else if (schurConv.empty())
+        {
+            checkOp_.reset(new HADRONS_DEFAULT_SCHUR_OP<FMat, FermionField>(action));
+        }
+        else
+        {
+            HADRONS_ERROR(Argument, "unknown schurConvention '" + schurConv
+                          + "' (expected 'DiagOne', 'DiagTwo', or empty for the compiled-in default)");
+        }
+        LOG(Message) << "In-program eigenvector check enabled: every "
+                     << par().checkInterval << " low mode(s), Schur convention '"
+                     << (schurConv.empty() ? "compiled-in default" : schurConv)
+                     << "'" << std::endl;
+    }
+
     Nl_ = epack.evecCoarse.size();
     if (Nl_ % binSize != 0)
     {
@@ -191,6 +230,29 @@ void TA2AVectorsCoarseLow<FImpl, FImplPack, nBasis, binSize>::execute(void)
             blockPromote(epack.evecCoarse[il], evecF, epack.evec);
             precisionChange(evecD, evecF);
             stopTimer("Promote");
+
+            if ((par().checkInterval > 0) && (il % par().checkInterval == 0))
+            {
+                startTimer("Eigenvector check");
+
+                const RealD                                          checkResidual = 1e-5;
+                PlainHermOp<FermionField>                            checkHermOp(*checkOp_);
+                ImplicitlyRestartedLanczosHermOpTester<FermionField> checkTester(checkHermOp);
+                RealD                                                evalStored = epack.evalCoarse[il];
+                RealD                                                evalRecon  = evalStored;
+                int conv = checkTester.TestConvergence(il, checkResidual, evecD, evalRecon, 1.0);
+                RealD relDiff = (evalStored != 0.)
+                              ? std::abs(evalRecon - evalStored) / std::abs(evalStored)
+                              : std::abs(evalRecon - evalStored);
+
+                LOG(Message) << "In-program check, low mode " << il
+                             << ": stored eval = " << evalStored
+                             << ", reconstructed eval = " << evalRecon
+                             << ", rel eval diff = " << relDiff
+                             << (conv ? "  [OK]" : "  [FAIL]") << std::endl;
+
+                stopTimer("Eigenvector check");
+            }
 
             startTimer("V low mode");
             LOG(Message) << "V vector i = " << il << " (low mode)" << std::endl;
