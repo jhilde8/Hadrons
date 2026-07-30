@@ -26,7 +26,8 @@
 
 #include <Hadrons/Global.hpp>
 
-#include <cstdlib>
+#include <cerrno>
+#include <filesystem>
 
 using namespace Grid;
 using namespace Hadrons;
@@ -38,7 +39,6 @@ HadronsLogger Hadrons::HadronsLogMessage(1,"Message");
 HadronsLogger Hadrons::HadronsLogIterative(1,"Iterative");
 HadronsLogger Hadrons::HadronsLogDebug(1,"Debug");
 HadronsLogger Hadrons::HadronsLogIRL(1,"IRL");
-mode_t Hadrons::fileDirMode = S_IRWXU|S_IRGRP|S_IXGRP|S_IROTH|S_IXOTH;
 
 void Hadrons::initLogger(void)
 {
@@ -100,55 +100,25 @@ const std::string Hadrons::resultFileExt = "xml";
 #endif
 
 // recursive mkdir /////////////////////////////////////////////////////////////
-void Hadrons::setFileDirMode(const std::string &mode)
-{
-    if (mode.empty())
-    {
-        fileDirMode = S_IRWXU|S_IRGRP|S_IXGRP|S_IROTH|S_IXOTH;
-        return;
-    }
-
-    char *end = nullptr;
-    unsigned long value = std::strtoul(mode.c_str(), &end, 8);
-
-    if ((end == mode.c_str()) or (*end != '\0') or (value > 0777))
-    {
-        HADRONS_ERROR(Definition, "invalid file directory mode '" + mode + "'");
-    }
-
-    fileDirMode = static_cast<mode_t>(value);
-}
-
 int Hadrons::mkdir(const std::string dirName)
 {
-    if (!dirName.empty() and access(dirName.c_str(), R_OK|W_OK|X_OK))
+    if (!dirName.empty())
     {
-        char   tmp[MAX_PATH_LENGTH];
-        char   *p = NULL;
-        size_t len;
+        std::error_code ec;
 
-        snprintf(tmp, sizeof(tmp), "%s", dirName.c_str());
-        len = strlen(tmp);
-        if(tmp[len - 1] == '/')
+        std::filesystem::create_directories(dirName, ec);
+        if (ec)
         {
-            tmp[len - 1] = 0;
+            errno = ec.value();
+            return -1;
         }
-        for(p = tmp + 1; *p; p++)
+        if (access(dirName.c_str(), R_OK|W_OK|X_OK))
         {
-            if(*p == '/')
-            {
-                *p = 0;
-                ::mkdir(tmp, fileDirMode);
-                *p = '/';
-            }
+            return -1;
         }
+    }
 
-        return ::mkdir(tmp, fileDirMode);
-    }
-    else
-    {
-        return 0;
-    }
+    return 0;
 }
 
 std::string Hadrons::basename(const std::string &s)

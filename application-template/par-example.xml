@@ -49,8 +49,6 @@
     <scheduleFile></scheduleFile>
     <!-- save schedule file? (deprecated, use DB) -->
     <saveSchedule>false</saveSchedule>
-    <!-- mode for directories created by Hadrons output helpers (octal) -->
-    <fileDirMode>755</fileDirMode>
     <!-- Resilient IO, reread files after parallel file and try to re-write -->
     <!-- them if checksum test fails. parallelWriteMaxRetry is the number   -->
     <!-- of retry after checksum failure, -1 means no check at all.         -->
