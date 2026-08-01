@@ -278,8 +278,8 @@ void TA2AExtendedMesonField<FImpl>::execute(void)
 	case 3: Grid::A2AExtendedMesonField<FImpl>::LoopContractionType3(tloop, loop, gamma1, gamma2); break;
 	}
 	stopTimer("Loop contraction");
-	LOG(Message) << "tloop contraction done for type " << type << std::endl;
-	LOG(Message) << "Making EMF" << std::endl;
+	//LOG(Message) << "tloop contraction done for type " << type << std::endl;
+	//LOG(Message) << "Making EMF" << std::endl;
 	A2ASpatialSum<SpinColourVector_v> spatial_sum;
 
 	for ( unsigned int j = 0; j < N_j; j += block ){
@@ -294,7 +294,7 @@ void TA2AExtendedMesonField<FImpl>::execute(void)
 	    }
 	  }
 	  stopTimer("LoopRight contraction");
-	  LOG(Message) << "loopRight packed for j-block " << j/block << " type " << type << std::endl;
+	  //LOG(Message) << "loopRight packed for j-block " << j/block << " type " << type << std::endl;
 
 	  startTimer("Allocate");
 	  spatial_sum.AllocateRight(Njj, grid);
@@ -324,10 +324,10 @@ void TA2AExtendedMesonField<FImpl>::execute(void)
 		for(int jj=0;jj< Njj;jj++)
 		  emf(0,0,t,i+ii,j+jj) = emfBlock(t,ii,jj);
 	}
-	LOG(Message) << "EMF made for j-block " << j/block << " type " << type << std::endl;
+	//LOG(Message) << "EMF made for j-block " << j/block << " type " << type << std::endl;
 
 	}// i,j
-	LOG(Message) << "EMF made for type " << type << std::endl;
+	LOG(Message) << "EMF made for type " << type << "; gamma " << g << std::endl;
 
 	std::string ioname = "type" + std::to_string(type) + "_" + nameg1_[ig] + "_" + nameg2_[ig];
 	std::string filename = par().output + "." + std::to_string(vm().getTrajectory()) + "/" + ioname + ".h5";
