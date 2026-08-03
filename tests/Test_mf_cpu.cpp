@@ -1,0 +1,140 @@
+// Workaround for NVCC 11.5 + GCC 11 std::function incompatibility.
+// cudafe mishandles _ArgTypes... in std::function's constrained constructor.
+#ifdef __CUDACC__
+#pragma nv_diag_suppress 20011
+#endif
+
+/*
+ * Test_mf_cpu.cpp
+ *
+ * Hadrons application: runs A2AMesonField (current GPU/A2ASpatialSum path),
+ * A2AFewMesonField (CPU MT production path), and A2AOldMesonField (pre-GPU
+ * A2Autils::MesonField + MomentumProject path) against the same random A2A
+ * vectors in a single run, for a direct CPU timing and correctness
+ * comparison.
+ *
+ * Output files: mf_gpu_out.<traj>/, fmf_cpu_out.<traj>/, mf_old_out.<traj>/
+ * Compare with h5diff, e.g.:
+ *   h5diff mf_gpu_out.0/Gamma5_0_0_0.h5 fmf_cpu_out.0/Gamma5_0_0_0.h5 \
+ *          /Gamma5_0_0_0 /Gamma5_0_0_0
+ *
+ * Usage:
+ *   mpirun -n 1 ./Test_mf_cpu --grid 4.4.4.8 --mpi 1.1.1.1 --seed "1 2 3 4"
+ */
+
+#define HADRONS_A2AM_IO_TYPE ComplexD
+#include <Hadrons/Application.hpp>
+#include <Hadrons/Modules.hpp>
+#include "TestMFShells.hpp"
+
+using namespace Grid;
+using namespace Hadrons;
+
+int main(int argc, char *argv[])
+{
+    Grid_init(&argc, &argv);
+    HadronsLogError.Active(GridLogError.isActive());
+    HadronsLogWarning.Active(GridLogWarning.isActive());
+    HadronsLogMessage.Active(GridLogMessage.isActive());
+    HadronsLogIterative.Active(GridLogIterative.isActive());
+    HadronsLogDebug.Active(GridLogDebug.isActive());
+
+    Application application;
+
+    // ------------------------------------------------------------------
+    // Global parameters.
+    // ------------------------------------------------------------------
+    Application::GlobalPar globalPar;
+    globalPar.trajCounter.start    = 0;
+    globalPar.trajCounter.end      = 1;
+    globalPar.trajCounter.step     = 1;
+    globalPar.runId                = "mf_regression";
+    globalPar.genetic.maxGen       = 1000;
+    globalPar.genetic.maxCstGen    = 200;
+    globalPar.genetic.popSize      = 20;
+    globalPar.genetic.mutationRate = .1;
+    application.setPar(globalPar);
+
+    // ------------------------------------------------------------------
+    // Parse optional CLI arguments.
+    // ------------------------------------------------------------------
+    int         N_i        = 16;
+    int         N_j        = 16;
+    int         block      = 16;
+    int         cacheBlock = 8;
+    int         momShell   = 0;
+    std::string gammas     = "Gamma5 Identity";
+    if (GridCmdOptionExists(argv, argv + argc, "--Ni"))
+        N_i        = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--Ni"));
+    if (GridCmdOptionExists(argv, argv + argc, "--Nj"))
+        N_j        = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--Nj"));
+    if (GridCmdOptionExists(argv, argv + argc, "--block"))
+        block      = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--block"));
+    if (GridCmdOptionExists(argv, argv + argc, "--cacheBlock"))
+        cacheBlock = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--cacheBlock"));
+    if (GridCmdOptionExists(argv, argv + argc, "--mom"))
+        momShell   = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--mom"));
+    if (GridCmdOptionExists(argv, argv + argc, "--gammas"))
+        gammas     = GridCmdOptionPayload(argv, argv + argc, "--gammas");
+
+    std::vector<std::string> momenta = momentumShells(momShell);
+
+    // ------------------------------------------------------------------
+    // Random A2A vectors -- generated once, referenced by name from all
+    // three modules below, so all three contract literally identical
+    // input data in this one run.
+    // ------------------------------------------------------------------
+    MUtilities::RandomVectorsPar rvLeft, rvRight;
+    rvLeft.size  = N_i; rvLeft.Ls  = 1; rvLeft.output  = ""; rvLeft.multiFile  = false;
+    rvRight.size = N_j; rvRight.Ls = 1; rvRight.output = ""; rvRight.multiFile = false;
+
+    application.createModule<MUtilities::RandomFermions>("left",  rvLeft);
+    application.createModule<MUtilities::RandomFermions>("right", rvRight);
+
+    // ------------------------------------------------------------------
+    // A2AMesonField -- current GPU path (A2ASpatialSum / batched GEMM)
+    // ------------------------------------------------------------------
+    MContraction::A2AMesonFieldPar mfPar;
+    mfPar.block  = block;
+    mfPar.left   = "left";
+    mfPar.right  = "right";
+    mfPar.output = "mf_gpu_out";
+    mfPar.gammas = gammas;
+    mfPar.mom    = momenta;
+
+    application.createModule<MContraction::A2AMesonField>("mf_gpu", mfPar);
+
+    // ------------------------------------------------------------------
+    // A2AFewMesonField -- CPU MT production path (contract-once + mac)
+    // ------------------------------------------------------------------
+    MContraction::A2AFewMesonFieldPar fmfPar;
+    fmfPar.cacheBlock = cacheBlock;
+    fmfPar.block      = block;
+    fmfPar.left       = "left";
+    fmfPar.right      = "right";
+    fmfPar.output     = "fmf_cpu_out";
+    fmfPar.gammas     = gammas;
+    fmfPar.mom        = momenta;
+
+    application.createModule<MContraction::A2AFewMesonField>("fmf_cpu", fmfPar);
+
+    // ------------------------------------------------------------------
+    // A2AOldMesonField -- pre-GPU A2Autils::MesonField + MomentumProject
+    // path, pulled out of MContraction/deprecated/ for this comparison.
+    // ------------------------------------------------------------------
+    MContraction::A2AOldMesonFieldPar omfPar;
+    omfPar.cacheBlock = cacheBlock;
+    omfPar.block      = block;
+    omfPar.left       = "left";
+    omfPar.right      = "right";
+    omfPar.output     = "mf_old_out";
+    omfPar.gammas     = gammas;
+    omfPar.mom        = momenta;
+
+    application.createModule<MContraction::A2AOldMesonField>("mf_old", omfPar);
+
+    application.run();
+
+    Grid_finalize();
+    return EXIT_SUCCESS;
+}

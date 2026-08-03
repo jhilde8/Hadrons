@@ -231,6 +231,7 @@ void TA2AFewMesonField<FImpl>::execute(void)
     LOG(Message) << "Momentum phases set" << std::endl;
   }
 
+  startTimer("Left Allocation");
   std::vector<SpinColourVector_v> zeroVec(rd*grid->_ostride[orthogdim],Zero());
   std::vector<std::vector<SpinColourVector_v> > leftv(N_i,zeroVec);
   for ( unsigned int i = 0; i < N_i; i++ ){
@@ -244,12 +245,14 @@ void TA2AFewMesonField<FImpl>::execute(void)
       }
     });
   }
+  stopTimer("Left Allocation");
   LOG(Message) << "Memory for left vectors allocated" << std::endl;
 
   for (auto &gamma: gamma_){
     LOG(Message) << "Starting calculation with: " << gamma << std::endl;
     for ( unsigned int j = 0; j < N_j; j += block ){
       int Njj = MIN(N_j-j,block);
+      startTimer("View Right");
       std::vector<std::vector<SpinColourVector_v> > rightv(Njj,zeroVec);
       for ( unsigned int jj = 0; jj < Njj; jj++ ){
 	autoView(tmp,right[j+jj],CpuRead);
@@ -262,6 +265,7 @@ void TA2AFewMesonField<FImpl>::execute(void)
 	  }
 	});
       }
+      stopTimer("View Right");
 
       for ( unsigned int i = 0; i < N_i; i += block ){
 	int Nii = MIN(N_i-i,block);
@@ -281,6 +285,7 @@ void TA2AFewMesonField<FImpl>::execute(void)
 	  });
 	  
 	  // potentially wasting cores here if local time extent too small
+	  startTimer("Spin-Color Contract + Momentum Project");
 	  thread_for(r,rd,{
 	    int so=r*grid->_ostride[orthogdim]; // base offset for start of plane
 	    int base=nmom*Niii*Njjj*r;
@@ -313,7 +318,9 @@ void TA2AFewMesonField<FImpl>::execute(void)
 	      }
 	    }
 	  });
+	  stopTimer("Spin-Color Contract + Momentum Project");
 
+	  startTimer("SIMD Lane Extract");
 	  Vector<Scalar_s > lsSum(MFlvol);
 	  thread_for(r,MFlvol,{
 	    lsSum[r]=scalar_type(0.0);
@@ -334,7 +341,9 @@ void TA2AFewMesonField<FImpl>::execute(void)
 	      }
 	    }
 	  });
+	  stopTimer("SIMD Lane Extract");
 
+	  startTimer("Rank-Local Time Assemble");
 	  int pd = grid->_processors[orthogdim];
 	  int pc = grid->_processor_coor[orthogdim];
 	  thread_for_collapse(2,lt,ld,{
@@ -357,9 +366,14 @@ void TA2AFewMesonField<FImpl>::execute(void)
 	      }
 	    }
 	  });
+	  stopTimer("Rank-Local Time Assemble");
+
+	  startTimer("GlobalSumVector");
 	  grid->GlobalSumVector(&mfCache(0,0,0,0,0),nmom*nt*Niii*Njjj);
 	  //grid->GlobalSumVector(mfCache.data(),nmom*nt*Niii*Njjj);
+	  stopTimer("GlobalSumVector");
 
+	  startTimer("Fill Output Tensor");
 	  thread_for_collapse( 5,e,nmom,{
             for(int s =0;s< 1;s++)
             for(int t =0;t< nt;t++)
@@ -369,6 +383,7 @@ void TA2AFewMesonField<FImpl>::execute(void)
 	      mf(e,s,t,ii+iii,jj+jjj) = mfCache(e,s,t,iii,jjj);
 	    }
           });
+	  stopTimer("Fill Output Tensor");
 	}
 
 	{
@@ -376,6 +391,7 @@ void TA2AFewMesonField<FImpl>::execute(void)
 	  makeFileDir(filename, grid);
 	}
 #ifdef HADRONS_A2AM_PARALLEL_IO
+	startTimer("IO");
 	grid->Barrier();
         unsigned int myRank = grid->ThisRank(), nRank  = grid->RankCount();
         for(int f = myRank; f < nmom; f += nRank){
@@ -399,6 +415,7 @@ void TA2AFewMesonField<FImpl>::execute(void)
 	  io.saveBlock(mf, f, 0, i, j);
 	}
 	grid->Barrier();
+	stopTimer("IO");
 #endif
       }// i
     }// j
