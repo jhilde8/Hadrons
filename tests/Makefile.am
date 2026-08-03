@@ -23,6 +23,7 @@ EXTRA_PROGRAMS = \
   Test_emf_gpu              \
   Test_cmof_gpu             \
   Test_mf_gpu               \
+  Test_mf_cpu               \
   Test_savebinned_gpu       \
   Test_a2a_evalfpe_gpu      \
   Test_coarsedeflation_gpu
@@ -93,6 +94,9 @@ Test_cmof_gpu_LDADD=-lHadrons -lGrid
 
 Test_mf_gpu_SOURCES=Test_mf_gpu.cpp
 Test_mf_gpu_LDADD=-lHadrons -lGrid
+
+Test_mf_cpu_SOURCES=Test_mf_cpu.cpp
+Test_mf_cpu_LDADD=-lHadrons -lGrid
 
 Test_savebinned_gpu_SOURCES=Test_savebinned_gpu.cpp
 Test_savebinned_gpu_LDADD=-lHadrons -lGrid
