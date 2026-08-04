@@ -51,6 +51,7 @@ class A2ANewMesonFieldPar: Serializable
 public:
     GRID_SERIALIZABLE_CLASS_MEMBERS(A2ANewMesonFieldPar,
                                     int,                     block,
+                                    int,                     cacheBlock,
                                     std::string,             left,
                                     std::string,             right,
                                     std::string,             output,
@@ -174,6 +175,7 @@ void TA2ANewMesonField<FImpl>::execute(void)
     int ngamma = gamma_.size();
     int nmom   = mom_.size();
     int block  = par().block;
+    int cacheBlock = par().cacheBlock;
 
     LOG(Message) << "Computing all-to-all meson fields" << std::endl;
     LOG(Message) << "Left: '" << par().left << "' Right: '" << par().right << "'" << std::endl;
@@ -338,7 +340,8 @@ void TA2ANewMesonField<FImpl>::execute(void)
                 stopTimer("Pack vectors");
 
                 startTimer("Sum");
-                spatial_sum_.SumAllMomenta(all_results, &sumTimings);
+                // spatial_sum_.SumAllMomenta(all_results, &sumTimings);
+                spatial_sum_.SumAllMomentaCacheBlocked(all_results, cacheBlock, &sumTimings);
                 stopTimer("Sum");
 
                 // Parallel IO: each rank writes its assigned momenta simultaneously.

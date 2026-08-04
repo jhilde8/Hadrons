@@ -95,7 +95,8 @@ int main(int argc, char *argv[])
     // A2AMesonField -- current GPU path (A2ASpatialSum / batched GEMM)
     // ------------------------------------------------------------------
     MContraction::A2AMesonFieldPar mfPar;
-    mfPar.block  = block;
+    mfPar.block      = block;
+    mfPar.cacheBlock = cacheBlock;
     mfPar.left   = "left";
     mfPar.right  = "right";
     mfPar.output = "mf_gpu_out";
@@ -123,7 +124,8 @@ int main(int argc, char *argv[])
     // GEMM (SumAllMomenta) instead of redoing Sum() once per momentum.
     // ------------------------------------------------------------------
     MContraction::A2ANewMesonFieldPar nmfPar;
-    nmfPar.block  = block;
+    nmfPar.block      = block;
+    nmfPar.cacheBlock = cacheBlock;
     nmfPar.left   = "left";
     nmfPar.right  = "right";
     nmfPar.output = "mf_new_out";

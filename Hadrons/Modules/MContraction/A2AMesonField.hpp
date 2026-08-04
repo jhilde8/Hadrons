@@ -48,6 +48,7 @@ class A2AMesonFieldPar: Serializable
 public:
     GRID_SERIALIZABLE_CLASS_MEMBERS(A2AMesonFieldPar,
                                     int,                     block,
+                                    int,                     cacheBlock,
                                     std::string,             left,
                                     std::string,             right,
                                     std::string,             output,
@@ -171,6 +172,7 @@ void TA2AMesonField<FImpl>::execute(void)
     int ngamma = gamma_.size();
     int nmom   = mom_.size();
     int block  = par().block;
+    int cacheBlock = par().cacheBlock;
 
     LOG(Message) << "Computing all-to-all meson fields" << std::endl;
     LOG(Message) << "Left: '" << par().left << "' Right: '" << par().right << "'" << std::endl;
@@ -346,7 +348,8 @@ void TA2AMesonField<FImpl>::execute(void)
                 for (int m = 0; m < nmom; m++)
                 {
                     startTimer("Sum");
-                    spatial_sum_.Sum(all_results[m], &sumTimings);
+                    // spatial_sum_.Sum(all_results[m], &sumTimings);
+                    spatial_sum_.SumCacheBlocked(all_results[m], cacheBlock, &sumTimings);
                     stopTimer("Sum");
 
                     startTimer("Phase");
