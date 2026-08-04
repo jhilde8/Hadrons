@@ -242,14 +242,16 @@ void TA2ANewMesonField<FImpl>::execute(void)
     std::vector<FermionField> gammaRight(block, grid);
 
     // Pre-allocated result buffer: one tensor covering all momenta at once,
-    // reused across all blocks. SumAllMomenta(CacheBlocked) fills only
+    // reused across all blocks. SumAllMomentaCacheBlocked fills only
     // [0..Nii-1][0..Njj-1]; IO fill reads with explicit Nii/Njj bounds.
-    // Dimension order (nt, N_i, nmom, N_j) -- nmom before N_j, not after --
-    // so RowMajor's fastest dimension is N_j: matches mf (A2AMatrixSet,
-    // RowMajor) for the IO fill below, and matches A2ASpatialSum's own
-    // internal transpose layout so that step stays a contiguous copy
-    // instead of a stride-nmom scatter (see A2ASpatialSum.h).
-    Eigen::Tensor<ComplexD, 4, Eigen::RowMajor> all_results(nt, block, nmom, block);
+    // Dimension order (nt, N_i, N_j, nmom) -- nmom last -- matches what
+    // SumAllMomentaCacheBlocked itself expects (see A2ASpatialSum.h; it
+    // stages through its own tile buffer and wants the opposite order from
+    // SumAllMomenta). RowMajor makes nmom the fastest dimension, so this is
+    // NOT j-fastest for the IO fill below -- that fill is a small,
+    // already-elementwise copy either way (see the block/cacheBlock IO
+    // discussion), so it isn't worth reordering just for that.
+    Eigen::Tensor<ComplexD, 4, Eigen::RowMajor> all_results(nt, block, block, nmom);
 
     // Every rank creates the output directory itself, rather than relying
     // on makeFileDir's boss-rank-only mkdir. File writes below are spread
@@ -373,7 +375,7 @@ void TA2ANewMesonField<FImpl>::execute(void)
                     thread_for_collapse(3, t, nt, {
                         for (int ii = 0; ii < Nii; ii++)
                         for (int jj = 0; jj < Njj; jj++)
-                            mf(0, 0, (int)t, ii, jj) = all_results((int)t, ii, m, jj);
+                            mf(0, 0, (int)t, ii, jj) = all_results((int)t, ii, jj, m);
                     });
                     dt += usecond();
                     fillTime += dt;
