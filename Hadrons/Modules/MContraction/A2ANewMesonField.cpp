@@ -1,9 +1,10 @@
 /*
- * A2AOldMesonField.cpp, part of Hadrons (https://github.com/aportelli/Hadrons)
+ * A2ANewMesonField.cpp, part of Hadrons (https://github.com/aportelli/Hadrons)
  *
- * Copyright (C) 2015 - 2023
+ * Copyright (C) 2015 - 2024
  *
  * Author: Antonin Portelli <antonin.portelli@me.com>
+ * Author: Jonas Hildebrand <jonas.hildebrand@uconn.edu>
  *
  * Hadrons is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -23,10 +24,10 @@
  */
 
 /*  END LEGAL */
-#include <Hadrons/Modules/MContraction/A2AOldMesonField.hpp>
+#include <Hadrons/Modules/MContraction/A2ANewMesonField.hpp>
 
 using namespace Grid;
 using namespace Hadrons;
 using namespace MContraction;
 
-template class HADRONS_NAMESPACE::MContraction::TA2AOldMesonField<FIMPL>;
+template class HADRONS_NAMESPACE::MContraction::TA2ANewMesonField<FIMPL>;
