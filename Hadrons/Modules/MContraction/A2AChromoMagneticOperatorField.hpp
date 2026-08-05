@@ -31,6 +31,7 @@ class A2AChromoMagneticOperatorFieldPar: Serializable
 public:
     GRID_SERIALIZABLE_CLASS_MEMBERS(A2AChromoMagneticOperatorFieldPar,
                                     int,         block,
+                                    int,         cacheBlock,
                                     std::string, parities,
                                     std::string, left,
                                     std::string, right,
@@ -127,6 +128,7 @@ void TA2AChromoMagneticOperatorField<GImpl,FImpl>::execute(void)
   int N_i        = left.size();
   int N_j        = right.size();
   int block = par().block;
+  int cacheBlock = par().cacheBlock;
   Vector<HADRONS_A2AM_IO_TYPE> mBuf; mBuf.resize(nt*N_i*N_j);
 
   LOG(Message) << "Left: '"        << par().left  << "' Right: '"
@@ -195,7 +197,7 @@ void TA2AChromoMagneticOperatorField<GImpl,FImpl>::execute(void)
           cmfBlock.setZero();
           startTimer("Sum");
           // spatial_sum.Sum(cmfBlock, &sumTimings);
-          spatial_sum.SumCacheBlocked(cmfBlock, &sumTimings);
+          spatial_sum.SumCacheBlocked(cmfBlock, cacheBlock, &sumTimings);
           stopTimer("Sum");
 
           for (int t  = 0; t  < nt;  t++)

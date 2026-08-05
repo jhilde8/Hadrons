@@ -37,6 +37,7 @@ class A2AExtendedMesonFieldPar: Serializable
 public:
     GRID_SERIALIZABLE_CLASS_MEMBERS(A2AExtendedMesonFieldPar,
                                     int, block,
+                                    int, cacheBlock,
 				    std::string, types,
                                     std::string, left,
                                     std::string, right,
@@ -228,6 +229,7 @@ void TA2AExtendedMesonField<FImpl>::execute(void)
     int N_i        = left.size();
     int N_j        = right.size();
     int block = par().block;
+    int cacheBlock = par().cacheBlock;
     Vector<HADRONS_A2AM_IO_TYPE> mBuf; mBuf.resize(nt*N_i*N_j);
 
     LOG(Message) << "Left: '" << par().left << "' Right: '"
@@ -317,7 +319,7 @@ void TA2AExtendedMesonField<FImpl>::execute(void)
 	    emfBlock.setZero();
 	    startTimer("Sum");
 	    // spatial_sum.Sum(emfBlock, &sumTimings);
-	    spatial_sum.SumCacheBlocked(emfBlock, &sumTimings);
+	    spatial_sum.SumCacheBlocked(emfBlock, cacheBlock, &sumTimings);
 	    stopTimer("Sum");
 
 	    for(int t =0;t< nt;t++)
