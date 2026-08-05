@@ -316,7 +316,8 @@ void TA2AExtendedMesonField<FImpl>::execute(void)
 	    Eigen::Tensor<ComplexD,3> emfBlock(nt, Nii, Njj);
 	    emfBlock.setZero();
 	    startTimer("Sum");
-	    spatial_sum.Sum(emfBlock, &sumTimings);
+	    // spatial_sum.Sum(emfBlock, &sumTimings);
+	    spatial_sum.SumCacheBlocked(emfBlock, &sumTimings);
 	    stopTimer("Sum");
 
 	    for(int t =0;t< nt;t++)
@@ -327,7 +328,7 @@ void TA2AExtendedMesonField<FImpl>::execute(void)
 	//LOG(Message) << "EMF made for j-block " << j/block << " type " << type << std::endl;
 
 	}// i,j
-	LOG(Message) << "EMF made for type " << type << "; gamma " << g << std::endl;
+	LOG(Message) << "EMF made for type " << type << "; gamma1: " << nameg1_[ig] << "; gamma2: " << nameg2_[ig] << std::endl;
 
 	std::string ioname = "type" + std::to_string(type) + "_" + nameg1_[ig] + "_" + nameg2_[ig];
 	std::string filename = par().output + "." + std::to_string(vm().getTrajectory()) + "/" + ioname + ".h5";

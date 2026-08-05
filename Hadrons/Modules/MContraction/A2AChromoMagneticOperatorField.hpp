@@ -194,7 +194,8 @@ void TA2AChromoMagneticOperatorField<GImpl,FImpl>::execute(void)
           Eigen::Tensor<ComplexD,3> cmfBlock(nt, Nii, Njj);
           cmfBlock.setZero();
           startTimer("Sum");
-          spatial_sum.Sum(cmfBlock, &sumTimings);
+          // spatial_sum.Sum(cmfBlock, &sumTimings);
+          spatial_sum.SumCacheBlocked(cmfBlock, &sumTimings);
           stopTimer("Sum");
 
           for (int t  = 0; t  < nt;  t++)
@@ -202,12 +203,14 @@ void TA2AChromoMagneticOperatorField<GImpl,FImpl>::execute(void)
           for (int jj = 0; jj < Njj; jj++)
             cmf(0,0,t,i+ii,j+jj) = cmfBlock(t,ii,jj);
 
-          LOG(Message) << "CMF made for i-block " << i/block
-                       << " j-block "             << j/block
-                       << " ifOrthog="            << ifOrthog
-                       << " parity="              << parity << std::endl;
+          //LOG(Message) << "CMF made for i-block " << i/block
+          //             << " j-block "             << j/block
+          //             << " ifOrthog="            << ifOrthog
+          //             << " parity="              << parity << std::endl;
+
         }// i
       }// j
+
       LOG(Message) << "CMF made for ifOrthog=" << ifOrthog << " parity=" << parity << std::endl;
 
       std::string ioname = "parity" + std::to_string(parity);
