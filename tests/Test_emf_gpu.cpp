@@ -67,6 +67,7 @@ int main(int argc, char *argv[])
     int N_j   = 8;
     int Nloop = 4;
     int block = 8;
+    int cacheBlock = 8;
     if (GridCmdOptionExists(argv, argv + argc, "--Ni"))
         N_i = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--Ni"));
     if (GridCmdOptionExists(argv, argv + argc, "--Nj"))
@@ -75,6 +76,8 @@ int main(int argc, char *argv[])
         Nloop = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--Nloop"));
     if (GridCmdOptionExists(argv, argv + argc, "--block"))
         block = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--block"));
+    if (GridCmdOptionExists(argv, argv + argc, "--cacheBlock"))
+        cacheBlock = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--cacheBlock"));
 
     // ------------------------------------------------------------------
     // Random A2A vectors
@@ -95,6 +98,7 @@ int main(int argc, char *argv[])
     // ------------------------------------------------------------------
     MContraction::A2AExtendedMesonFieldPar emfPar;
     emfPar.block      = block;
+    emfPar.cacheBlock = cacheBlock;
     emfPar.types      = "0 1 2 3";
     emfPar.left       = "left";
     emfPar.right      = "right";
