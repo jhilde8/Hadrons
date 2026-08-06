@@ -69,14 +69,17 @@ int main(int argc, char *argv[])
     int         N_i      = 16;
     int         N_j      = 16;
     int         block    = 16;
+    int 	cacheBlock = 16;
     int         momShell = 0;
-    std::string gammas   = "Gamma5 Identity";
+    std::string gammas   = "Gamma5";
     if (GridCmdOptionExists(argv, argv + argc, "--Ni"))
         N_i      = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--Ni"));
     if (GridCmdOptionExists(argv, argv + argc, "--Nj"))
         N_j      = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--Nj"));
     if (GridCmdOptionExists(argv, argv + argc, "--block"))
         block    = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--block"));
+    if (GridCmdOptionExists(argv, argv + argc, "--cacheBlock"))
+        cacheBlock    = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--cacheBlock"));
     if (GridCmdOptionExists(argv, argv + argc, "--mom"))
         momShell = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--mom"));
     if (GridCmdOptionExists(argv, argv + argc, "--gammas"))
@@ -98,15 +101,16 @@ int main(int argc, char *argv[])
     // ------------------------------------------------------------------
     // A2AMesonField - GPU path (no A2AMatrixBlockComputation)
     // ------------------------------------------------------------------
-    MContraction::A2AMesonFieldPar mfPar;
+    MContraction::A2ANewMesonFieldPar mfPar;
     mfPar.block  = block;
+    mfPar.cacheBlock = cacheBlock; 
     mfPar.left   = "left";
     mfPar.right  = "right";
     mfPar.output = "mf_gpu_out";
     mfPar.gammas = gammas;
     mfPar.mom    = momenta;
 
-    application.createModule<MContraction::A2AMesonField>("mf_gpu", mfPar);
+    application.createModule<MContraction::A2ANewMesonField>("nmf_gpu", mfPar);
 
     application.run();
 
