@@ -207,6 +207,23 @@ void TA2AMesonField<FImpl>::execute(void)
         for (int j = nmom - 1; j >= 1; --j)
             ph[j] = ph[j] * adj(ph[j - 1]); // apply the phase difference
         ph.push_back(adj(last_abs_ph)); // restore transition: undo final accumulated phase
+
+        // -- Temporary self-check for the MF/NMF momentum-independence bug hunt --
+        // Every entry of ph[] (absolute phase, each delta-transformed step,
+        // and the restore transition) must be a valid unit-modulus phase
+        // everywhere, so norm2(ph[j]) must equal the total global site count
+        // exactly. Remove once the bug is resolved.
+        {
+            RealD expected = (RealD)ph[0].Grid()->gSites();
+            for (int j = 0; j < (int)ph.size(); j++)
+            {
+                RealD n2 = norm2(ph[j]);
+                LOG(Message) << "ph[" << j << "] self-check: norm2=" << n2
+                             << " expected=" << expected
+                             << " diff=" << (n2 - expected) << std::endl;
+            }
+        }
+
         hasPhase_ = true;
         stopTimer("Momentum phases");
     }
