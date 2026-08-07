@@ -21,7 +21,9 @@ EXTRA_PROGRAMS = \
   Test_stoch_distil         \
   Test_xi_to_sigma          \
   Test_emf_gpu              \
+  Test_emf_cpu              \
   Test_cmof_gpu             \
+  Test_cmof_cpu             \
   Test_mf_gpu               \
   Test_mf_cpu               \
   Test_savebinned_gpu       \
@@ -89,8 +91,14 @@ Test_xi_to_sigma_LDADD=-lHadrons -lGrid
 Test_emf_gpu_SOURCES=Test_emf_gpu.cpp
 Test_emf_gpu_LDADD=-lHadrons -lGrid
 
+Test_emf_cpu_SOURCES=Test_emf_cpu.cpp
+Test_emf_cpu_LDADD=-lHadrons -lGrid
+
 Test_cmof_gpu_SOURCES=Test_cmof_gpu.cpp
 Test_cmof_gpu_LDADD=-lHadrons -lGrid
+
+Test_cmof_cpu_SOURCES=Test_cmof_cpu.cpp
+Test_cmof_cpu_LDADD=-lHadrons -lGrid
 
 Test_mf_gpu_SOURCES=Test_mf_gpu.cpp
 Test_mf_gpu_LDADD=-lHadrons -lGrid
