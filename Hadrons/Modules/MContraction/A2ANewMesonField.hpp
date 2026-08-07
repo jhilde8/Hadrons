@@ -303,7 +303,7 @@ void TA2ANewMesonField<FImpl>::execute(void)
     grid->Barrier();
 
     // Pre-pack flat phase arrays, one absolute phase per momentum -- no
-    // difference-encoding needed here since ApplyPhasesRight reads a single
+    // difference-encoding needed here since ApplyAllPhaseRight reads a single
     // unphased base pack and writes all nmom copies directly, rather than
     // stepping an in-place buffer through consecutive momenta.
     startTimer("Pack phases");
@@ -319,7 +319,7 @@ void TA2ANewMesonField<FImpl>::execute(void)
     stopTimer("Allocate");
 
     // Loop order (jb, g, ib):
-    //   AllocateRight + PackRight + ApplyPhasesRight - once per (jb, g)
+    //   AllocateRight + PackRight + ApplyAllPhaseRight - once per (jb, g)
     //   AllocateLeft  + PackLeftConj + SumAllMomenta  - once per (jb, g, ib)
 
     double                fillTime     = 0.;
@@ -346,7 +346,7 @@ void TA2ANewMesonField<FImpl>::execute(void)
             stopTimer("Pack vectors");
 
             startTimer("Phase");
-            spatial_sum_.ApplyPhasesRight(ph_flat);
+            spatial_sum_.ApplyAllPhaseRight(ph_flat);
             stopTimer("Phase");
 
             for (int ib = 0; ib < N_i; ib += block)
