@@ -215,6 +215,16 @@ void TA2AVectorsCoarseLow<FImpl, FImplPack, nBasis, binSize>::execute(void)
     envGetTmp(Lattice<SiteSpinorSet>, vBin);
     envGetTmp(Lattice<SiteSpinorSet>, wBin);
 
+    // blockPromote() never sets its output's checkerboard, so evecF would
+    // otherwise keep its default (Even) even though it holds the Odd-site
+    // data promoted from epack.evec (Odd, see EigenPack.hpp). precisionChange
+    // then propagates that wrong tag onto evecD, which corrupts the
+    // in-program eigenvector check below (a Schur operator relies on the
+    // field's own Checkerboard() for its hopping-term bookkeeping). Does not
+    // affect makeLowModeV/W: those force src_o_.Checkerboard() = Odd
+    // themselves before use.
+    evecF.Checkerboard() = epack.evec[0].Checkerboard();
+
     LOG(Message) << "Streaming low-mode all-to-all vectors, decompressing/"
                  << "promoting on the fly from compressed coarse eigenpack '"
                  << par().eigenPack << "' (" << Nl_ << " low modes, " << Nb_
