@@ -27,6 +27,8 @@
 #ifndef Hadrons_MSolver_A2AVectorsCoarse_hpp_
 #define Hadrons_MSolver_A2AVectorsCoarse_hpp_
 
+#include <memory>
+
 #include <Hadrons/Global.hpp>
 #include <Hadrons/Module.hpp>
 #include <Hadrons/ModuleFactory.hpp>
@@ -55,6 +57,7 @@ public:
                                   std::string, eigenPack,
                                   std::string, solver,
                                   std::string, output,
+                                  std::string, schurConvention,
                                   bool,        multiFile);
 };
 
@@ -65,7 +68,6 @@ public:
     FERM_TYPE_ALIASES(FImpl,);
     FERM_TYPE_ALIASES(FImplPack, Pack);
     SOLVER_TYPE_ALIASES(FImpl,);
-    typedef HADRONS_DEFAULT_SCHUR_A2A<FImpl>          A2A;
     typedef CoarseFermionEigenPack<FImplPack, nBasis> EPack;
 public:
     // constructor
@@ -81,6 +83,11 @@ public:
     virtual void execute(void);
 private:
     unsigned int Nl_{0};
+    // Chosen from par().schurConvention at runtime in setup() -- see
+    // MSolver::MixedPrecisionRBPrecCG's SOLVER_BODY macro and
+    // Hadrons::A2AVectorsSchurBase for why this has to be a pointer to the
+    // shared base class rather than a concrete stack object.
+    std::unique_ptr<A2AVectorsSchurBase<FImpl>> a2a_;
 };
 
 MODULE_REGISTER_TMP(A2AVectorsCoarse200,
@@ -135,6 +142,29 @@ void TA2AVectorsCoarse<FImpl, FImplPack, nBasis>::setup(void)
         HADRONS_ERROR(Size, "eigenPack and action Ls mismatch");
     }
 
+    const std::string &schurConv = par().schurConvention;
+
+    if (schurConv == "DiagOne")
+    {
+        a2a_.reset(new A2AVectorsSchurDiagOne<FImpl>(action, solver));
+    }
+    else if (schurConv == "DiagTwo")
+    {
+        a2a_.reset(new A2AVectorsSchurDiagTwo<FImpl>(action, solver));
+    }
+    else if (schurConv.empty())
+    {
+        a2a_.reset(new HADRONS_DEFAULT_SCHUR_A2A<FImpl>(action, solver));
+    }
+    else
+    {
+        HADRONS_ERROR(Argument, "unknown schurConvention '" + schurConv
+                      + "' (expected 'DiagOne', 'DiagTwo', or empty for the compiled-in default)");
+    }
+    LOG(Message) << "A2A vector construction using Schur convention '"
+                 << (schurConv.empty() ? "compiled-in default" : schurConv)
+                 << "'" << std::endl;
+
     Nl_ = epack.evecCoarse.size();
 
     envCreate(std::vector<FermionField>, getName() + "_v", 1,
@@ -146,7 +176,6 @@ void TA2AVectorsCoarse<FImpl, FImplPack, nBasis>::setup(void)
     {
         envTmpLat(FermionField, "f5", Ls);
     }
-    envTmp(A2A, "a2a", 1, action, solver);
     envTmp(FermionFieldPack, "evecF", Ls, epack.evec[0].Grid());
     envTmp(FermionField, "evecD", Ls, action.FermionRedBlackGrid());
 }
@@ -161,7 +190,6 @@ void TA2AVectorsCoarse<FImpl, FImplPack, nBasis>::execute(void)
     auto        &w      = envGet(std::vector<FermionField>, getName() + "_w");
     int         Ls      = env().getObjectLs(par().action);
 
-    envGetTmp(A2A, a2a);
     envGetTmp(FermionFieldPack, evecF);
     envGetTmp(FermionField, evecD);
 
@@ -183,24 +211,24 @@ void TA2AVectorsCoarse<FImpl, FImplPack, nBasis>::execute(void)
         precisionChange(evecD, evecF);
         if (Ls == 1)
         {
-            a2a.makeLowModeV(v[il], evecD, epack.evalCoarse[il]);
+            a2a_->makeLowModeV(v[il], evecD, epack.evalCoarse[il]);
         }
         else
         {
             envGetTmp(FermionField, f5);
-            a2a.makeLowModeV5D(v[il], f5, evecD, epack.evalCoarse[il]);
+            a2a_->makeLowModeV5D(v[il], f5, evecD, epack.evalCoarse[il]);
         }
         stopTimer("V low mode");
         startTimer("W low mode");
         LOG(Message) << "W vector i = " << il << " (low mode)" << std::endl;
         if (Ls == 1)
         {
-            a2a.makeLowModeW(w[il], evecD, epack.evalCoarse[il]);
+            a2a_->makeLowModeW(w[il], evecD, epack.evalCoarse[il]);
         }
         else
         {
             envGetTmp(FermionField, f5);
-            a2a.makeLowModeW5D(w[il], f5, evecD, epack.evalCoarse[il]);
+            a2a_->makeLowModeW5D(w[il], f5, evecD, epack.evalCoarse[il]);
         }
         stopTimer("W low mode");
     }
@@ -214,12 +242,12 @@ void TA2AVectorsCoarse<FImpl, FImplPack, nBasis>::execute(void)
                      << "stochastic mode)" << std::endl;
         if (Ls == 1)
         {
-            a2a.makeHighModeV(v[Nl_ + ih], noise.getFerm(ih));
+            a2a_->makeHighModeV(v[Nl_ + ih], noise.getFerm(ih));
         }
         else
         {
             envGetTmp(FermionField, f5);
-            a2a.makeHighModeV5D(v[Nl_ + ih], f5, noise.getFerm(ih));
+            a2a_->makeHighModeV5D(v[Nl_ + ih], f5, noise.getFerm(ih));
         }
         stopTimer("V high mode");
         startTimer("W high mode");
@@ -228,12 +256,12 @@ void TA2AVectorsCoarse<FImpl, FImplPack, nBasis>::execute(void)
                      << "stochastic mode)" << std::endl;
         if (Ls == 1)
         {
-            a2a.makeHighModeW(w[Nl_ + ih], noise.getFerm(ih));
+            a2a_->makeHighModeW(w[Nl_ + ih], noise.getFerm(ih));
         }
         else
         {
             envGetTmp(FermionField, f5);
-            a2a.makeHighModeW5D(w[Nl_ + ih], f5, noise.getFerm(ih));
+            a2a_->makeHighModeW5D(w[Nl_ + ih], f5, noise.getFerm(ih));
         }
         stopTimer("W high mode");
     }

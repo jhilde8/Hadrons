@@ -68,7 +68,6 @@ public:
     FERM_TYPE_ALIASES(FImpl,);
     FERM_TYPE_ALIASES(FImplPack, Pack);
     SOLVER_TYPE_ALIASES(FImpl,);
-    typedef HADRONS_DEFAULT_SCHUR_A2A<FImpl>          A2A;
     typedef CoarseFermionEigenPack<FImplPack, nBasis> EPack;
     typedef typename FImpl::SiteSpinor::vector_type   vector_type;
     typedef iVector<iVector<iVector<vector_type, Nc>, Ns>, binSize> SiteSpinorSet;
@@ -87,14 +86,14 @@ public:
 private:
     unsigned int Nl_{0};
     unsigned int Nb_{0};
-    // built once in setup() from 'action' + par().schurConvention when
-    // par().checkInterval > 0; held here (rather than rebuilt per mode) since
-    // neither the action nor the convention change over the module's
-    // lifetime. See MSolver::MixedPrecisionRBPrecCG for why this has to be a
-    // pointer to the shared base class rather than a concrete stack object:
-    // the concrete Schur convention is only known at runtime (from XML), and
-    // a C++ variable's type must be fixed at compile time.
-    std::unique_ptr<SchurOperatorBase<FermionField>> checkOp_;
+    // Chosen from par().schurConvention at runtime in setup() -- see
+    // MSolver::MixedPrecisionRBPrecCG's SOLVER_BODY macro and
+    // Hadrons::A2AVectorsSchurBase for why this has to be a pointer to the
+    // shared base class rather than a concrete stack object. Also used
+    // directly (via a2a_->op()) for the in-program eigenvector check below,
+    // so the check is guaranteed to validate evec_i against the exact same
+    // operator used to build V/W, not a second, independently-configured one.
+    std::unique_ptr<A2AVectorsSchurBase<FImpl>> a2a_;
 };
 
 MODULE_REGISTER_TMP(A2AVectorsCoarseLow200Bin200,
@@ -121,9 +120,9 @@ std::vector<std::string> TA2AVectorsCoarseLow<FImpl, FImplPack, nBasis, binSize>
 {
     // Unlike MSolver::A2AVectorsCoarse, this module never runs a CG solve
     // (low modes are exact deflation, not stochastic), so par().solver is
-    // only referenced to satisfy A2AVectorsSchurDiagTwo's constructor -- it
-    // is never actually invoked. Point it at whatever solver object is
-    // otherwise convenient; there is no "_subtract" requirement here.
+    // only referenced to satisfy the A2A vector constructor -- it is never
+    // actually invoked. Point it at whatever solver object is otherwise
+    // convenient; there is no "_subtract" requirement here.
     std::vector<std::string> in = {par().eigenPack, par().action, par().solver};
 
     return in;
@@ -151,31 +150,37 @@ void TA2AVectorsCoarseLow<FImpl, FImplPack, nBasis, binSize>::setup(void)
         HADRONS_ERROR(Size, "eigenPack and action Ls mismatch");
     }
 
+    const std::string &schurConv = par().schurConvention;
+
+    if (schurConv == "DiagOne")
+    {
+        a2a_.reset(new A2AVectorsSchurDiagOne<FImpl>(action, solver));
+    }
+    else if (schurConv == "DiagTwo")
+    {
+        a2a_.reset(new A2AVectorsSchurDiagTwo<FImpl>(action, solver));
+    }
+    else if (schurConv.empty())
+    {
+        a2a_.reset(new HADRONS_DEFAULT_SCHUR_A2A<FImpl>(action, solver));
+    }
+    else
+    {
+        HADRONS_ERROR(Argument, "unknown schurConvention '" + schurConv
+                      + "' (expected 'DiagOne', 'DiagTwo', or empty for the compiled-in default)");
+    }
+    LOG(Message) << "A2A vector construction using Schur convention '"
+                 << (schurConv.empty() ? "compiled-in default" : schurConv)
+                 << "'" << std::endl;
+
     if (par().checkInterval > 0)
     {
-        const std::string &schurConv = par().schurConvention;
-
-        if (schurConv == "DiagOne")
-        {
-            checkOp_.reset(new SchurDiagOneOperator<FMat, FermionField>(action));
-        }
-        else if (schurConv == "DiagTwo")
-        {
-            checkOp_.reset(new SchurDiagTwoOperator<FMat, FermionField>(action));
-        }
-        else if (schurConv.empty())
-        {
-            checkOp_.reset(new HADRONS_DEFAULT_SCHUR_OP<FMat, FermionField>(action));
-        }
-        else
-        {
-            HADRONS_ERROR(Argument, "unknown schurConvention '" + schurConv
-                          + "' (expected 'DiagOne', 'DiagTwo', or empty for the compiled-in default)");
-        }
         LOG(Message) << "In-program eigenvector check enabled: every "
-                     << par().checkInterval << " low mode(s), Schur convention '"
-                     << (schurConv.empty() ? "compiled-in default" : schurConv)
-                     << "'" << std::endl;
+                     << par().checkInterval << " low mode(s), validated "
+                     << "against the same operator used to build V/W above, "
+                     << "plus a Schur-convention-blind reconstruction check "
+                     << "(Mee*v_ie + Meo*v_io == 0, and its W/dagger analogue)"
+                     << std::endl;
     }
 
     Nl_ = epack.evecCoarse.size();
@@ -191,29 +196,76 @@ void TA2AVectorsCoarseLow<FImpl, FImplPack, nBasis, binSize>::setup(void)
     {
         envTmpLat(FermionField, "f5", Ls);
     }
-    envTmp(A2A, "a2a", 1, action, solver);
     envTmp(FermionFieldPack, "evecF", Ls, epack.evec[0].Grid());
     envTmp(FermionField, "evecD", Ls, action.FermionRedBlackGrid());
     envTmp(FermionField, "vTmp", 1, envGetGrid(FermionField));
     envTmp(FermionField, "wTmp", 1, envGetGrid(FermionField));
     envTmp(Lattice<SiteSpinorSet>, "vBin", 1, envGetGrid(Lattice<SiteSpinorSet>));
     envTmp(Lattice<SiteSpinorSet>, "wBin", 1, envGetGrid(Lattice<SiteSpinorSet>));
+    // Scratch fields for the reconstruction check (see execute()): unlike the
+    // eigenvector check above, Mee(v_ie) + Meo(v_io) == 0 is an exact
+    // algebraic identity that holds by construction regardless of which
+    // Schur convention was used or how good evec_i is as an eigenvector, so
+    // it independently validates that makeLowModeV/W's primitive composition
+    // is implemented correctly, rather than validating the eigenpack data.
+    envTmp(FermionField, "reconCheckE", 1, action.FermionRedBlackGrid());
+    envTmp(FermionField, "reconCheckO", 1, action.FermionRedBlackGrid());
+    envTmp(FermionField, "reconCheckTmp1", 1, action.FermionRedBlackGrid());
+    envTmp(FermionField, "reconCheckTmp2", 1, action.FermionRedBlackGrid());
 }
 
 // execution ///////////////////////////////////////////////////////////////////
 template <typename FImpl, typename FImplPack, int nBasis, int binSize>
 void TA2AVectorsCoarseLow<FImpl, FImplPack, nBasis, binSize>::execute(void)
 {
-    auto        &epack = envGet(EPack, par().eigenPack);
-    int         Ls     = env().getObjectLs(par().action);
+    auto        &epack  = envGet(EPack, par().eigenPack);
+    auto        &action = envGet(FMat, par().action);
+    int         Ls      = env().getObjectLs(par().action);
 
-    envGetTmp(A2A, a2a);
     envGetTmp(FermionFieldPack, evecF);
     envGetTmp(FermionField, evecD);
     envGetTmp(FermionField, vTmp);
     envGetTmp(FermionField, wTmp);
     envGetTmp(Lattice<SiteSpinorSet>, vBin);
     envGetTmp(Lattice<SiteSpinorSet>, wBin);
+    envGetTmp(FermionField, reconCheckE);
+    envGetTmp(FermionField, reconCheckO);
+    envGetTmp(FermionField, reconCheckTmp1);
+    envGetTmp(FermionField, reconCheckTmp2);
+
+    // Mee(v_ie) + Meo(v_io) == 0 (V) and MeeDag(w_ie) + MoeDag(w_io) == 0 (W)
+    // are exact algebraic identities that hold by construction for either
+    // Schur convention -- see the derivation in memory/conversation history.
+    // A residual here isolates a bug in makeLowModeV/W's own primitive
+    // composition, independent of the eigenvector check above (which never
+    // calls makeLowModeV/W or looks at their output at all) and independent
+    // of which Schur convention is in effect (the identity holds either way).
+    const RealD reconResidualTol = 1e-10;
+    auto checkReconstruction = [&](const FermionField &full, bool dagger,
+                                   const std::string &label, unsigned int il)
+    {
+        pickCheckerboard(Even, reconCheckE, full);
+        pickCheckerboard(Odd, reconCheckO, full);
+        if (dagger)
+        {
+            action.MooeeDag(reconCheckE, reconCheckTmp1);
+            action.MeooeDag(reconCheckO, reconCheckTmp2);
+        }
+        else
+        {
+            action.Mooee(reconCheckE, reconCheckTmp1);
+            action.Meooe(reconCheckO, reconCheckTmp2);
+        }
+        reconCheckTmp1 = reconCheckTmp1 + reconCheckTmp2;
+
+        RealD reconResidual = std::sqrt(norm2(reconCheckTmp1));
+        RealD reconScale    = std::sqrt(norm2(reconCheckE));
+        RealD reconRelRes   = (reconScale != 0.) ? reconResidual / reconScale : reconResidual;
+
+        LOG(Message) << label << " reconstruction check, low mode " << il
+                     << ": |even-block residual| / |even piece| = " << reconRelRes
+                     << ((reconRelRes < reconResidualTol) ? "  [OK]" : "  [FAIL]") << std::endl;
+    };
 
     // blockPromote() never sets its output's checkerboard, so evecF would
     // otherwise keep its default (Even) even though it holds the Odd-site
@@ -241,12 +293,14 @@ void TA2AVectorsCoarseLow<FImpl, FImplPack, nBasis, binSize>::execute(void)
             precisionChange(evecD, evecF);
             stopTimer("Promote");
 
-            if ((par().checkInterval > 0) && (il % par().checkInterval == 0))
+            const bool doCheck = (par().checkInterval > 0) && (il % par().checkInterval == 0);
+
+            if (doCheck)
             {
                 startTimer("Eigenvector check");
 
                 const RealD                                          checkResidual = 1e-5;
-                PlainHermOp<FermionField>                            checkHermOp(*checkOp_);
+                PlainHermOp<FermionField>                            checkHermOp(a2a_->op());
                 ImplicitlyRestartedLanczosHermOpTester<FermionField> checkTester(checkHermOp);
                 RealD                                                evalStored = epack.evalCoarse[il];
                 RealD                                                evalRecon  = evalStored;
@@ -268,12 +322,24 @@ void TA2AVectorsCoarseLow<FImpl, FImplPack, nBasis, binSize>::execute(void)
             LOG(Message) << "V vector i = " << il << " (low mode)" << std::endl;
             if (Ls == 1)
             {
-                a2a.makeLowModeV(vTmp, evecD, epack.evalCoarse[il]);
+                a2a_->makeLowModeV(vTmp, evecD, epack.evalCoarse[il]);
+                if (doCheck)
+                {
+                    startTimer("V reconstruction check");
+                    checkReconstruction(vTmp, false, "V", il);
+                    stopTimer("V reconstruction check");
+                }
             }
             else
             {
                 envGetTmp(FermionField, f5);
-                a2a.makeLowModeV5D(vTmp, f5, evecD, epack.evalCoarse[il]);
+                a2a_->makeLowModeV5D(vTmp, f5, evecD, epack.evalCoarse[il]);
+                if (doCheck)
+                {
+                    startTimer("V reconstruction check");
+                    checkReconstruction(f5, false, "V", il);
+                    stopTimer("V reconstruction check");
+                }
             }
             pokeLorentz(vBin, vTmp, j);
             stopTimer("V low mode");
@@ -282,12 +348,24 @@ void TA2AVectorsCoarseLow<FImpl, FImplPack, nBasis, binSize>::execute(void)
             LOG(Message) << "W vector i = " << il << " (low mode)" << std::endl;
             if (Ls == 1)
             {
-                a2a.makeLowModeW(wTmp, evecD, epack.evalCoarse[il]);
+                a2a_->makeLowModeW(wTmp, evecD, epack.evalCoarse[il]);
+                if (doCheck)
+                {
+                    startTimer("W reconstruction check");
+                    checkReconstruction(wTmp, true, "W", il);
+                    stopTimer("W reconstruction check");
+                }
             }
             else
             {
                 envGetTmp(FermionField, f5);
-                a2a.makeLowModeW5D(wTmp, f5, evecD, epack.evalCoarse[il]);
+                a2a_->makeLowModeW5D(wTmp, f5, evecD, epack.evalCoarse[il]);
+                if (doCheck)
+                {
+                    startTimer("W reconstruction check");
+                    checkReconstruction(f5, true, "W", il);
+                    stopTimer("W reconstruction check");
+                }
             }
             pokeLorentz(wBin, wTmp, j);
             stopTimer("W low mode");
