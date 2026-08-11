@@ -207,21 +207,6 @@ void TA2ANewMesonField<FImpl>::execute(void)
             ph[j] = exp((Real)(2*M_PI)*i*ph[j]);
         }
 
-        // -- Temporary self-check for the MF/NMF momentum-independence bug hunt --
-        // Every entry of ph[] must be a valid unit-modulus phase everywhere,
-        // so norm2(ph[j]) must equal the total global site count exactly.
-        // Remove once the bug is resolved.
-        {
-            RealD expected = (RealD)ph[0].Grid()->gSites();
-            for (int j = 0; j < (int)ph.size(); j++)
-            {
-                RealD n2 = norm2(ph[j]);
-                LOG(Message) << "ph[" << j << "] self-check: norm2=" << n2
-                             << " expected=" << expected
-                             << " diff=" << (n2 - expected) << std::endl;
-            }
-        }
-
         hasPhase_ = true;
         stopTimer("Momentum phases");
     }
@@ -325,6 +310,7 @@ void TA2ANewMesonField<FImpl>::execute(void)
     double                fillTime     = 0.;
     std::array<double, 7> ioTimings    = {};
     std::array<double, 5> sumTimings   = {};
+    std::array<double, 5> sumBytes     = {};
 
     for (int jb = 0; jb < N_j; jb += block)
     {
@@ -362,8 +348,8 @@ void TA2ANewMesonField<FImpl>::execute(void)
                 stopTimer("Pack vectors");
 
                 startTimer("Sum");
-                // spatial_sum_.SumAllMomenta(all_results, &sumTimings);
-                spatial_sum_.SumAllMomentaCacheBlocked(all_results, cacheBlock, &sumTimings);
+                // spatial_sum_.SumAllMomenta(all_results, &sumTimings, &sumBytes);
+                spatial_sum_.SumAllMomentaCacheBlocked(all_results, cacheBlock, &sumTimings, &sumBytes);
                 stopTimer("Sum");
 
                 // Parallel IO: each rank writes its assigned momenta simultaneously.
@@ -416,12 +402,25 @@ void TA2ANewMesonField<FImpl>::execute(void)
         } // g
     } // jb
 
+    // Throughput of the host-side, post-GEMM Sum() stages -- bytesMoved[k]
+    // and sumTimings[k] accumulate the same way across all (jb,g,ib) calls
+    // and all cacheBlock tiles, so their ratio is the average effective
+    // bandwidth of that stage over the whole run, comparable across
+    // different cacheBlock choices.
+    auto gbps = [](double bytes, double us)
+    {
+        return (us > 0.) ? bytes / us * 1.e6 / 1024. / 1024. / 1024. : 0.;
+    };
     LOG(Message) << "Sum detail (us), rank " << myRank << ":" << std::endl;
     LOG(Message) << "  GEMM            = " << sumTimings[0] << std::endl;
-    LOG(Message) << "  device->host    = " << sumTimings[1] << std::endl;
-    LOG(Message) << "  transpose-1     = " << sumTimings[2] << std::endl;
-    LOG(Message) << "  GlobalSumVector = " << sumTimings[3] << std::endl;
-    LOG(Message) << "  transpose-2     = " << sumTimings[4] << std::endl;
+    LOG(Message) << "  device->host    = " << sumTimings[1]
+                 << " (" << gbps(sumBytes[1], sumTimings[1]) << " GB/s)" << std::endl;
+    LOG(Message) << "  transpose-1     = " << sumTimings[2]
+                 << " (" << gbps(sumBytes[2], sumTimings[2]) << " GB/s)" << std::endl;
+    LOG(Message) << "  GlobalSumVector = " << sumTimings[3]
+                 << " (" << gbps(sumBytes[3], sumTimings[3]) << " GB/s)" << std::endl;
+    LOG(Message) << "  transpose-2     = " << sumTimings[4]
+                 << " (" << gbps(sumBytes[4], sumTimings[4]) << " GB/s)" << std::endl;
     LOG(Message) << "IO detail (us), rank " << myRank << ":" << std::endl;
     LOG(Message) << "  fill            = " << fillTime      << std::endl;
     LOG(Message) << "  open            = " << ioTimings[0]  << std::endl;

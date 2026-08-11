@@ -260,6 +260,7 @@ void TA2AExtendedMesonField<FImpl>::execute(void)
     PropagatorField tloop(grid);
 
     std::array<double, 5> sumTimings = {};
+    std::array<double, 5> sumBytes   = {};
     std::array<double, 7> ioTimings  = {};
 
     for (int &type: types_){
@@ -318,8 +319,8 @@ void TA2AExtendedMesonField<FImpl>::execute(void)
 	    Eigen::Tensor<ComplexD,3> emfBlock(nt, Nii, Njj);
 	    emfBlock.setZero();
 	    startTimer("Sum");
-	    // spatial_sum.Sum(emfBlock, &sumTimings);
-	    spatial_sum.SumCacheBlocked(emfBlock, cacheBlock, &sumTimings);
+	    // spatial_sum.Sum(emfBlock, &sumTimings, &sumBytes);
+	    spatial_sum.SumCacheBlocked(emfBlock, cacheBlock, &sumTimings, &sumBytes);
 	    stopTimer("Sum");
 
 	    for(int t =0;t< nt;t++)
@@ -373,12 +374,25 @@ void TA2AExtendedMesonField<FImpl>::execute(void)
       }// ig
     }// type
 
+    // Throughput of the host-side, post-GEMM Sum() stages -- bytesMoved[k]
+    // and sumTimings[k] accumulate the same way across all (type,ig,i,j)
+    // calls and all cacheBlock tiles, so their ratio is the average
+    // effective bandwidth of that stage over the whole run, comparable
+    // across different cacheBlock choices.
+    auto gbps = [](double bytes, double us)
+    {
+        return (us > 0.) ? bytes / us * 1.e6 / 1024. / 1024. / 1024. : 0.;
+    };
     LOG(Message) << "Sum detail (us), rank 0:" << std::endl;
     LOG(Message) << "  GEMM            = " << sumTimings[0] << std::endl;
-    LOG(Message) << "  device->host    = " << sumTimings[1] << std::endl;
-    LOG(Message) << "  transpose-1     = " << sumTimings[2] << std::endl;
-    LOG(Message) << "  GlobalSumVector = " << sumTimings[3] << std::endl;
-    LOG(Message) << "  transpose-2     = " << sumTimings[4] << std::endl;
+    LOG(Message) << "  device->host    = " << sumTimings[1]
+                 << " (" << gbps(sumBytes[1], sumTimings[1]) << " GB/s)" << std::endl;
+    LOG(Message) << "  transpose-1     = " << sumTimings[2]
+                 << " (" << gbps(sumBytes[2], sumTimings[2]) << " GB/s)" << std::endl;
+    LOG(Message) << "  GlobalSumVector = " << sumTimings[3]
+                 << " (" << gbps(sumBytes[3], sumTimings[3]) << " GB/s)" << std::endl;
+    LOG(Message) << "  transpose-2     = " << sumTimings[4]
+                 << " (" << gbps(sumBytes[4], sumTimings[4]) << " GB/s)" << std::endl;
     LOG(Message) << "IO detail (us), rank 0:" << std::endl;
     LOG(Message) << "  open            = " << ioTimings[0]  << std::endl;
     LOG(Message) << "  push/group      = " << ioTimings[1]  << std::endl;
