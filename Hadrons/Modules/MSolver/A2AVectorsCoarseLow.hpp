@@ -363,6 +363,15 @@ void TA2AVectorsCoarseLow<FImpl, FImplPack, nBasis, binSize>::execute(void)
                 if (doCheck)
                 {
                     startTimer("W reconstruction check");
+                    // makeLowModeW5D leaves f5 holding DminusDag(raw w_i), not
+                    // the raw w_i itself (unlike makeLowModeV5D, which writes
+                    // the raw v_i directly into its vout_5d argument) -- the
+                    // reconstruction identity only holds for the raw output,
+                    // so re-derive it here with a direct makeLowModeW call.
+                    // f5's DminusDag content is no longer needed after
+                    // makeLowModeW5D returned (wTmp already holds the real
+                    // production output), so it's safe to overwrite.
+                    a2a_->makeLowModeW(f5, evecD, epack.evalCoarse[il]);
                     checkReconstruction(f5, true, "W", il);
                     stopTimer("W reconstruction check");
                 }
