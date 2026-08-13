@@ -1,5 +1,5 @@
 /*
- * A2AVectorsCoarseHigh.hpp, part of Hadrons (https://github.com/aportelli/Hadrons)
+ * A2AVectorsHigh.hpp, part of Hadrons (https://github.com/aportelli/Hadrons)
  *
  * Copyright (C) 2015 - 2023
  *
@@ -24,8 +24,8 @@
  */
 
 /*  END LEGAL */
-#ifndef Hadrons_MSolver_A2AVectorsCoarseHigh_hpp_
-#define Hadrons_MSolver_A2AVectorsCoarseHigh_hpp_
+#ifndef Hadrons_MSolver_A2AVectorsHigh_hpp_
+#define Hadrons_MSolver_A2AVectorsHigh_hpp_
 
 #include <Hadrons/Global.hpp>
 #include <Hadrons/Module.hpp>
@@ -38,19 +38,25 @@ BEGIN_HADRONS_NAMESPACE
 
 /******************************************************************************
  *  Stream high-mode (stochastic) A2A V & W vectors straight to disk,        *
- *  binned, one bin at a time -- companion to MSolver::A2AVectorsCoarseLow.  *
- *  binSize is the time extent of the ensemble being run (noise is diluted   *
- *  in spin/colour/time, so an NT-sized bin always divides the stochastic    *
- *  vector count evenly). Only one bin's worth of fields is ever resident,   *
- *  instead of holding the full high-mode array (MSolver::A2AVectorsCoarse)  *
- *  and then a second, packed copy of it (MIO::SaveBinnedA2AVecs).           *
+ *  binned, one bin at a time -- companion to MSolver::A2AVectorsCoarseLow   *
+ *  (coarse/LC-compressed deflation) and MSolver::A2AVectorsExactLow (exact  *
+ *  deflation) alike. This module never references an eigenpack or          *
+ *  deflation scheme itself: it only calls the injected Solver (see         *
+ *  getInput()/setup() below), so which guesser -- if any -- that solver     *
+ *  was built with, and whether it came from a coarse or exact eigenpack,   *
+ *  is entirely opaque here. binSize is the time extent of the ensemble     *
+ *  being run (noise is diluted in spin/colour/time, so an NT-sized bin     *
+ *  always divides the stochastic vector count evenly). Only one bin's      *
+ *  worth of fields is ever resident, instead of holding the full high-mode *
+ *  array (MSolver::A2AVectorsCoarse) and then a second, packed copy of it  *
+ *  (MIO::SaveBinnedA2AVecs).                                                *
  ******************************************************************************/
 BEGIN_MODULE_NAMESPACE(MSolver)
 
-class A2AVectorsCoarseHighPar: Serializable
+class A2AVectorsHighPar: Serializable
 {
 public:
-    GRID_SERIALIZABLE_CLASS_MEMBERS(A2AVectorsCoarseHighPar,
+    GRID_SERIALIZABLE_CLASS_MEMBERS(A2AVectorsHighPar,
                                     std::string, noise,
                                     std::string, action,
                                     std::string, solver,
@@ -58,7 +64,7 @@ public:
 };
 
 template <typename FImpl, int binSize>
-class TA2AVectorsCoarseHigh : public Module<A2AVectorsCoarseHighPar>
+class TA2AVectorsHigh : public Module<A2AVectorsHighPar>
 {
 public:
     FERM_TYPE_ALIASES(FImpl,);
@@ -68,9 +74,9 @@ public:
     typedef iVector<iVector<iVector<vector_type, Nc>, Ns>, binSize> SiteSpinorSet;
 public:
     // constructor
-    TA2AVectorsCoarseHigh(const std::string name);
+    TA2AVectorsHigh(const std::string name);
     // destructor
-    virtual ~TA2AVectorsCoarseHigh(void) {};
+    virtual ~TA2AVectorsHigh(void) {};
     // dependency relation
     virtual std::vector<std::string> getInput(void);
     virtual std::vector<std::string> getOutput(void);
@@ -83,33 +89,33 @@ private:
     unsigned int Nb_{0};
 };
 
-MODULE_REGISTER_TMP(A2AVectorsCoarseHigh48,   ARG(TA2AVectorsCoarseHigh<FIMPL, 48>),   MSolver);
-MODULE_REGISTER_TMP(A2AVectorsCoarseHigh64,   ARG(TA2AVectorsCoarseHigh<FIMPL, 64>),   MSolver);
-MODULE_REGISTER_TMP(A2AVectorsCoarseHigh96,   ARG(TA2AVectorsCoarseHigh<FIMPL, 96>),   MSolver);
-MODULE_REGISTER_TMP(A2AVectorsCoarseHigh128,  ARG(TA2AVectorsCoarseHigh<FIMPL, 128>),  MSolver);
-MODULE_REGISTER_TMP(A2AVectorsCoarseHigh144,  ARG(TA2AVectorsCoarseHigh<FIMPL, 144>),  MSolver);
-MODULE_REGISTER_TMP(A2AVectorsCoarseHigh192,  ARG(TA2AVectorsCoarseHigh<FIMPL, 192>),  MSolver);
-MODULE_REGISTER_TMP(A2AVectorsCoarseHigh256,  ARG(TA2AVectorsCoarseHigh<FIMPL, 256>),  MSolver);
-MODULE_REGISTER_TMP(ZA2AVectorsCoarseHigh48,  ARG(TA2AVectorsCoarseHigh<ZFIMPL, 48>),  MSolver);
-MODULE_REGISTER_TMP(ZA2AVectorsCoarseHigh64,  ARG(TA2AVectorsCoarseHigh<ZFIMPL, 64>),  MSolver);
-MODULE_REGISTER_TMP(ZA2AVectorsCoarseHigh96,  ARG(TA2AVectorsCoarseHigh<ZFIMPL, 96>),  MSolver);
-MODULE_REGISTER_TMP(ZA2AVectorsCoarseHigh128, ARG(TA2AVectorsCoarseHigh<ZFIMPL, 128>), MSolver);
-MODULE_REGISTER_TMP(ZA2AVectorsCoarseHigh144, ARG(TA2AVectorsCoarseHigh<ZFIMPL, 144>), MSolver);
-MODULE_REGISTER_TMP(ZA2AVectorsCoarseHigh192, ARG(TA2AVectorsCoarseHigh<ZFIMPL, 192>), MSolver);
-MODULE_REGISTER_TMP(ZA2AVectorsCoarseHigh256, ARG(TA2AVectorsCoarseHigh<ZFIMPL, 256>), MSolver);
+MODULE_REGISTER_TMP(A2AVectorsHigh48,   ARG(TA2AVectorsHigh<FIMPL, 48>),   MSolver);
+MODULE_REGISTER_TMP(A2AVectorsHigh64,   ARG(TA2AVectorsHigh<FIMPL, 64>),   MSolver);
+MODULE_REGISTER_TMP(A2AVectorsHigh96,   ARG(TA2AVectorsHigh<FIMPL, 96>),   MSolver);
+MODULE_REGISTER_TMP(A2AVectorsHigh128,  ARG(TA2AVectorsHigh<FIMPL, 128>),  MSolver);
+MODULE_REGISTER_TMP(A2AVectorsHigh144,  ARG(TA2AVectorsHigh<FIMPL, 144>),  MSolver);
+MODULE_REGISTER_TMP(A2AVectorsHigh192,  ARG(TA2AVectorsHigh<FIMPL, 192>),  MSolver);
+MODULE_REGISTER_TMP(A2AVectorsHigh256,  ARG(TA2AVectorsHigh<FIMPL, 256>),  MSolver);
+MODULE_REGISTER_TMP(ZA2AVectorsHigh48,  ARG(TA2AVectorsHigh<ZFIMPL, 48>),  MSolver);
+MODULE_REGISTER_TMP(ZA2AVectorsHigh64,  ARG(TA2AVectorsHigh<ZFIMPL, 64>),  MSolver);
+MODULE_REGISTER_TMP(ZA2AVectorsHigh96,  ARG(TA2AVectorsHigh<ZFIMPL, 96>),  MSolver);
+MODULE_REGISTER_TMP(ZA2AVectorsHigh128, ARG(TA2AVectorsHigh<ZFIMPL, 128>), MSolver);
+MODULE_REGISTER_TMP(ZA2AVectorsHigh144, ARG(TA2AVectorsHigh<ZFIMPL, 144>), MSolver);
+MODULE_REGISTER_TMP(ZA2AVectorsHigh192, ARG(TA2AVectorsHigh<ZFIMPL, 192>), MSolver);
+MODULE_REGISTER_TMP(ZA2AVectorsHigh256, ARG(TA2AVectorsHigh<ZFIMPL, 256>), MSolver);
 
 /******************************************************************************
- *                   TA2AVectorsCoarseHigh implementation                     *
+ *                   TA2AVectorsHigh implementation                     *
  ******************************************************************************/
 // constructor /////////////////////////////////////////////////////////////////
 template <typename FImpl, int binSize>
-TA2AVectorsCoarseHigh<FImpl, binSize>::TA2AVectorsCoarseHigh(const std::string name)
-: Module<A2AVectorsCoarseHighPar>(name)
+TA2AVectorsHigh<FImpl, binSize>::TA2AVectorsHigh(const std::string name)
+: Module<A2AVectorsHighPar>(name)
 {}
 
 // dependencies/products ///////////////////////////////////////////////////////
 template <typename FImpl, int binSize>
-std::vector<std::string> TA2AVectorsCoarseHigh<FImpl, binSize>::getInput(void)
+std::vector<std::string> TA2AVectorsHigh<FImpl, binSize>::getInput(void)
 {
     // MSolver::MixedPrecisionRBPrecCG always creates both a plain and a
     // "_subtract" solver object regardless of whether an outer guesser was
@@ -124,7 +130,7 @@ std::vector<std::string> TA2AVectorsCoarseHigh<FImpl, binSize>::getInput(void)
 }
 
 template <typename FImpl, int binSize>
-std::vector<std::string> TA2AVectorsCoarseHigh<FImpl, binSize>::getOutput(void)
+std::vector<std::string> TA2AVectorsHigh<FImpl, binSize>::getOutput(void)
 {
     std::vector<std::string> out = {};
 
@@ -133,7 +139,7 @@ std::vector<std::string> TA2AVectorsCoarseHigh<FImpl, binSize>::getOutput(void)
 
 // setup ///////////////////////////////////////////////////////////////////////
 template <typename FImpl, int binSize>
-void TA2AVectorsCoarseHigh<FImpl, binSize>::setup(void)
+void TA2AVectorsHigh<FImpl, binSize>::setup(void)
 {
     auto        &noise          = envGet(SpinColorDiagonalNoise<FImpl>, par().noise);
     auto        &action         = envGet(FMat, par().action);
@@ -168,7 +174,7 @@ void TA2AVectorsCoarseHigh<FImpl, binSize>::setup(void)
 
 // execution ///////////////////////////////////////////////////////////////////
 template <typename FImpl, int binSize>
-void TA2AVectorsCoarseHigh<FImpl, binSize>::execute(void)
+void TA2AVectorsHigh<FImpl, binSize>::execute(void)
 {
     auto        &noise = envGet(SpinColorDiagonalNoise<FImpl>, par().noise);
     int         Ls     = env().getObjectLs(par().action);
@@ -232,4 +238,4 @@ END_MODULE_NAMESPACE
 
 END_HADRONS_NAMESPACE
 
-#endif // Hadrons_MSolver_A2AVectorsCoarseHigh_hpp_
+#endif // Hadrons_MSolver_A2AVectorsHigh_hpp_
