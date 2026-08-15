@@ -1,7 +1,7 @@
 /*
- * CombineA2AVecs.cpp, part of Hadrons (https://github.com/aportelli/Hadrons)
+ * VectorPackRefSlice.cpp, part of Hadrons (https://github.com/aportelli/Hadrons)
  *
- * Copyright (C) 2015 - 2023
+ * Copyright (C) 2015 - 2026
  *
  * Author: Jonas Hildebrand <jonas.hildebrand@uconn.edu>
  *
@@ -23,10 +23,10 @@
  */
 
 /*  END LEGAL */
-#include <Hadrons/Modules/MUtilities/CombineA2AVecs.hpp>
+#include <Hadrons/Modules/MUtilities/VectorPackRefSlice.hpp>
 
 using namespace Grid;
 using namespace Hadrons;
 using namespace MUtilities;
 
-template class HADRONS_NAMESPACE::MUtilities::TCombineA2AVecs<FIMPL>;
+template class Grid::Hadrons::MUtilities::TVectorPackRefSlice<FIMPL::FermionField>;

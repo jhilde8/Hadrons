@@ -218,8 +218,8 @@ void TA2AExtendedMesonField<FImpl>::execute(void)
   typedef iSpinColourVector<vector_type> SpinColourVector_v;
     auto &left  = envGet(std::vector<FermionField>, par().left);
     auto &right = envGet(std::vector<FermionField>, par().right);
-    auto &loop1 = envGet(std::vector<FermionField>, par().loop_vw1);
-    auto &loop2 = envGet(std::vector<FermionField>, par().loop_vw2);
+    auto &loop1 = envGet(std::vector<const FermionField *>, par().loop_vw1);
+    auto &loop2 = envGet(std::vector<const FermionField *>, par().loop_vw2);
 
     GridBase *grid = left[0].Grid();
 
@@ -252,7 +252,7 @@ void TA2AExtendedMesonField<FImpl>::execute(void)
 
     auto &loop = envGet(PropagatorField, "propagatorLoop");
     startTimer("LoopPropagator");
-    Grid::A2AExtendedMesonField<FImpl>::LoopPropagator(loop, loop1, loop2);
+    Grid::A2AExtendedMesonField<FImpl>::LoopPropagatorPtr(loop, loop1, loop2);
     stopTimer("LoopPropagator");
     LOG(Message) << "Quark loop calculated" << std::endl;
 

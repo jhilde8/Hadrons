@@ -32,6 +32,7 @@ See the full license in the file "LICENSE" in the top level distribution directo
 #include <Hadrons/Module.hpp>
 #include <Hadrons/ModuleFactory.hpp>
 #include <Hadrons/A2AVectors.hpp>
+#include <Grid/qcd/utils/A2Autils.h>
 
 BEGIN_HADRONS_NAMESPACE
 
@@ -134,21 +135,7 @@ void TLoadBinnedA2AVecs<FImpl, binSize>::execute(void)
   LOG(Message) << "Loading " << v.size() << " A2A vectors from "
 	       << Nb << " files of " << binSize << " binned vectors" << std::endl;
   A2AVectorsIo::read(bvec, par().filestem, par().multiFile, vm().getTrajectory());
-  // Use CPU views to unpack: peekLorentz launches a GPU kernel that copies the full
-  // SiteSpinorSet (~binSize*192 bytes) onto each GPU thread's private stack, which
-  // overflows the device stack limit for large binSizes.  Reading via CpuRead and
-  // writing via CpuWrite bypasses the GPU kernel entirely; the memory manager will
-  // migrate the unpacked data to the device on the first GPU access.
-  for( int ib = 0 ; ib < Nb ; ++ib ) {
-    autoView(bv, bvec[ib], CpuRead);
-    for( int j = 0 ; j < binSize ; ++j ) {
-      autoView(vv, v[ib*binSize+j], CpuWrite);
-      uint64_t nSites = bv.size();
-      for( uint64_t ss = 0 ; ss < nSites ; ++ss ) {
-        vv[ss] = bv[ss]._internal[j];
-      }
-    }
-  }
+  A2Autils<FImpl>::template UnpackBinnedVectors<binSize>(v, 0, bvec);
 }
 
 END_MODULE_NAMESPACE
