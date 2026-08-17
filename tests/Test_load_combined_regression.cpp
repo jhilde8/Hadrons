@@ -31,6 +31,14 @@
  *
  * Usage:
  *   mpirun -n 1 ./Test_load_combined_regression --grid 4.4.4.8 --mpi 1.1.1.1
+ *   mpirun -n 1 ./Test_load_combined_regression --grid 4.4.4.8 --mpi 1.1.1.1 --skip-gen
+ *
+ * --skip-gen skips Phase 1 (vector generation) entirely and reuses
+ * whatever old_*/low_*/high_* files are already on disk from a previous
+ * run with the same nLow/nHigh/traj -- useful when re-running Phase 2
+ * after a fix without paying the generation+write cost again. It does
+ * not validate that the on-disk files match the current nLow/nHigh
+ * shape -- that's on you.
  */
 
 #include <Hadrons/Global.hpp>
@@ -95,19 +103,30 @@ int main(int argc, char *argv[])
     const int nHigh  = 256;
     const int nTotal = nLow + nHigh;   // 656
 
+    bool skipGen = GridCmdOptionExists(argv, argv + argc, "--skip-gen");
+
     // ------------------------------------------------------------------
     // Phase 1: generate + slice + write, plain Grid, no Hadrons.
+    // Skipped with --skip-gen, reusing whatever old_*/low_*/high_* files
+    // are already on disk from a previous run.
     // ------------------------------------------------------------------
-    Coordinate latt_size   = GridDefaultLatt();
-    Coordinate simd_layout = GridDefaultSimd(4, vComplexD::Nsimd());
-    Coordinate mpi_layout  = GridDefaultMpi();
-    GridCartesian grid(latt_size, simd_layout, mpi_layout);
+    if (!skipGen)
+    {
+        Coordinate latt_size   = GridDefaultLatt();
+        Coordinate simd_layout = GridDefaultSimd(4, vComplexD::Nsimd());
+        Coordinate mpi_layout  = GridDefaultMpi();
+        GridCartesian grid(latt_size, simd_layout, mpi_layout);
 
-    GridParallelRNG pRNG(&grid);
-    pRNG.SeedFixedIntegers({1, 2, 3, 4});
+        GridParallelRNG pRNG(&grid);
+        pRNG.SeedFixedIntegers({1, 2, 3, 4});
 
-    makeRole("w", grid, pRNG, nLow, nHigh, traj);
-    makeRole("v", grid, pRNG, nLow, nHigh, traj);
+        makeRole("w", grid, pRNG, nLow, nHigh, traj);
+        makeRole("v", grid, pRNG, nLow, nHigh, traj);
+    }
+    else
+    {
+        LOG(Message) << "--skip-gen: reusing existing old_*/low_*/high_* files on disk" << std::endl;
+    }
 
     // ------------------------------------------------------------------
     // Phase 2: real Hadrons application -- load w and v both ways,
