@@ -33,6 +33,7 @@
  *   mpirun -n 1 ./Test_load_combined_regression --grid 4.4.4.8 --mpi 1.1.1.1
  */
 
+#include <Hadrons/Global.hpp>
 #include <Hadrons/Application.hpp>
 #include <Hadrons/Modules.hpp>
 #include <Hadrons/A2AVectors.hpp>
@@ -45,7 +46,9 @@ typedef FIMPL::FermionField FermionField;
 template <int binSize>
 void writeBinned(const std::string &filestem, std::vector<FermionField> &v, int traj)
 {
-    typedef iVector<typename FIMPL::SiteSpinor, binSize> SiteSpinorSet;
+    //typedef iVector<typename FIMPL::SiteSpinor, binSize> SiteSpinorSet;
+    typedef typename FIMPL::SiteSpinor::vector_type vector_type;
+    typedef iVector<iVector<iVector<vector_type, Nc>, Ns>, binSize > SiteSpinorSet;
 
     assert(v.size() % binSize == 0);
     int Nb = (int)v.size() / binSize;
