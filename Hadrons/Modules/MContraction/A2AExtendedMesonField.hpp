@@ -208,7 +208,7 @@ void TA2AExtendedMesonField<FImpl>::setup(void)
     }
     auto &left  = envGet(std::vector<FermionField>, par().left);
     GridBase *grid = left[0].Grid();
-    envCreateLat(PropagatorField, "propagatorLoop");
+    envCreateLat(PropagatorField, getName() + "_propagatorLoop");
 }
 
 // execution ///////////////////////////////////////////////////////////////////
@@ -250,7 +250,7 @@ void TA2AExtendedMesonField<FImpl>::execute(void)
                  << " (filesize " << sizeString(nt*N_i*N_j*sizeof(HADRONS_A2AM_IO_TYPE)) 
                  << "/momentum/bilinear)" << std::endl;
 
-    auto &loop = envGet(PropagatorField, "propagatorLoop");
+    auto &loop = envGet(PropagatorField, getName() + "_propagatorLoop");
     startTimer("LoopPropagator");
     Grid::A2AExtendedMesonField<FImpl>::LoopPropagatorPtr(loop, loop1, loop2);
     stopTimer("LoopPropagator");
