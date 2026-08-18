@@ -21,17 +21,25 @@
  *
  *   2. The quark loop (loop_vw1/loop_vw2) is fixed at a single hit index
  *      -loopHit- for the whole run, matching how production actually
- *      runs (one job per loop hit, "indexed by loop index"). The new
+ *      runs (one job per loop hit, "indexed by loop index"). When loopHit
+ *      falls within the resident external-leg combined array, the new
  *      path builds loop pointers via VectorPackRefSlice with segments
- *      [0,Nl) + [Nl+loopHit*Nh, Nl+(loopHit+1)*Nh) out of the *same*
- *      combined array used for the external leg -- non-contiguous, and
- *      only trivially equivalent to a full reference when loopHit = 0.
- *      The old path builds loop pointers via VectorPackRefSlice with one
- *      segment spanning the entirety of a dedicated old-style hit-
- *      -loopHit- file. Both feed the same, unmodified
- *      A2AExtendedMesonField module, which always calls LoopPropagatorPtr
- *      (bare LoopPropagator vs LoopPropagatorPtr equivalence is already
- *      covered at the Grid level by Test_extended_meson_field.cc).
+ *      [0,Nl) + [Nl+loopHit*Nh, Nl+(loopHit+1)*Nh) out of that *same*
+ *      array -- non-contiguous, and only trivially equivalent to a full
+ *      reference when loopHit = 0. loopHit can also fall outside that
+ *      array -- e.g. under --skip-gen with a narrower --light-hits/
+ *      --strange-hits than an earlier generation pass used, mirroring the
+ *      production case of a loop hit not resident from the external legs
+ *      alone -- in which case a fresh single-hit combined load is added
+ *      instead and pointer-referenced trivially, mirroring
+ *      VectorPool.loop_leg()'s cache-miss fallback. The old path builds
+ *      loop pointers via VectorPackRefSlice with one segment spanning the
+ *      entirety of a dedicated old-style hit-loopHit file (added fresh
+ *      too, if loopHit falls outside the hit range otherwise generated).
+ *      All feed the same, unmodified A2AExtendedMesonField module, which
+ *      always calls LoopPropagatorPtr (bare LoopPropagator vs
+ *      LoopPropagatorPtr equivalence is already covered at the Grid level
+ *      by Test_extended_meson_field.cc).
  *
  * Two loop flavors are covered: light (loop_vw1/2 = l_v/l_w, low+high)
  * and strange (loop_vw1/2 = s_v/s_w, high-only). l_v/s_v double as both
@@ -116,7 +124,16 @@ int main(int argc, char *argv[])
     }
     bool skipGen = GridCmdOptionExists(argv, argv + argc, "--skip-gen");
 
-    assert(loopHit >= 0 && loopHit < nLightHits && loopHit < nStrangeHits);
+    // With fresh generation this run must itself produce hit loopHit, so
+    // the bound is exact. Under --skip-gen the needed files may come from
+    // an earlier, broader generation pass (e.g. --light-hits/--strange-hits
+    // was larger then), so only loopHit >= 0 is enforced here -- Phase 2
+    // falls back to a fresh single-hit load for whichever flavor's
+    // resident batch doesn't cover loopHit.
+    if (!skipGen)
+        assert(loopHit >= 0 && loopHit < nLightHits && loopHit < nStrangeHits);
+    else
+        assert(loopHit >= 0);
 
     // ------------------------------------------------------------------
     // Phase 1: generate + write, plain Grid, no Hadrons. Skipped with
@@ -275,9 +292,15 @@ int main(int argc, char *argv[])
     }
 
     // Loop pointer construction, fixed at hit index loopHit for the
-    // whole run. New: offset into the combined array (non-contiguous
-    // for loopHit > 0). Old: one trivial segment spanning the whole
-    // dedicated hit-loopHit file.
+    // whole run. New, when loopHit falls within the resident external-leg
+    // combined array: offset directly into it (non-contiguous for
+    // loopHit > 0). New, when loopHit falls outside that array (possible
+    // under --skip-gen with a narrower --light-hits/--strange-hits than
+    // what was originally generated): a fresh single-hit combined load is
+    // added instead, mirroring VectorPool.loop_leg()'s cache-miss
+    // fallback in production. Old: one trivial segment spanning the whole
+    // dedicated hit-loopHit file, adding a fresh load for it too if it
+    // falls outside lightVOld/lightWOld/strangeVOld/strangeWOld's range.
     auto addPackSlice = [&](const std::string &name, const std::string &source,
                              const std::vector<unsigned int> &offsets,
                              const std::vector<unsigned int> &counts)
@@ -289,31 +312,100 @@ int main(int argc, char *argv[])
         application.createModule<MUtilities::TVectorPackRefSlice<FIMPL::FermionField>>(name, par);
     };
 
+    auto addLightSingleHitCombined = [&](const std::string &role, int k)
+    {
+        MIO::LoadCombinedA2AVecsPar par;
+        par.lowFilestem     = "low_l_" + role;
+        par.nLow            = Nl;
+        par.highStem        = "high_l_" + role + "_hit";
+        par.highExtensions  = {std::to_string(k)};
+        par.nHighEach       = Nh;
+
+        std::string name = "l_" + role + "_loop_combined_hit" + std::to_string(k);
+        application.createModule<MIO::TLoadCombinedA2AVecs<FIMPL, Nl, Nh>>(name, par);
+
+        return name;
+    };
+
+    auto addStrangeSingleHitCombined = [&](const std::string &role, int k)
+    {
+        MIO::LoadCombinedA2AVecsPar par;
+        par.nLow           = 0;
+        par.highStem       = "s_" + role + "_hit";
+        par.highExtensions = {std::to_string(k)};
+        par.nHighEach      = Nh;
+
+        std::string name = "s_" + role + "_loop_combined_hit" + std::to_string(k);
+        application.createModule<MIO::TLoadCombinedA2AVecs<FIMPL, Nl, Nh>>(name, par);
+
+        return name;
+    };
+
+    auto lightOldFor = [&](const std::string &role, int k)
+    {
+        if (k < nLightHits)
+            return (role == "v") ? lightVOld[k] : lightWOld[k];
+        return addLightOld(role, k);
+    };
+
+    auto strangeOldFor = [&](const std::string &role, int k)
+    {
+        if (k < nStrangeHits)
+            return (role == "v") ? strangeVOld[k] : strangeWOld[k];
+        return addStrangeOld(role, k);
+    };
+
     std::string kStr = std::to_string(loopHit);
     unsigned int uNl = (unsigned int)Nl;
     unsigned int uNh = (unsigned int)Nh;
-    unsigned int highOffset = (unsigned int)(Nl + loopHit * Nh);
-    unsigned int strangeOffset = (unsigned int)(loopHit * Nh);
 
-    std::string loop1LightNew = "loop_l_v_new_hit" + kStr;
-    addPackSlice(loop1LightNew, lightVComb, {0u, highOffset}, {uNl, uNh});
-    std::string loop2LightNew = "loop_l_w_new_hit" + kStr;
-    addPackSlice(loop2LightNew, lightWComb, {0u, highOffset}, {uNl, uNh});
+    std::string loop1LightNew, loop2LightNew;
+    if (loopHit < nLightHits)
+    {
+        unsigned int highOffset = (unsigned int)(Nl + loopHit * Nh);
+        loop1LightNew = "loop_l_v_new_hit" + kStr;
+        addPackSlice(loop1LightNew, lightVComb, {0u, highOffset}, {uNl, uNh});
+        loop2LightNew = "loop_l_w_new_hit" + kStr;
+        addPackSlice(loop2LightNew, lightWComb, {0u, highOffset}, {uNl, uNh});
+    }
+    else
+    {
+        std::string lightVLoopComb = addLightSingleHitCombined("v", loopHit);
+        std::string lightWLoopComb = addLightSingleHitCombined("w", loopHit);
+        loop1LightNew = "loop_l_v_new_hit" + kStr;
+        addPackSlice(loop1LightNew, lightVLoopComb, {0u, uNl}, {uNl, uNh});
+        loop2LightNew = "loop_l_w_new_hit" + kStr;
+        addPackSlice(loop2LightNew, lightWLoopComb, {0u, uNl}, {uNl, uNh});
+    }
 
     std::string loop1LightOld = "loop_l_v_old_hit" + kStr;
-    addPackSlice(loop1LightOld, lightVOld[loopHit], {0u}, {uNl + uNh});
+    addPackSlice(loop1LightOld, lightOldFor("v", loopHit), {0u}, {uNl + uNh});
     std::string loop2LightOld = "loop_l_w_old_hit" + kStr;
-    addPackSlice(loop2LightOld, lightWOld[loopHit], {0u}, {uNl + uNh});
+    addPackSlice(loop2LightOld, lightOldFor("w", loopHit), {0u}, {uNl + uNh});
 
-    std::string loop1StrangeNew = "loop_s_v_new_hit" + kStr;
-    addPackSlice(loop1StrangeNew, strangeVComb, {strangeOffset}, {uNh});
-    std::string loop2StrangeNew = "loop_s_w_new_hit" + kStr;
-    addPackSlice(loop2StrangeNew, strangeWComb, {strangeOffset}, {uNh});
+    std::string loop1StrangeNew, loop2StrangeNew;
+    if (loopHit < nStrangeHits)
+    {
+        unsigned int strangeOffset = (unsigned int)(loopHit * Nh);
+        loop1StrangeNew = "loop_s_v_new_hit" + kStr;
+        addPackSlice(loop1StrangeNew, strangeVComb, {strangeOffset}, {uNh});
+        loop2StrangeNew = "loop_s_w_new_hit" + kStr;
+        addPackSlice(loop2StrangeNew, strangeWComb, {strangeOffset}, {uNh});
+    }
+    else
+    {
+        std::string strangeVLoopComb = addStrangeSingleHitCombined("v", loopHit);
+        std::string strangeWLoopComb = addStrangeSingleHitCombined("w", loopHit);
+        loop1StrangeNew = "loop_s_v_new_hit" + kStr;
+        addPackSlice(loop1StrangeNew, strangeVLoopComb, {0u}, {uNh});
+        loop2StrangeNew = "loop_s_w_new_hit" + kStr;
+        addPackSlice(loop2StrangeNew, strangeWLoopComb, {0u}, {uNh});
+    }
 
     std::string loop1StrangeOld = "loop_s_v_old_hit" + kStr;
-    addPackSlice(loop1StrangeOld, strangeVOld[loopHit], {0u}, {uNh});
+    addPackSlice(loop1StrangeOld, strangeOldFor("v", loopHit), {0u}, {uNh});
     std::string loop2StrangeOld = "loop_s_w_old_hit" + kStr;
-    addPackSlice(loop2StrangeOld, strangeWOld[loopHit], {0u}, {uNh});
+    addPackSlice(loop2StrangeOld, strangeOldFor("w", loopHit), {0u}, {uNh});
 
     auto addEmf = [&](const std::string &name, const std::string &left, const std::string &right,
                        const std::string &loop1, const std::string &loop2)
