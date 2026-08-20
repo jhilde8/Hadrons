@@ -134,8 +134,15 @@ void TLoadCombinedA2AVecs<FImpl, lowBinSize, highBinSize>::setup(void)
     }
 
     unsigned int total = par().nLow + par().highExtensions.size() * par().nHighEach;
+    auto         grid  = envGetGrid(FermionField);
 
-    envCreate(std::vector<FermionField>, getName(), 1, total, envGetGrid(FermionField));
+    envCreate(std::vector<FermionField>, getName(), 1, 0, grid);
+    auto &out = envGet(std::vector<FermionField>, getName());
+    out.reserve(total);
+    for (unsigned int i = 0; i < total; ++i)
+    {
+        out.emplace_back(grid, CpuWrite);
+    }
 }
 
 // execution ///////////////////////////////////////////////////////////////////

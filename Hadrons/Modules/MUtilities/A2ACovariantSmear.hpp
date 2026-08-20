@@ -173,20 +173,20 @@ std::vector<std::string> TA2ACovariantSmear<GImpl, FImpl>::getOutput(void)
 template <typename GImpl, typename FImpl>
 void TA2ACovariantSmear<GImpl, FImpl>::setup(void)
 {
-    auto &a2aVec = envGet(std::vector<FermionField>, par().a2aVectors);
-    envCreate(std::vector<FermionField>, getName(), 1, a2aVec.size(),
-              envGetGrid(FermionField));
+    envCreate(std::vector<FermionField>, getName(), 1, 0, envGetGrid(FermionField));
 }
 
 // execution ///////////////////////////////////////////////////////////////////
 template <typename GImpl, typename FImpl>
 void TA2ACovariantSmear<GImpl, FImpl>::execute(void)
 {
-    const auto &a2aVec = envGet(std::vector<FermionField>, par().a2aVectors);
+    auto &a2aVec = envGet(std::vector<FermionField>, par().a2aVectors);
     unsigned int Ni = a2aVec.size();
 
     auto &U = envGet(GaugeField, par().gauge);
     auto &a2aSmr = envGet(std::vector<FermionField>, getName());
+
+    a2aSmr = std::move(a2aVec);
 
     RealD width = par().alpha;
     unsigned int iterations = par().N;
@@ -203,7 +203,6 @@ void TA2ACovariantSmear<GImpl, FImpl>::execute(void)
     startTimer("GaussianSmear");
     for (int i = 0; i < (int)Ni; i++)
     {
-        a2aSmr[i] = a2aVec[i];
         for (unsigned int n = 0; n < iterations; n++)
         {
             Lap.M(a2aSmr[i], tmp);
