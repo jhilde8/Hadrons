@@ -1,5 +1,5 @@
 /*
- * LoadCombinedA2AVecs.hpp, part of Hadrons (https://github.com/aportelli/Hadrons)
+ * LoadCombinedA2AVecsV.hpp, part of Hadrons (https://github.com/aportelli/Hadrons)
  *
  * Copyright (C) 2015 - 2026
  *
@@ -23,8 +23,8 @@
  */
 
 /*  END LEGAL */
-#ifndef Hadrons_MIO_LoadCombinedA2AVecs_hpp_
-#define Hadrons_MIO_LoadCombinedA2AVecs_hpp_
+#ifndef Hadrons_MIO_LoadCombinedA2AVecsV_hpp_
+#define Hadrons_MIO_LoadCombinedA2AVecsV_hpp_
 
 #include <Hadrons/Global.hpp>
 #include <Hadrons/Module.hpp>
@@ -53,19 +53,26 @@ BEGIN_HADRONS_NAMESPACE
  ******************************************************************************/
 BEGIN_MODULE_NAMESPACE(MIO)
 
-class LoadCombinedA2AVecsPar: Serializable
+class LoadCombinedA2AVecsVPar: Serializable
 {
 public:
-    GRID_SERIALIZABLE_CLASS_MEMBERS(LoadCombinedA2AVecsPar,
+    // nHit: 1/nHit hit-average normalization applied to the high-mode blocks
+    // after loading, matching MIO::LoadBinnedA2AVecsV -- the multi-hit
+    // estimator averages over hits, and by convention the whole factor lives
+    // on the V side while W stays raw unit-modulus noise. Set it to the hit
+    // count only when loading V vectors; leave it 0 (absent from the XML) or
+    // 1 -- both mean no rescaling -- for W loads and single-hit data.
+    GRID_SERIALIZABLE_CLASS_MEMBERS(LoadCombinedA2AVecsVPar,
                                     std::string,               lowFilestem,
                                     unsigned int,              nLow,
                                     std::string,               highStem,
                                     std::vector<std::string>, highExtensions,
-                                    unsigned int,              nHighEach);
+                                    unsigned int,              highSize,
+                                    unsigned int,              nHit);
 };
 
 template <typename FImpl, int lowBinSize, int highBinSize>
-class TLoadCombinedA2AVecs: public Module<LoadCombinedA2AVecsPar>
+class TLoadCombinedA2AVecsV: public Module<LoadCombinedA2AVecsVPar>
 {
 public:
     FERM_TYPE_ALIASES(FImpl,);
@@ -73,9 +80,9 @@ public:
     typedef iVector<typename FImpl::SiteSpinor, highBinSize> HighBinnedSpinor;
 public:
     // constructor
-    TLoadCombinedA2AVecs(const std::string name);
+    TLoadCombinedA2AVecsV(const std::string name);
     // destructor
-    virtual ~TLoadCombinedA2AVecs(void) {};
+    virtual ~TLoadCombinedA2AVecsV(void) {};
     // dependency relation
     virtual std::vector<std::string> getInput(void);
     virtual std::vector<std::string> getOutput(void);
@@ -85,23 +92,23 @@ public:
     virtual void execute(void);
 };
 
-MODULE_REGISTER_TMP(LoadCombinedA2AVecs200x128, ARG(TLoadCombinedA2AVecs<FIMPL, 200, 128>), MIO);
-MODULE_REGISTER_TMP(LoadCombinedA2AVecs100x128, ARG(TLoadCombinedA2AVecs<FIMPL, 100, 128>), MIO);
-MODULE_REGISTER_TMP(LoadCombinedA2AVecs200x96,  ARG(TLoadCombinedA2AVecs<FIMPL, 200, 96>),  MIO);
-MODULE_REGISTER_TMP(LoadCombinedA2AVecs100x96,  ARG(TLoadCombinedA2AVecs<FIMPL, 100, 96>),  MIO);
+MODULE_REGISTER_TMP(LoadCombinedA2AVecsV200x128, ARG(TLoadCombinedA2AVecsV<FIMPL, 200, 128>), MIO);
+MODULE_REGISTER_TMP(LoadCombinedA2AVecsV100x128, ARG(TLoadCombinedA2AVecsV<FIMPL, 100, 128>), MIO);
+MODULE_REGISTER_TMP(LoadCombinedA2AVecsV200x96,  ARG(TLoadCombinedA2AVecsV<FIMPL, 200, 96>),  MIO);
+MODULE_REGISTER_TMP(LoadCombinedA2AVecsV100x96,  ARG(TLoadCombinedA2AVecsV<FIMPL, 100, 96>),  MIO);
 
 /******************************************************************************
- *                  TLoadCombinedA2AVecs implementation                      *
+ *                  TLoadCombinedA2AVecsV implementation                      *
  ******************************************************************************/
 // constructor /////////////////////////////////////////////////////////////////
 template <typename FImpl, int lowBinSize, int highBinSize>
-TLoadCombinedA2AVecs<FImpl, lowBinSize, highBinSize>::TLoadCombinedA2AVecs(const std::string name)
-: Module<LoadCombinedA2AVecsPar>(name)
+TLoadCombinedA2AVecsV<FImpl, lowBinSize, highBinSize>::TLoadCombinedA2AVecsV(const std::string name)
+: Module<LoadCombinedA2AVecsVPar>(name)
 {}
 
 // dependencies/products ///////////////////////////////////////////////////////
 template <typename FImpl, int lowBinSize, int highBinSize>
-std::vector<std::string> TLoadCombinedA2AVecs<FImpl, lowBinSize, highBinSize>::getInput(void)
+std::vector<std::string> TLoadCombinedA2AVecsV<FImpl, lowBinSize, highBinSize>::getInput(void)
 {
     std::vector<std::string> in;
 
@@ -109,7 +116,7 @@ std::vector<std::string> TLoadCombinedA2AVecs<FImpl, lowBinSize, highBinSize>::g
 }
 
 template <typename FImpl, int lowBinSize, int highBinSize>
-std::vector<std::string> TLoadCombinedA2AVecs<FImpl, lowBinSize, highBinSize>::getOutput(void)
+std::vector<std::string> TLoadCombinedA2AVecsV<FImpl, lowBinSize, highBinSize>::getOutput(void)
 {
     std::vector<std::string> out = {getName()};
 
@@ -118,7 +125,7 @@ std::vector<std::string> TLoadCombinedA2AVecs<FImpl, lowBinSize, highBinSize>::g
 
 // setup ///////////////////////////////////////////////////////////////////////
 template <typename FImpl, int lowBinSize, int highBinSize>
-void TLoadCombinedA2AVecs<FImpl, lowBinSize, highBinSize>::setup(void)
+void TLoadCombinedA2AVecsV<FImpl, lowBinSize, highBinSize>::setup(void)
 {
     if (par().nLow % lowBinSize != 0)
     {
@@ -126,14 +133,14 @@ void TLoadCombinedA2AVecs<FImpl, lowBinSize, highBinSize>::setup(void)
                             + ") is not a multiple of the low-mode bin size ("
                             + std::to_string(lowBinSize) + ")");
     }
-    if (par().nHighEach % highBinSize != 0)
+    if (par().highSize % highBinSize != 0)
     {
-        HADRONS_ERROR(Size, "nHighEach (" + std::to_string(par().nHighEach)
+        HADRONS_ERROR(Size, "highSize (" + std::to_string(par().highSize)
                             + ") is not a multiple of the high-mode bin size ("
                             + std::to_string(highBinSize) + ")");
     }
 
-    unsigned int total = par().nLow + par().highExtensions.size() * par().nHighEach;
+    unsigned int total = par().nLow + par().highExtensions.size() * par().highSize;
     auto         grid  = envGetGrid(FermionField);
 
     envCreate(std::vector<FermionField>, getName(), 1, 0, grid);
@@ -147,7 +154,7 @@ void TLoadCombinedA2AVecs<FImpl, lowBinSize, highBinSize>::setup(void)
 
 // execution ///////////////////////////////////////////////////////////////////
 template <typename FImpl, int lowBinSize, int highBinSize>
-void TLoadCombinedA2AVecs<FImpl, lowBinSize, highBinSize>::execute(void)
+void TLoadCombinedA2AVecsV<FImpl, lowBinSize, highBinSize>::execute(void)
 {
     auto &out = envGet(std::vector<FermionField>, getName());
     unsigned int offset = 0;
@@ -164,18 +171,29 @@ void TLoadCombinedA2AVecs<FImpl, lowBinSize, highBinSize>::execute(void)
         offset += par().nLow;
     }
 
-    int Nb = par().nHighEach / highBinSize;
+    int  Nb   = par().highSize / highBinSize;
+    Real norm = (par().nHit > 0) ? (1.0/par().nHit) : 1.0;
+
     for (unsigned int h = 0; h < par().highExtensions.size(); ++h)
     {
         std::string filestem = par().highStem + par().highExtensions[h];
         std::vector<Lattice<HighBinnedSpinor>> bvec(Nb, envGetGrid(Lattice<HighBinnedSpinor>));
 
-        LOG(Message) << "Loading " << par().nHighEach << " high-mode A2A vectors from '"
+        LOG(Message) << "Loading " << par().highSize << " high-mode A2A vectors from '"
                      << filestem << "' (" << Nb << " files of "
                      << highBinSize << " binned vectors)" << std::endl;
         A2AVectorsIo::read(bvec, filestem, true, vm().getTrajectory());
         A2Autils<FImpl>::template UnpackBinnedVectors<highBinSize>(out, offset, bvec);
-        offset += par().nHighEach;
+        if (norm != 1.0)
+        {
+            LOG(Message) << "Applying 1/nHit = " << norm
+                         << " hit-average normalization" << std::endl;
+            for (unsigned int i = offset; i < offset + par().highSize; ++i)
+            {
+                out[i] = norm*out[i];
+            }
+        }
+        offset += par().highSize;
     }
 }
 
@@ -183,4 +201,4 @@ END_MODULE_NAMESPACE
 
 END_HADRONS_NAMESPACE
 
-#endif // Hadrons_MIO_LoadCombinedA2AVecs_hpp_
+#endif // Hadrons_MIO_LoadCombinedA2AVecsV_hpp_

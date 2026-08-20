@@ -39,8 +39,8 @@ BEGIN_HADRONS_NAMESPACE
  *  A2A vector constructions below. Lets a module hold a single              *
  *  std::unique_ptr<A2AVectorsSchurBase<FImpl>>, chosen and constructed at   *
  *  runtime from an XML schurConvention string in setup() (mirroring how    *
- *  MSolver::MixedPrecisionRBPrecCG and MSolver::A2AVectorsCoarseLow's       *
- *  checkOp_ already pick a concrete SchurDiagOneOperator/SchurDiagTwoOperator*
+ *  MSolver::MixedPrecisionRBPrecCG already picks a concrete                 *
+ *  SchurDiagOneOperator/SchurDiagTwoOperator                                *
  *  at runtime), rather than needing the concrete type fixed at compile     *
  *  time. The high-mode methods never depend on the Schur convention (see   *
  *  A2AVectorsSchurDiagTwo/One below -- neither one's makeHighMode* touches *
@@ -54,6 +54,13 @@ public:
     FERM_TYPE_ALIASES(FImpl,);
     SOLVER_TYPE_ALIASES(FImpl,);
 public:
+    // Action-only construction is for low-mode-only users (e.g.
+    // MUtilities::A2ALowModeCoarseBinned): nothing in the low-mode methods or
+    // op() ever touches the solver, so those modules no longer have to wire a
+    // dummy solver dependency through their XML just to satisfy this
+    // constructor. Calling makeHighModeV/V5D on an action-only instance is a
+    // hard error (see makeHighModeV).
+    A2AVectorsSchurBase(FMat &action);
     A2AVectorsSchurBase(FMat &action, Solver &solver);
     virtual ~A2AVectorsSchurBase(void) = default;
     virtual void makeLowModeV(FermionField &vout,
@@ -65,7 +72,7 @@ public:
     virtual void makeLowModeW5D(FermionField &wout_4d, FermionField &wout_5d,
                                 const FermionField &evec, const Real &eval) = 0;
     // Exposes the concrete DiagOne/DiagTwo Schur operator used internally by
-    // makeLowModeW/op_, so callers (e.g. A2AVectorsCoarseLow's in-program
+    // makeLowModeW/op_, so callers (e.g. A2ALowModeCoarseBinned's in-program
     // eigenvector check) can validate evec_i against the exact same operator
     // this class uses to build V/W, rather than independently re-deriving
     // which SchurDiagOneOperator/SchurDiagTwoOperator to build from a second
@@ -79,7 +86,9 @@ public:
                          const FermionField &noise_5d);
 protected:
     FMat         &action_;
-    Solver       &solver_;
+    // Pointer, not reference, so the action-only constructor above can leave
+    // it null; makeHighModeV checks before dereferencing.
+    Solver       *solver_;
     GridBase     *fGrid_;
     FermionField tmp5_;
 };
@@ -94,6 +103,7 @@ public:
     FERM_TYPE_ALIASES(FImpl,);
     SOLVER_TYPE_ALIASES(FImpl,);
 public:
+    A2AVectorsSchurDiagTwo(FMat &action);
     A2AVectorsSchurDiagTwo(FMat &action, Solver &solver);
     ~A2AVectorsSchurDiagTwo(void) override = default;
     void makeLowModeV(FermionField &vout,
@@ -123,6 +133,7 @@ public:
     FERM_TYPE_ALIASES(FImpl,);
     SOLVER_TYPE_ALIASES(FImpl,);
 public:
+    A2AVectorsSchurDiagOne(FMat &action);
     A2AVectorsSchurDiagOne(FMat &action, Solver &solver);
     ~A2AVectorsSchurDiagOne(void) override = default;
     void makeLowModeV(FermionField &vout,
@@ -164,15 +175,38 @@ public:
     // Write a single element under an explicit, caller-supplied index, without
     // ever holding a full std::vector<Field> resident -- used by modules that
     // stream their output bin by bin. Always writes one file per element
-    // (i.e. the multiFile=true layout of write() above); there is no
-    // single-growing-file (multiFile=false) counterpart, since that would
-    // require keeping a ScidacWriter open across calls.
+    // (i.e. the multiFile=true layout of write() above). The single-growing-
+    // file (multiFile=false) counterpart is openWriter/writeRecord below: the
+    // caller holds the ScidacWriter open across calls and streams records
+    // into one file.
     template <typename Field>
     static void writeElement(const std::string fileStem, Field &elem,
                              const unsigned int index, const int trajectory = -1);
     template <typename Field>
     static void read(std::vector<Field> &vec, const std::string fileStem,
                      const bool multiFile, const int trajectory = -1);
+    // Streaming access to the single-file (multiFile=false) layout, one
+    // record at a time, so callers never hold a full std::vector<Field>:
+    // open once, then write/read records in index order. readRecord is
+    // sequential-only (SciDAC records cannot be seeked by index; the index
+    // argument is a consistency check on the record read). readElement is the
+    // one-element random-access read for the multiFile=true layout (the read
+    // counterpart of writeElement above). All of these match the on-disk
+    // layout of write()/read() exactly.
+    static void openWriter(ScidacWriter &writer, const std::string fileStem,
+                           GridBase *grid, const int trajectory = -1);
+    template <typename Field>
+    static void writeRecord(ScidacWriter &writer, Field &field,
+                            const unsigned int index);
+    static void openReader(ScidacReader &reader, const std::string fileStem,
+                           const int trajectory = -1);
+    template <typename Field>
+    static void readRecord(ScidacReader &reader, Field &field,
+                           const unsigned int index);
+    template <typename Field>
+    static void readElement(const std::string fileStem, Field &field,
+                            const unsigned int index,
+                            const int trajectory = -1);
 private:
     static inline std::string vecFilename(const std::string stem, const int traj, 
                                           const bool multiFile)
@@ -188,15 +222,31 @@ private:
             return stem + t + ".bin";
         }
     }
+
+    static inline std::string elementFilename(const std::string stem,
+                                              const int traj,
+                                              const unsigned int index)
+    {
+        return vecFilename(stem, traj, true) + "/elem"
+               + std::to_string(index) + ".bin";
+    }
 };
 
 /******************************************************************************
  *                 A2AVectorsSchurBase template implementation                *
  ******************************************************************************/
 template <typename FImpl>
+A2AVectorsSchurBase<FImpl>::A2AVectorsSchurBase(FMat &action)
+: action_(action)
+, solver_(nullptr)
+, fGrid_(action_.FermionGrid())
+, tmp5_(fGrid_)
+{}
+
+template <typename FImpl>
 A2AVectorsSchurBase<FImpl>::A2AVectorsSchurBase(FMat &action, Solver &solver)
 : action_(action)
-, solver_(solver)
+, solver_(&solver)
 , fGrid_(action_.FermionGrid())
 , tmp5_(fGrid_)
 {}
@@ -205,7 +255,13 @@ template <typename FImpl>
 void A2AVectorsSchurBase<FImpl>::makeHighModeV(FermionField &vout,
                                                const FermionField &noise)
 {
-    solver_(vout, noise);
+    if (solver_ == nullptr)
+    {
+        HADRONS_ERROR(Definition, "makeHighModeV called on an action-only "
+                      "A2AVectorsSchurBase (no solver was provided at "
+                      "construction)");
+    }
+    (*solver_)(vout, noise);
 }
 
 template <typename FImpl>
@@ -252,6 +308,18 @@ void A2AVectorsSchurBase<FImpl>::makeHighModeW5D(FermionField &wout_4d,
 /******************************************************************************
  *               A2AVectorsSchurDiagTwo template implementation               *
  ******************************************************************************/
+template <typename FImpl>
+A2AVectorsSchurDiagTwo<FImpl>::A2AVectorsSchurDiagTwo(FMat &action)
+: A2AVectorsSchurBase<FImpl>(action)
+, frbGrid_(action.FermionRedBlackGrid())
+, gGrid_(action.GaugeGrid())
+, src_o_(frbGrid_)
+, sol_e_(frbGrid_)
+, sol_o_(frbGrid_)
+, tmp_(frbGrid_)
+, op_(action)
+{}
+
 template <typename FImpl>
 A2AVectorsSchurDiagTwo<FImpl>::A2AVectorsSchurDiagTwo(FMat &action, Solver &solver)
 : A2AVectorsSchurBase<FImpl>(action, solver)
@@ -354,6 +422,18 @@ SchurOperatorBase<typename FImpl::FermionField>& A2AVectorsSchurDiagTwo<FImpl>::
 /******************************************************************************
  *               A2AVectorsSchurDiagOne template implementation               *
  ******************************************************************************/
+template <typename FImpl>
+A2AVectorsSchurDiagOne<FImpl>::A2AVectorsSchurDiagOne(FMat &action)
+: A2AVectorsSchurBase<FImpl>(action)
+, frbGrid_(action.FermionRedBlackGrid())
+, gGrid_(action.GaugeGrid())
+, src_o_(frbGrid_)
+, sol_e_(frbGrid_)
+, sol_o_(frbGrid_)
+, tmp_(frbGrid_)
+, op_(action)
+{}
+
 template <typename FImpl>
 A2AVectorsSchurDiagOne<FImpl>::A2AVectorsSchurDiagOne(FMat &action, Solver &solver)
 : A2AVectorsSchurBase<FImpl>(action, solver)
@@ -497,17 +577,13 @@ template <typename Field>
 void A2AVectorsIo::writeElement(const std::string fileStem, Field &elem,
                                 const unsigned int index, const int trajectory)
 {
-    Record       record;
     GridBase     *grid = elem.Grid();
     ScidacWriter binWriter(grid->IsBoss());
-    std::string  filename     = vecFilename(fileStem, trajectory, true);
-    std::string  fullFilename = filename + "/elem" + std::to_string(index) + ".bin";
+    std::string  filename = elementFilename(fileStem, trajectory, index);
 
-    LOG(Message) << "Writing vector " << index << std::endl;
-    makeFileDir(fullFilename, grid);
-    binWriter.open(fullFilename);
-    record.index = index;
-    binWriter.writeScidacFieldRecord(elem, record);
+    makeFileDir(filename, grid);
+    binWriter.open(filename);
+    writeRecord(binWriter, elem, index);
     binWriter.close();
 }
 
@@ -551,6 +627,64 @@ void A2AVectorsIo::read(std::vector<Field> &vec, const std::string fileStem,
         }
         binReader.close();
     }
+}
+
+inline void A2AVectorsIo::openWriter(ScidacWriter &writer,
+                                     const std::string fileStem,
+                                     GridBase *grid,
+                                     const int trajectory)
+{
+    std::string filename = vecFilename(fileStem, trajectory, false);
+
+    makeFileDir(filename, grid);
+    writer.open(filename);
+}
+
+template <typename Field>
+void A2AVectorsIo::writeRecord(ScidacWriter &writer, Field &field,
+                               const unsigned int index)
+{
+    Record record;
+
+    LOG(Message) << "Writing vector " << index << std::endl;
+    record.index = index;
+    writer.writeScidacFieldRecord(field, record);
+}
+
+inline void A2AVectorsIo::openReader(ScidacReader &reader,
+                                     const std::string fileStem,
+                                     const int trajectory)
+{
+    std::string filename = vecFilename(fileStem, trajectory, false);
+
+    reader.open(filename);
+}
+
+template <typename Field>
+void A2AVectorsIo::readRecord(ScidacReader &reader, Field &field,
+                              const unsigned int index)
+{
+    Record record;
+
+    LOG(Message) << "Reading vector " << index << std::endl;
+    reader.readScidacFieldRecord(field, record);
+    if (record.index != index)
+    {
+        HADRONS_ERROR(Io, "vector index mismatch");
+    }
+}
+
+template <typename Field>
+void A2AVectorsIo::readElement(const std::string fileStem, Field &field,
+                               const unsigned int index,
+                               const int trajectory)
+{
+    ScidacReader reader;
+    std::string  filename = elementFilename(fileStem, trajectory, index);
+
+    reader.open(filename);
+    readRecord(reader, field, index);
+    reader.close();
 }
 
 END_HADRONS_NAMESPACE

@@ -148,6 +148,31 @@ void TLoadTimeDilutedSpinColorDiagonalNoise<FImpl>::execute(void)
             v[i*par().nNoisePerFileStem + j] = vTmp[j];
         }
     }
+
+    // Integrity check on the loaded raw noise: every site is a Z2xiZ2 value
+    // with |eta|=1, so norm2() summed over the whole field must equal the
+    // global site count exactly. Unlike the generation-side check in
+    // MNoise::TimeDilutedSpinColorDiagonal (a warning), a mismatch here is a
+    // hard error: it means the file on disk is corrupt, truncated, or not a
+    // raw noise field at all, and every W vector expanded from it would be
+    // silently wrong.
+    for (unsigned int n = 0; n < v.size(); ++n)
+    {
+        RealD n2       = norm2(v[n]);
+        RealD expected = static_cast<RealD>(v[n].Grid()->gSites());
+        RealD relDiff  = std::abs(n2 - expected)/expected;
+
+        LOG(Message) << "Noise vector " << n << " norm2 = " << n2
+                     << " (expected " << expected << ", relative diff "
+                     << relDiff << ")" << std::endl;
+        if (!std::isfinite(n2) || (relDiff > 1.0e-10))
+        {
+            HADRONS_ERROR(Io, "noise vector " + std::to_string(n)
+                          + " failed the norm2 integrity check (non-finite "
+                          + "or |eta| != 1 somewhere): file data is corrupt, "
+                          + "truncated, or not raw spin-color diagonal noise");
+        }
+    }
 }
 
 END_MODULE_NAMESPACE

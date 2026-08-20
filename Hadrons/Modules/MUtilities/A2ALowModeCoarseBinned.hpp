@@ -1,5 +1,5 @@
 /*
- * A2AVectorsCoarseLow.hpp, part of Hadrons (https://github.com/aportelli/Hadrons)
+ * A2ALowModeCoarseBinned.hpp, part of Hadrons (https://github.com/aportelli/Hadrons)
  *
  * Copyright (C) 2015 - 2023
  *
@@ -24,15 +24,14 @@
  */
 
 /*  END LEGAL */
-#ifndef Hadrons_MSolver_A2AVectorsCoarseLow_hpp_
-#define Hadrons_MSolver_A2AVectorsCoarseLow_hpp_
+#ifndef Hadrons_MUtilities_A2ALowModeCoarseBinned_hpp_
+#define Hadrons_MUtilities_A2ALowModeCoarseBinned_hpp_
 
 #include <memory>
 
 #include <Hadrons/Global.hpp>
 #include <Hadrons/Module.hpp>
 #include <Hadrons/ModuleFactory.hpp>
-#include <Hadrons/Solver.hpp>
 #include <Hadrons/EigenPack.hpp>
 #include <Hadrons/A2AVectors.hpp>
 
@@ -42,40 +41,41 @@ BEGIN_HADRONS_NAMESPACE
  *  Stream low-mode A2A V & W vectors straight to disk, binned, directly     *
  *  from a compressed (LC) coarse eigenpack. Low modes are decompressed/     *
  *  promoted on the fly, one bin at a time, so the full Nl-sized V/W arrays  *
- *  are never resident -- unlike MSolver::A2AVectorsCoarse followed by       *
- *  MIO::SaveBinnedA2AVecs, which together hold the full arrays twice (once  *
- *  as the flat V/W vectors, again as the packed bin copy). Only one bin's   *
- *  worth of fields (compile-time binSize) is ever resident at once.         *
+ *  are never resident -- only one bin's worth of fields (compile-time       *
+ *  binSize) at once. Coarse-deflation companion to                          *
+ *  MUtilities::A2ALowModeBinned, which does the same streaming from an      *
+ *  uncompressed (exact) eigenpack. Lives in MUtilities rather than MSolver  *
+ *  because no solve ever happens here: low modes are built algebraically    *
+ *  from the eigenvectors, so unlike MSolver::A2AHighModeVBinned there is    *
+ *  no solver dependency at all.                                             *
  ******************************************************************************/
-BEGIN_MODULE_NAMESPACE(MSolver)
+BEGIN_MODULE_NAMESPACE(MUtilities)
 
-class A2AVectorsCoarseLowPar: Serializable
+class A2ALowModeCoarseBinnedPar: Serializable
 {
 public:
-    GRID_SERIALIZABLE_CLASS_MEMBERS(A2AVectorsCoarseLowPar,
+    GRID_SERIALIZABLE_CLASS_MEMBERS(A2ALowModeCoarseBinnedPar,
                                     std::string, eigenPack,
                                     std::string, action,
-                                    std::string, solver,
                                     std::string, output,
                                     std::string, schurConvention,
                                     unsigned int, checkInterval);
 };
 
 template <typename FImpl, typename FImplPack, int nBasis, int binSize>
-class TA2AVectorsCoarseLow : public Module<A2AVectorsCoarseLowPar>
+class TA2ALowModeCoarseBinned : public Module<A2ALowModeCoarseBinnedPar>
 {
 public:
     FERM_TYPE_ALIASES(FImpl,);
     FERM_TYPE_ALIASES(FImplPack, Pack);
-    SOLVER_TYPE_ALIASES(FImpl,);
     typedef CoarseFermionEigenPack<FImplPack, nBasis> EPack;
     typedef typename FImpl::SiteSpinor::vector_type   vector_type;
     typedef iVector<iVector<iVector<vector_type, Nc>, Ns>, binSize> SiteSpinorSet;
 public:
     // constructor
-    TA2AVectorsCoarseLow(const std::string name);
+    TA2ALowModeCoarseBinned(const std::string name);
     // destructor
-    virtual ~TA2AVectorsCoarseLow(void) {};
+    virtual ~TA2ALowModeCoarseBinned(void) {};
     // dependency relation
     virtual std::vector<std::string> getInput(void);
     virtual std::vector<std::string> getOutput(void);
@@ -96,40 +96,35 @@ private:
     std::unique_ptr<A2AVectorsSchurBase<FImpl>> a2a_;
 };
 
-MODULE_REGISTER_TMP(A2AVectorsCoarseLow200Bin200,
-    ARG(TA2AVectorsCoarseLow<FIMPL, FIMPLF, 200, 200>), MSolver);
-MODULE_REGISTER_TMP(A2AVectorsCoarseLow200Bin100,
-    ARG(TA2AVectorsCoarseLow<FIMPL, FIMPLF, 200, 100>), MSolver);
-MODULE_REGISTER_TMP(ZA2AVectorsCoarseLow200Bin200,
-    ARG(TA2AVectorsCoarseLow<ZFIMPL, ZFIMPLF, 200, 200>), MSolver);
-MODULE_REGISTER_TMP(ZA2AVectorsCoarseLow200Bin100,
-    ARG(TA2AVectorsCoarseLow<ZFIMPL, ZFIMPLF, 200, 100>), MSolver);
+MODULE_REGISTER_TMP(A2ALowModeCoarseBinned200Bin200,
+    ARG(TA2ALowModeCoarseBinned<FIMPL, FIMPLF, 200, 200>), MUtilities);
+MODULE_REGISTER_TMP(A2ALowModeCoarseBinned200Bin100,
+    ARG(TA2ALowModeCoarseBinned<FIMPL, FIMPLF, 200, 100>), MUtilities);
+MODULE_REGISTER_TMP(ZA2ALowModeCoarseBinned200Bin200,
+    ARG(TA2ALowModeCoarseBinned<ZFIMPL, ZFIMPLF, 200, 200>), MUtilities);
+MODULE_REGISTER_TMP(ZA2ALowModeCoarseBinned200Bin100,
+    ARG(TA2ALowModeCoarseBinned<ZFIMPL, ZFIMPLF, 200, 100>), MUtilities);
 
 /******************************************************************************
- *                   TA2AVectorsCoarseLow implementation                      *
+ *                   TA2ALowModeCoarseBinned implementation                      *
  ******************************************************************************/
 // constructor /////////////////////////////////////////////////////////////////
 template <typename FImpl, typename FImplPack, int nBasis, int binSize>
-TA2AVectorsCoarseLow<FImpl, FImplPack, nBasis, binSize>::TA2AVectorsCoarseLow(const std::string name)
-: Module<A2AVectorsCoarseLowPar>(name)
+TA2ALowModeCoarseBinned<FImpl, FImplPack, nBasis, binSize>::TA2ALowModeCoarseBinned(const std::string name)
+: Module<A2ALowModeCoarseBinnedPar>(name)
 {}
 
 // dependencies/products ///////////////////////////////////////////////////////
 template <typename FImpl, typename FImplPack, int nBasis, int binSize>
-std::vector<std::string> TA2AVectorsCoarseLow<FImpl, FImplPack, nBasis, binSize>::getInput(void)
+std::vector<std::string> TA2ALowModeCoarseBinned<FImpl, FImplPack, nBasis, binSize>::getInput(void)
 {
-    // Unlike MSolver::A2AVectorsCoarse, this module never runs a CG solve
-    // (low modes are exact deflation, not stochastic), so par().solver is
-    // only referenced to satisfy the A2A vector constructor -- it is never
-    // actually invoked. Point it at whatever solver object is otherwise
-    // convenient; there is no "_subtract" requirement here.
-    std::vector<std::string> in = {par().eigenPack, par().action, par().solver};
+    std::vector<std::string> in = {par().eigenPack, par().action};
 
     return in;
 }
 
 template <typename FImpl, typename FImplPack, int nBasis, int binSize>
-std::vector<std::string> TA2AVectorsCoarseLow<FImpl, FImplPack, nBasis, binSize>::getOutput(void)
+std::vector<std::string> TA2ALowModeCoarseBinned<FImpl, FImplPack, nBasis, binSize>::getOutput(void)
 {
     std::vector<std::string> out = {};
 
@@ -138,11 +133,10 @@ std::vector<std::string> TA2AVectorsCoarseLow<FImpl, FImplPack, nBasis, binSize>
 
 // setup ///////////////////////////////////////////////////////////////////////
 template <typename FImpl, typename FImplPack, int nBasis, int binSize>
-void TA2AVectorsCoarseLow<FImpl, FImplPack, nBasis, binSize>::setup(void)
+void TA2ALowModeCoarseBinned<FImpl, FImplPack, nBasis, binSize>::setup(void)
 {
     auto        &epack  = envGet(EPack, par().eigenPack);
     auto        &action = envGet(FMat, par().action);
-    auto        &solver = envGet(Solver, par().solver);
     int         Ls      = env().getObjectLs(par().action);
 
     if (env().getObjectLs(par().eigenPack) != Ls)
@@ -154,15 +148,15 @@ void TA2AVectorsCoarseLow<FImpl, FImplPack, nBasis, binSize>::setup(void)
 
     if (schurConv == "DiagOne")
     {
-        a2a_.reset(new A2AVectorsSchurDiagOne<FImpl>(action, solver));
+        a2a_.reset(new A2AVectorsSchurDiagOne<FImpl>(action));
     }
     else if (schurConv == "DiagTwo")
     {
-        a2a_.reset(new A2AVectorsSchurDiagTwo<FImpl>(action, solver));
+        a2a_.reset(new A2AVectorsSchurDiagTwo<FImpl>(action));
     }
     else if (schurConv.empty())
     {
-        a2a_.reset(new HADRONS_DEFAULT_SCHUR_A2A<FImpl>(action, solver));
+        a2a_.reset(new HADRONS_DEFAULT_SCHUR_A2A<FImpl>(action));
     }
     else
     {
@@ -216,7 +210,7 @@ void TA2AVectorsCoarseLow<FImpl, FImplPack, nBasis, binSize>::setup(void)
 
 // execution ///////////////////////////////////////////////////////////////////
 template <typename FImpl, typename FImplPack, int nBasis, int binSize>
-void TA2AVectorsCoarseLow<FImpl, FImplPack, nBasis, binSize>::execute(void)
+void TA2ALowModeCoarseBinned<FImpl, FImplPack, nBasis, binSize>::execute(void)
 {
     auto        &epack  = envGet(EPack, par().eigenPack);
     auto        &action = envGet(FMat, par().action);
@@ -394,4 +388,4 @@ END_MODULE_NAMESPACE
 
 END_HADRONS_NAMESPACE
 
-#endif // Hadrons_MSolver_A2AVectorsCoarseLow_hpp_
+#endif // Hadrons_MUtilities_A2ALowModeCoarseBinned_hpp_

@@ -1,5 +1,5 @@
 /*
- * LoadCombinedA2AVecs.cpp, part of Hadrons (https://github.com/aportelli/Hadrons)
+ * LoadCombinedA2AVecsV.cpp, part of Hadrons (https://github.com/aportelli/Hadrons)
  *
  * Copyright (C) 2015 - 2026
  *
@@ -23,13 +23,13 @@
  */
 
 /*  END LEGAL */
-#include <Hadrons/Modules/MIO/LoadCombinedA2AVecs.hpp>
+#include <Hadrons/Modules/MIO/LoadCombinedA2AVecsV.hpp>
 
 using namespace Grid;
 using namespace Hadrons;
 using namespace MIO;
 
-template class Grid::Hadrons::MIO::TLoadCombinedA2AVecs<FIMPL, 200, 128>;
-template class Grid::Hadrons::MIO::TLoadCombinedA2AVecs<FIMPL, 100, 128>;
-template class Grid::Hadrons::MIO::TLoadCombinedA2AVecs<FIMPL, 200, 96>;
-template class Grid::Hadrons::MIO::TLoadCombinedA2AVecs<FIMPL, 100, 96>;
+template class Grid::Hadrons::MIO::TLoadCombinedA2AVecsV<FIMPL, 200, 128>;
+template class Grid::Hadrons::MIO::TLoadCombinedA2AVecsV<FIMPL, 100, 128>;
+template class Grid::Hadrons::MIO::TLoadCombinedA2AVecsV<FIMPL, 200, 96>;
+template class Grid::Hadrons::MIO::TLoadCombinedA2AVecsV<FIMPL, 100, 96>;

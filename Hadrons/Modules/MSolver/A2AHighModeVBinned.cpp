@@ -1,10 +1,9 @@
 /*
- * A2AVectorsCoarseLow.cpp, part of Hadrons (https://github.com/aportelli/Hadrons)
+ * A2AHighModeVBinned.cpp, part of Hadrons (https://github.com/aportelli/Hadrons)
  *
- * Copyright (C) 2015 - 2023
+ * Copyright (C) 2015 - 2026
  *
  * Author: Antonin Portelli <antonin.portelli@me.com>
- * Author: Jonas Hildebrand <jonas.hildebrand@uconn.edu>
  *
  * Hadrons is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,15 +21,15 @@
  * See the full license in the file "LICENSE" in the top level distribution
  * directory.
  */
-
 /*  END LEGAL */
-#include <Hadrons/Modules/MSolver/A2AVectorsCoarseLow.hpp>
-
+#include <Hadrons/Modules/MSolver/A2AHighModeVBinned.hpp>
 using namespace Grid;
 using namespace Hadrons;
 using namespace MSolver;
-
-template class HADRONS_NAMESPACE::MSolver::TA2AVectorsCoarseLow<FIMPL, FIMPLF, 200, 200>;
-template class HADRONS_NAMESPACE::MSolver::TA2AVectorsCoarseLow<FIMPL, FIMPLF, 200, 100>;
-template class HADRONS_NAMESPACE::MSolver::TA2AVectorsCoarseLow<ZFIMPL, ZFIMPLF, 200, 200>;
-template class HADRONS_NAMESPACE::MSolver::TA2AVectorsCoarseLow<ZFIMPL, ZFIMPLF, 200, 100>;
+template class HADRONS_NAMESPACE::MSolver::TA2AHighModeVBinned<FIMPL, 64>;
+template class HADRONS_NAMESPACE::MSolver::TA2AHighModeVBinned<FIMPL, 96>;
+template class HADRONS_NAMESPACE::MSolver::TA2AHighModeVBinned<FIMPL, 128>;
+template class HADRONS_NAMESPACE::MSolver::TA2AHighModeVBinned<FIMPL, 192>;
+template class HADRONS_NAMESPACE::MSolver::TA2AHighModeVBinned<FIMPL, 256>;
+template class HADRONS_NAMESPACE::MSolver::TA2AHighModeVBinned<ZFIMPL, 96>;
+template class HADRONS_NAMESPACE::MSolver::TA2AHighModeVBinned<ZFIMPL, 192>;

@@ -1,9 +1,8 @@
 /*
- * A2AVectorsCoarse.cpp, part of Hadrons (https://github.com/aportelli/Hadrons)
+ * LoadCombinedA2AVecsW.cpp, part of Hadrons (https://github.com/aportelli/Hadrons)
  *
- * Copyright (C) 2015 - 2023
+ * Copyright (C) 2015 - 2026
  *
- * Author: Antonin Portelli <antonin.portelli@me.com>
  * Author: Jonas Hildebrand <jonas.hildebrand@uconn.edu>
  *
  * Hadrons is free software: you can redistribute it and/or modify
@@ -24,11 +23,13 @@
  */
 
 /*  END LEGAL */
-#include <Hadrons/Modules/MSolver/A2AVectorsCoarse.hpp>
+#include <Hadrons/Modules/MIO/LoadCombinedA2AVecsW.hpp>
 
 using namespace Grid;
 using namespace Hadrons;
-using namespace MSolver;
+using namespace MIO;
 
-template class HADRONS_NAMESPACE::MSolver::TA2AVectorsCoarse<FIMPL, FIMPLF, 200>;
-template class HADRONS_NAMESPACE::MSolver::TA2AVectorsCoarse<ZFIMPL, ZFIMPLF, 200>;
+template class Grid::Hadrons::MIO::TLoadCombinedA2AVecsW<FIMPL, 200>;
+template class Grid::Hadrons::MIO::TLoadCombinedA2AVecsW<FIMPL, 100>;
+template class Grid::Hadrons::MIO::TLoadCombinedA2AVecsW<ZFIMPL, 200>;
+template class Grid::Hadrons::MIO::TLoadCombinedA2AVecsW<ZFIMPL, 100>;
