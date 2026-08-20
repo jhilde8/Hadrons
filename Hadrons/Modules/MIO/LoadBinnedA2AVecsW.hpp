@@ -30,6 +30,7 @@ See the full license in the file "LICENSE" in the top level distribution directo
 #include <Hadrons/ModuleFactory.hpp>
 #include <Hadrons/A2AVectors.hpp>
 #include <Hadrons/DilutedNoise.hpp>
+#include <Grid/qcd/utils/A2Autils.h>
 
 BEGIN_HADRONS_NAMESPACE
 
@@ -52,7 +53,12 @@ class TLoadBinnedA2AVecsW: public Module<LoadBinnedA2AVecsWPar>
 public:
     FERM_TYPE_ALIASES(FImpl,);
     typedef typename FImpl::SiteSpinor::vector_type vector_type;
-    typedef iVector<iVector<iVector<vector_type, Nc>, Ns>, binSize> SiteSpinorSet;
+    // typedef iVector<iVector<iVector<vector_type, Nc>, Ns>, binSize> SiteSpinorSet;
+    // Same memory layout and on-disk format as the commented spelling above
+    // (differs only by an iScalar wrapper); this spelling matches
+    // A2Autils::UnpackBinnedVectors, the CPU-view unpack that avoids the
+    // peekLorentz device-stack overflow on GPU builds.
+    typedef iVector<typename FImpl::SiteSpinor, binSize> SiteSpinorSet;
 public:
     // constructor
     TLoadBinnedA2AVecsW(const std::string name);
@@ -109,8 +115,20 @@ void TLoadBinnedA2AVecsW<FImpl, binSize>::setup(void)
 
     assert(par().lowSize % binSize == 0);
     assert((par().lowSize == 0) or (!par().filestem.empty()));
-    envCreate(std::vector<FermionField>, getName(), 1,
-              par().lowSize + noise.fermSize(), envGetGrid(FermionField));
+    // envCreate(std::vector<FermionField>, getName(), 1,
+    //           par().lowSize + noise.fermSize(), envGetGrid(FermionField));
+    // Emplace with CpuWrite instead of fill-constructing, so the full
+    // fermion field set is not also allocated device-side up front.
+    unsigned int total = par().lowSize + noise.fermSize();
+    auto         grid  = envGetGrid(FermionField);
+
+    envCreate(std::vector<FermionField>, getName(), 1, 0, grid);
+    auto &w = envGet(std::vector<FermionField>, getName());
+    w.reserve(total);
+    for (unsigned int i = 0; i < total; ++i)
+    {
+        w.emplace_back(grid, CpuWrite);
+    }
 }
 
 // high mode W /////////////////////////////////////////////////////////////////
@@ -134,7 +152,11 @@ void TLoadBinnedA2AVecsW<FImpl, binSize>::execute(void)
     // Low modes
     if (par().lowSize > 0)
     {
-        Lattice<SiteSpinorSet> bvec(envGetGrid(Lattice<SiteSpinorSet>));
+        // Lattice<SiteSpinorSet> bvec(envGetGrid(Lattice<SiteSpinorSet>));
+        // One-element vector so the bin can be handed to
+        // A2Autils::UnpackBinnedVectors; still only one bin resident.
+        std::vector<Lattice<SiteSpinorSet>> bvec(
+            1, envGetGrid(Lattice<SiteSpinorSet>));
 
         LOG(Message) << "Loading " << par().lowSize << " low-mode W vectors from "
                      << Nb << " files of " << binSize << " binned vectors"
@@ -143,12 +165,14 @@ void TLoadBinnedA2AVecsW<FImpl, binSize>::execute(void)
         {
             for (int i = 0; i < Nb; ++i)
             {
-                A2AVectorsIo::readElement(par().filestem, bvec, i,
+                A2AVectorsIo::readElement(par().filestem, bvec[0], i,
                                           vm().getTrajectory());
-                for (int j = 0; j < binSize; ++j)
-                {
-                    w[i*binSize + j] = peekLorentz(bvec, j);
-                }
+                // for (int j = 0; j < binSize; ++j)
+                // {
+                //     w[i*binSize + j] = peekLorentz(bvec, j);
+                // }
+                A2Autils<FImpl>::template UnpackBinnedVectors<binSize>(
+                    w, i*binSize, bvec);
             }
         }
         else
@@ -159,11 +183,13 @@ void TLoadBinnedA2AVecsW<FImpl, binSize>::execute(void)
                                      vm().getTrajectory());
             for (int i = 0; i < Nb; ++i)
             {
-                A2AVectorsIo::readRecord(binReader, bvec, i);
-                for (int j = 0; j < binSize; ++j)
-                {
-                    w[i*binSize + j] = peekLorentz(bvec, j);
-                }
+                A2AVectorsIo::readRecord(binReader, bvec[0], i);
+                // for (int j = 0; j < binSize; ++j)
+                // {
+                //     w[i*binSize + j] = peekLorentz(bvec, j);
+                // }
+                A2Autils<FImpl>::template UnpackBinnedVectors<binSize>(
+                    w, i*binSize, bvec);
             }
             binReader.close();
         }
