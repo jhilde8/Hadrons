@@ -35,12 +35,33 @@ BEGIN_MODULE_NAMESPACE(MContraction)
 class A2AExtendedMesonFieldPar: Serializable
 {
 public:
+    // The quark loop arrives one of two mutually exclusive ways:
+    //
+    //   loop                name of a precomputed PropagatorField - from
+    //                       MContraction::A2ALoopNew in this job, or read off
+    //                       disk with MIO::LoadProp. This is the production
+    //                       path: the module never sees modes, hit counts or
+    //                       W representations, and the loop's vector arrays
+    //                       are freed before this module runs.
+    //
+    //   loop_vw1, loop_vw2  names of the loop's A2A vector arrays, built
+    //                       in-module. TEMPORARY - expanded W only, plain
+    //                       index-for-index pairing, no dense-W handling. It
+    //                       exists solely as the reference the loop input is
+    //                       verified against (gen_verify_loop.py rung 1) and
+    //                       is to be deleted once that passes. It cannot fit
+    //                       at production hit counts anyway, since both mode
+    //                       arrays must stay resident alongside the external
+    //                       legs for this module's whole execution.
+    //
+    // setup() rejects neither and both.
     GRID_SERIALIZABLE_CLASS_MEMBERS(A2AExtendedMesonFieldPar,
                                     int, block,
                                     int, cacheBlock,
 				    std::string, types,
                                     std::string, left,
                                     std::string, right,
+                                    std::string, loop,
 				    std::string, loop_vw1,
 				    std::string, loop_vw2,
                                     std::string, output,
@@ -99,11 +120,23 @@ TA2AExtendedMesonField<FImpl>::TA2AExtendedMesonField(const std::string name)
 }
 
 // dependencies/products ///////////////////////////////////////////////////////
-// Modification needed??
 template <typename FImpl>
 std::vector<std::string> TA2AExtendedMesonField<FImpl>::getInput(void)
 {
-  std::vector<std::string> in = {par().left, par().right, par().loop_vw1, par().loop_vw2};
+    std::vector<std::string> in = {par().left, par().right};
+
+    // Only the loop source actually in use is declared, so the other one's
+    // objects are never kept alive on this module's account. With the loop
+    // input that means the loop's mode arrays die with their producer.
+    if (!par().loop.empty())
+    {
+        in.push_back(par().loop);
+    }
+    else
+    {
+        in.push_back(par().loop_vw1);
+        in.push_back(par().loop_vw2);
+    }
 
     return in;
 }
@@ -206,9 +239,26 @@ void TA2AExtendedMesonField<FImpl>::setup(void)
       }
       gamma2_.push_back(vec);
     }
-    auto &left  = envGet(std::vector<FermionField>, par().left);
-    GridBase *grid = left[0].Grid();
-    envCreateLat(PropagatorField, getName() + "_propagatorLoop");
+    bool haveLoop = !par().loop.empty();
+    bool haveVecs = !par().loop_vw1.empty() || !par().loop_vw2.empty();
+
+    if (haveLoop && haveVecs)
+    {
+        HADRONS_ERROR(Argument, "set either 'loop' or 'loop_vw1'/'loop_vw2', "
+                                "not both");
+    }
+    if (!haveLoop && !(!par().loop_vw1.empty() && !par().loop_vw2.empty()))
+    {
+        HADRONS_ERROR(Argument, "no quark loop: set 'loop', or both of "
+                                "'loop_vw1' and 'loop_vw2'");
+    }
+
+    // Only the in-module path needs somewhere to build the loop; with the
+    // loop input the propagator is owned by whoever produced it.
+    if (!haveLoop)
+    {
+        envCreateLat(PropagatorField, getName() + "_propagatorLoop");
+    }
 }
 
 // execution ///////////////////////////////////////////////////////////////////
@@ -218,10 +268,9 @@ void TA2AExtendedMesonField<FImpl>::execute(void)
   typedef iSpinColourVector<vector_type> SpinColourVector_v;
     auto &left  = envGet(std::vector<FermionField>, par().left);
     auto &right = envGet(std::vector<FermionField>, par().right);
-    auto &loop1 = envGet(std::vector<const FermionField *>, par().loop_vw1);
-    auto &loop2 = envGet(std::vector<const FermionField *>, par().loop_vw2);
 
     GridBase *grid = left[0].Grid();
+    bool haveLoop = !par().loop.empty();
 
     LOG(Message) << "Computing all-to-all EXTENDED meson fields" << std::endl;
 
@@ -234,8 +283,16 @@ void TA2AExtendedMesonField<FImpl>::execute(void)
 
     LOG(Message) << "Left: '" << par().left << "' Right: '"
 		 << par().right << "'" << std::endl;
-    LOG(Message) << "A2AVectors for loop: '" << par().loop_vw1
-		 << "' and '" << par().loop_vw2 << "'" << std::endl;
+    if (haveLoop)
+    {
+        LOG(Message) << "Quark loop: '" << par().loop << "' (precomputed)"
+                     << std::endl;
+    }
+    else
+    {
+        LOG(Message) << "A2AVectors for loop: '" << par().loop_vw1
+                     << "' and '" << par().loop_vw2 << "'" << std::endl;
+    }
     LOG(Message) << "Spin bilinears1:" << std::endl;
     for (auto &g: gamma1_)
     {
@@ -250,11 +307,37 @@ void TA2AExtendedMesonField<FImpl>::execute(void)
                  << " (filesize " << sizeString(nt*N_i*N_j*sizeof(HADRONS_A2AM_IO_TYPE)) 
                  << "/momentum/bilinear)" << std::endl;
 
-    auto &loop = envGet(PropagatorField, getName() + "_propagatorLoop");
-    startTimer("LoopPropagator");
-    Grid::A2AExtendedMesonField<FImpl>::LoopPropagatorPtr(loop, loop1, loop2);
-    stopTimer("LoopPropagator");
-    LOG(Message) << "Quark loop calculated" << std::endl;
+    PropagatorField *loopPtr;
+
+    if (haveLoop)
+    {
+        loopPtr = &envGet(PropagatorField, par().loop);
+    }
+    else
+    {
+        // Temporary reference path, see the note on the Par struct: expanded
+        // W only, so the mode arrays pair index for index and the whole-array
+        // LoopPropagator wrapper is all that is needed.
+        auto &loop1 = envGet(std::vector<FermionField>, par().loop_vw1);
+        auto &loop2 = envGet(std::vector<FermionField>, par().loop_vw2);
+
+        if (loop1.size() != loop2.size())
+        {
+            HADRONS_ERROR(Size, "loop_vw1 has " + std::to_string(loop1.size())
+                                + " modes, loop_vw2 has "
+                                + std::to_string(loop2.size())
+                                + "; the in-module path pairs index for index "
+                                  "and needs the expanded W representation");
+        }
+        loopPtr = &envGet(PropagatorField, getName() + "_propagatorLoop");
+        startTimer("LoopPropagator");
+        Grid::A2AExtendedMesonField<FImpl>::LoopPropagator(*loopPtr, loop1, loop2);
+        stopTimer("LoopPropagator");
+        LOG(Message) << "Quark loop calculated" << std::endl;
+    }
+
+    auto &loop = *loopPtr;
+    LOG(Message) << "Quark loop norm2 = " << norm2(loop) << std::endl;
 
     std::vector<FermionField> loopRight(block, grid);
     PropagatorField tloop(grid);

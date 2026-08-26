@@ -28,7 +28,6 @@ EXTRA_PROGRAMS = \
   Test_mf_cpu               \
   Test_load_combined_regression \
   Test_mf_multihit          \
-  Test_emf_multihit         \
   Test_savebinned_gpu       \
   Test_a2a_evalfpe_gpu      \
   Test_coarsedeflation_gpu
@@ -114,9 +113,6 @@ Test_load_combined_regression_LDADD=-lHadrons -lGrid
 
 Test_mf_multihit_SOURCES=Test_mf_multihit.cpp
 Test_mf_multihit_LDADD=-lHadrons -lGrid
-
-Test_emf_multihit_SOURCES=Test_emf_multihit.cpp
-Test_emf_multihit_LDADD=-lHadrons -lGrid
 
 Test_savebinned_gpu_SOURCES=Test_savebinned_gpu.cpp
 Test_savebinned_gpu_LDADD=-lHadrons -lGrid
