@@ -7,13 +7,16 @@
 /*
  * Test_mf_cpu.cpp
  *
- * Hadrons application: runs A2AMesonField (current GPU/A2ASpatialSum path),
- * A2AFewMesonField (CPU MT production path), and A2ANewMesonField (dev path
- * folding the momentum index into A2ASpatialSum's GEMM via SumAllMomenta)
- * against the same random A2A vectors in a single run, for a direct CPU
- * timing and correctness comparison.
+ * Hadrons application: runs A2AMesonField (A2ASpatialSum ring path) and
+ * A2AFewMesonField (CPU MT production path) against the same random A2A
+ * vectors in a single run, for a direct CPU timing and correctness
+ * comparison.
  *
- * Output files: mf_gpu_out.<traj>/, fmf_cpu_out.<traj>/, mf_new_out.<traj>/
+ * A third slot for A2ANewMesonField is present but commented out, so the
+ * driver becomes a three-way regression again as soon as a development
+ * module is reintroduced under that name.
+ *
+ * Output files: mf_gpu_out.<traj>/, fmf_cpu_out.<traj>/
  * Compare with h5diff, e.g.:
  *   h5diff mf_gpu_out.0/Gamma5_0_0_0.h5 fmf_cpu_out.0/Gamma5_0_0_0.h5 \
  *          /Gamma5_0_0_0 /Gamma5_0_0_0
@@ -120,19 +123,22 @@ int main(int argc, char *argv[])
     application.createModule<MContraction::A2AFewMesonField>("fmf_cpu", fmfPar);
 
     // ------------------------------------------------------------------
-    // A2ANewMesonField -- dev path, momentum folded into A2ASpatialSum's
-    // GEMM (SumAllMomenta) instead of redoing Sum() once per momentum.
+    // A2ANewMesonField -- the development slot. No such module exists right
+    // now; reintroduce one under that name to compare a candidate against
+    // both A2AMesonField and A2AFewMesonField in a single run, and
+    // uncomment this block. Left commented out so the driver runs as the
+    // two-way FMF vs MF comparison in the meantime.
     // ------------------------------------------------------------------
-    MContraction::A2ANewMesonFieldPar nmfPar;
-    nmfPar.block      = block;
-    nmfPar.cacheBlock = cacheBlock;
-    nmfPar.left   = "left";
-    nmfPar.right  = "right";
-    nmfPar.output = "mf_new_out";
-    nmfPar.gammas = gammas;
-    nmfPar.mom    = momenta;
-
-    application.createModule<MContraction::A2ANewMesonField>("mf_new", nmfPar);
+    // MContraction::A2ANewMesonFieldPar nmfPar;
+    // nmfPar.block      = block;
+    // nmfPar.cacheBlock = cacheBlock;
+    // nmfPar.left   = "left";
+    // nmfPar.right  = "right";
+    // nmfPar.output = "mf_new_out";
+    // nmfPar.gammas = gammas;
+    // nmfPar.mom    = momenta;
+    //
+    // application.createModule<MContraction::A2ANewMesonField>("mf_new", nmfPar);
 
     application.run();
 

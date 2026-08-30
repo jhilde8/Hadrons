@@ -142,8 +142,8 @@ void TA2AChromoMagneticOperatorField<GImpl,FImpl>::execute(void)
 
   std::vector<FermionField> loopRight(block, grid);
 
-  std::array<double, 5> sumTimings = {};
-  std::array<double, 5> sumBytes   = {};
+  std::array<double, 6> sumTimings = {};
+  std::array<double, 6> sumBytes   = {};
   std::array<double, 7> ioTimings  = {};
 
   for (auto &ifOrthog: ifOrthogs_) {
@@ -194,17 +194,19 @@ void TA2AChromoMagneticOperatorField<GImpl,FImpl>::execute(void)
           spatial_sum.PackLeftConj(left, i, Nii);
           stopTimer("Pack vectors");
 
-          Eigen::Tensor<ComplexD,3> cmfBlock(nt, Nii, Njj);
+          // Rank 4 with a singleton momentum axis: SumRing writes
+          // result[t][i][m][j] for the general nmom case, and the CMO field
+          // carries no momentum projection.
+          Eigen::Tensor<ComplexD,4> cmfBlock(nt, Nii, 1, Njj);
           cmfBlock.setZero();
           startTimer("Sum");
-          // spatial_sum.Sum(cmfBlock, &sumTimings, &sumBytes);
-          spatial_sum.SumCacheBlocked(cmfBlock, cacheBlock, &sumTimings, &sumBytes);
+          spatial_sum.SumRing(cmfBlock, cacheBlock, &sumTimings, &sumBytes);
           stopTimer("Sum");
 
           for (int t  = 0; t  < nt;  t++)
           for (int ii = 0; ii < Nii; ii++)
           for (int jj = 0; jj < Njj; jj++)
-            cmf(0,0,t,i+ii,j+jj) = cmfBlock(t,ii,jj);
+            cmf(0,0,t,i+ii,j+jj) = cmfBlock(t,ii,0,jj);
 
           //LOG(Message) << "CMF made for i-block " << i/block
           //             << " j-block "             << j/block
@@ -249,11 +251,15 @@ void TA2AChromoMagneticOperatorField<GImpl,FImpl>::execute(void)
     }// parity
   }// ifOrthog
 
-  // Throughput of the host-side, post-GEMM Sum() stages -- bytesMoved[k] and
+  // Throughput of the post-GEMM SumRing stages -- bytesMoved[k] and
   // sumTimings[k] accumulate the same way across all (ifOrthog,parity,i,j)
   // calls and all cacheBlock tiles, so their ratio is the average effective
   // bandwidth of that stage over the whole run, comparable across different
   // cacheBlock choices.
+  //
+  // The two ring stages report bytes on the wire rather than payload, so
+  // their rates are the ones comparable with a link rate; the local stages
+  // report the bytes they actually touch. See the SumRing header comment.
   auto gbps = [](double bytes, double us)
   {
       return (us > 0.) ? bytes / us * 1.e6 / 1024. / 1024. / 1024. : 0.;
@@ -262,12 +268,14 @@ void TA2AChromoMagneticOperatorField<GImpl,FImpl>::execute(void)
   LOG(Message) << "  GEMM            = " << sumTimings[0] << std::endl;
   LOG(Message) << "  device->host    = " << sumTimings[1]
                << " (" << gbps(sumBytes[1], sumTimings[1]) << " GB/s)" << std::endl;
-  LOG(Message) << "  transpose-1     = " << sumTimings[2]
+  LOG(Message) << "  gather to slab  = " << sumTimings[2]
                << " (" << gbps(sumBytes[2], sumTimings[2]) << " GB/s)" << std::endl;
-  LOG(Message) << "  GlobalSumVector = " << sumTimings[3]
-               << " (" << gbps(sumBytes[3], sumTimings[3]) << " GB/s)" << std::endl;
-  LOG(Message) << "  transpose-2     = " << sumTimings[4]
+  LOG(Message) << "  spatial reduce  = " << sumTimings[3]
+               << " (" << gbps(sumBytes[3], sumTimings[3]) << " GB/s wire)" << std::endl;
+  LOG(Message) << "  scatter         = " << sumTimings[4]
                << " (" << gbps(sumBytes[4], sumTimings[4]) << " GB/s)" << std::endl;
+  LOG(Message) << "  temporal gather = " << sumTimings[5]
+               << " (" << gbps(sumBytes[5], sumTimings[5]) << " GB/s wire)" << std::endl;
   LOG(Message) << "IO detail (us), rank 0:" << std::endl;
   LOG(Message) << "  open            = " << ioTimings[0]  << std::endl;
   LOG(Message) << "  push/group      = " << ioTimings[1]  << std::endl;

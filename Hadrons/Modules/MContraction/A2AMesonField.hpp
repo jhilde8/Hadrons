@@ -7,6 +7,7 @@
  * Author: Peter Boyle <paboyle@ph.ed.ac.uk>
  * Author: ferben <ferben@debian.felix.com>
  * Author: paboyle <paboyle@ph.ed.ac.uk>
+ * Author: Jonas Hildebrand <jonas.hildebrand@uconn.edu>
  *
  * Hadrons is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -39,7 +40,15 @@
 BEGIN_HADRONS_NAMESPACE
 
 /******************************************************************************
- *                     All-to-all meson field creation (new, no A2AMatrixBlockComputation)
+ *  All-to-all meson field creation. Drives A2ASpatialSum with mode index
+ *  blocking exposed on the Hadrons side. Mode and momentum indices are packed
+ *  into buffers that are fed into the GEMM call, which batches over timeslice.
+ *  Gamma index is the only explicit loop present in the module.
+ *
+ *  SumRing does the GEMM, and then we execute a spatial ring all reduce to
+ *  complete the spatial + spin-colour reduction followed by a purely temporal
+ *  gather, constructing the full meson field through a ring rather than
+ *  GlobalSumVector.
  ******************************************************************************/
 BEGIN_MODULE_NAMESPACE(MContraction)
 
@@ -87,7 +96,7 @@ private:
 MODULE_REGISTER(A2AMesonField, ARG(TA2AMesonField<FIMPL>), MContraction);
 
 /******************************************************************************
- *                  TA2AMesonField implementation                          *
+ *                  TA2AMesonField implementation                       *
  ******************************************************************************/
 template <typename FImpl>
 TA2AMesonField<FImpl>::TA2AMesonField(const std::string name)
@@ -203,10 +212,6 @@ void TA2AMesonField<FImpl>::execute(void)
             }
             ph[j] = exp((Real)(2*M_PI)*i*ph[j]);
         }
-        ComplexField last_abs_ph = ph[nmom - 1];
-        for (int j = nmom - 1; j >= 1; --j)
-            ph[j] = ph[j] * adj(ph[j - 1]); // apply the phase difference
-        ph.push_back(adj(last_abs_ph)); // restore transition: undo final accumulated phase
 
         hasPhase_ = true;
         stopTimer("Momentum phases");
@@ -243,13 +248,15 @@ void TA2AMesonField<FImpl>::execute(void)
     // Scratch right vectors for GammaRight output (zero-momentum base pack).
     std::vector<FermionField> gammaRight(block, grid);
 
-    // Pre-allocated result buffer: one tensor per momentum, reused across all blocks.
-    // Sum() fills only [0..Nii-1][0..Njj-1]; IO fill reads with explicit Nii/Njj bounds.
-    // RowMajor (jj fastest) to match mf (A2AMatrixSet, RowMajor): the fill
-    // loop below reads this with jj innermost, so a ColMajor tensor here
-    // would make that read stride by nt*block per jj step instead of 1.
-    std::vector<Eigen::Tensor<ComplexD, 3, Eigen::RowMajor>> all_results(nmom,
-        Eigen::Tensor<ComplexD, 3, Eigen::RowMajor>(nt, block, block));
+    // Pre-allocated result buffer: one tensor covering all momenta at once,
+    // reused across all blocks. SumRing fills only [0..Nii-1][0..Njj-1]; the
+    // IO fill reads with explicit Nii/Njj bounds.
+    //
+    // Dimension order (nt, N_i, nmom, N_j) -- nmom BEFORE N_j -- is the
+    // layout SumRing writes, matching its GEMM's [i][m][j] output. RowMajor
+    // then makes N_j the fastest dimension, so the IO fill below, which reads
+    // at fixed m and walks jj innermost, is contiguous on both sides.
+    Eigen::Tensor<ComplexD, 4, Eigen::RowMajor> all_results(nt, block, nmom, block);
 
     // Every rank creates the output directory itself, rather than relying
     // on makeFileDir's boss-rank-only mkdir. File writes below are spread
@@ -284,36 +291,37 @@ void TA2AMesonField<FImpl>::execute(void)
     }
     grid->Barrier();
 
-    // Pre-pack flat phase arrays (one per momentum) for in-place buffer multiplication.
-    // PackPhase mirrors PackVectors: SIMD/SIMT extraction -> one scalar per spatial site.
+    // Pre-pack flat phase arrays, one absolute phase per momentum -- no
+    // difference-encoding needed here since ApplyAllPhaseRight reads a single
+    // unphased base pack and writes all nmom copies directly, rather than
+    // stepping an in-place buffer through consecutive momenta.
     startTimer("Pack phases");
-    std::vector<deviceVector<scalar_t>> ph_flat(ph.size());
-    for (int m = 0; m < (int)ph.size(); m++)
+    std::vector<deviceVector<scalar_t>> ph_flat(nmom);
+    for (int m = 0; m < nmom; m++)
         A2ASpatialSum<SpinColourVector_v>::PackPhase(grid, ph[m], ph_flat[m]);
     stopTimer("Pack phases");
 
     // One-time allocation for the full block size; subsequent pointer rewrites are cheap.
     startTimer("Allocate");
-    spatial_sum_.AllocateRight(block, grid);
+    spatial_sum_.AllocateRight(block, grid, nmom);
     spatial_sum_.AllocateLeft(block);
     stopTimer("Allocate");
 
-    // Loop order (jb, g, ib, m):
-    //   AllocateRight + PackRight - once per (jb, g)
-    //   AllocateLeft  + PackLeft  - once per ib
-    //   Apply+GEMM+Restore        - once per (jb, g, ib, m)
+    // Loop order (jb, g, ib):
+    //   AllocateRight + PackRight + ApplyAllPhaseRight - once per (jb, g)
+    //   AllocateLeft  + PackLeftConj + SumRing         - once per (jb, g, ib)
 
     double                fillTime     = 0.;
     std::array<double, 7> ioTimings    = {};
-    std::array<double, 5> sumTimings   = {};
-    std::array<double, 5> sumBytes     = {};
+    std::array<double, 6> sumTimings   = {};
+    std::array<double, 6> sumBytes     = {};
 
     for (int jb = 0; jb < N_j; jb += block)
     {
         int Njj = std::min(N_j - jb, block);
 
         startTimer("Allocate");
-        spatial_sum_.AllocateRight(Njj, grid);
+        spatial_sum_.AllocateRight(Njj, grid, nmom);
         stopTimer("Allocate");
 
         for (int g = 0; g < ngamma; g++)
@@ -327,6 +335,10 @@ void TA2AMesonField<FImpl>::execute(void)
             spatial_sum_.PackRight(gammaRight, 0, Njj);
             stopTimer("Pack vectors");
 
+            startTimer("Phase");
+            spatial_sum_.ApplyAllPhaseRight(ph_flat);
+            stopTimer("Phase");
+
             for (int ib = 0; ib < N_i; ib += block)
             {
                 int Nii = std::min(N_i - ib, block);
@@ -339,25 +351,9 @@ void TA2AMesonField<FImpl>::execute(void)
                 spatial_sum_.PackLeftConj(left, ib, Nii);
                 stopTimer("Pack vectors");
 
-                // ph_flat[0] is the absolute phase for the first momentum.
-                // ph_flat[nmom] is the restore transition that steps LR_buf back to the
-                // unphased state after the last Sum, so each ib block begins with clean
-                // right vectors without needing a new PackRight call.
-                startTimer("Phase");
-                spatial_sum_.ApplyPhaseRight(ph_flat[0]);
-                stopTimer("Phase");
-
-                for (int m = 0; m < nmom; m++)
-                {
-                    startTimer("Sum");
-                    // spatial_sum_.Sum(all_results[m], &sumTimings, &sumBytes);
-                    spatial_sum_.SumCacheBlocked(all_results[m], cacheBlock, &sumTimings, &sumBytes);
-                    stopTimer("Sum");
-
-                    startTimer("Phase");
-                    spatial_sum_.ApplyPhaseRight(ph_flat[m + 1]);
-                    stopTimer("Phase");
-                } // m
+                startTimer("Sum");
+                spatial_sum_.SumRing(all_results, cacheBlock, &sumTimings, &sumBytes);
+                stopTimer("Sum");
 
                 // Parallel IO: each rank writes its assigned momenta simultaneously.
                 // Barrier count drops from 2*nmom to 2 per outer block.
@@ -384,7 +380,7 @@ void TA2AMesonField<FImpl>::execute(void)
                     thread_for_collapse(3, t, nt, {
                         for (int ii = 0; ii < Nii; ii++)
                         for (int jj = 0; jj < Njj; jj++)
-                            mf(0, 0, (int)t, ii, jj) = all_results[m]((int)t, ii, jj);
+                            mf(0, 0, (int)t, ii, jj) = all_results((int)t, ii, m, jj);
                     });
                     dt += usecond();
                     fillTime += dt;
@@ -398,7 +394,7 @@ void TA2AMesonField<FImpl>::execute(void)
                 // writeTime is this rank's own wall time from barrier to
                 // barrier (only rank 0's LOG output survives, since
                 // Grid_quiesce_nodes suppresses the rest by default).
-                if (writeTime > 0.)
+                if (writeTime > 0. && ib == jb)
                     LOG(Message) << "IO block i=" << ib << " j=" << jb
                                  << " g=" << gamma_[g] << ": "
                                  << sizeString(ioBytes) << " in "
@@ -409,11 +405,15 @@ void TA2AMesonField<FImpl>::execute(void)
         } // g
     } // jb
 
-    // Throughput of the host-side, post-GEMM Sum() stages -- bytesMoved[k]
-    // and sumTimings[k] accumulate the same way across all (jb,g,ib,m) calls
-    // and all cacheBlock tiles, so their ratio is the average effective
+    // Throughput of the post-GEMM SumRing stages -- bytesMoved[k] and
+    // sumTimings[k] accumulate the same way across all (jb,g,ib) calls and
+    // all cacheBlock tiles, so their ratio is the average effective
     // bandwidth of that stage over the whole run, comparable across
     // different cacheBlock choices.
+    //
+    // The two ring stages report bytes on the wire rather than payload, so
+    // their rates are the ones comparable with a link rate; the local stages
+    // report the bytes they actually touch. See the SumRing header comment.
     auto gbps = [](double bytes, double us)
     {
         return (us > 0.) ? bytes / us * 1.e6 / 1024. / 1024. / 1024. : 0.;
@@ -422,12 +422,14 @@ void TA2AMesonField<FImpl>::execute(void)
     LOG(Message) << "  GEMM            = " << sumTimings[0] << std::endl;
     LOG(Message) << "  device->host    = " << sumTimings[1]
                  << " (" << gbps(sumBytes[1], sumTimings[1]) << " GB/s)" << std::endl;
-    LOG(Message) << "  transpose-1     = " << sumTimings[2]
+    LOG(Message) << "  gather to slab  = " << sumTimings[2]
                  << " (" << gbps(sumBytes[2], sumTimings[2]) << " GB/s)" << std::endl;
-    LOG(Message) << "  GlobalSumVector = " << sumTimings[3]
-                 << " (" << gbps(sumBytes[3], sumTimings[3]) << " GB/s)" << std::endl;
-    LOG(Message) << "  transpose-2     = " << sumTimings[4]
+    LOG(Message) << "  spatial reduce  = " << sumTimings[3]
+                 << " (" << gbps(sumBytes[3], sumTimings[3]) << " GB/s wire)" << std::endl;
+    LOG(Message) << "  scatter         = " << sumTimings[4]
                  << " (" << gbps(sumBytes[4], sumTimings[4]) << " GB/s)" << std::endl;
+    LOG(Message) << "  temporal gather = " << sumTimings[5]
+                 << " (" << gbps(sumBytes[5], sumTimings[5]) << " GB/s wire)" << std::endl;
     LOG(Message) << "IO detail (us), rank " << myRank << ":" << std::endl;
     LOG(Message) << "  fill            = " << fillTime      << std::endl;
     LOG(Message) << "  open            = " << ioTimings[0]  << std::endl;

@@ -99,9 +99,9 @@ int main(int argc, char *argv[])
     application.createModule<MUtilities::RandomFermions>("right", rvRight);
 
     // ------------------------------------------------------------------
-    // A2AMesonField - GPU path (no A2AMatrixBlockComputation)
+    // A2AMesonField - GPU path via A2ASpatialSum
     // ------------------------------------------------------------------
-    MContraction::A2ANewMesonFieldPar mfPar;
+    MContraction::A2AMesonFieldPar mfPar;
     mfPar.block  = block;
     mfPar.cacheBlock = cacheBlock; 
     mfPar.left   = "left";
@@ -110,7 +110,7 @@ int main(int argc, char *argv[])
     mfPar.gammas = gammas;
     mfPar.mom    = momenta;
 
-    application.createModule<MContraction::A2ANewMesonField>("nmf_gpu", mfPar);
+    application.createModule<MContraction::A2AMesonField>("mf_gpu", mfPar);
 
     application.run();
 
