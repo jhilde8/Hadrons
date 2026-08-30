@@ -190,7 +190,11 @@ void TA2AFewMesonField<FImpl>::execute(void)
   int block      = par().block;
   int cacheBlock = par().cacheBlock;
   Vector<HADRONS_A2AM_IO_TYPE> mBuf; mBuf.resize(nmom*nt*block*block);
-  Vector<Complex> mCacheBuf; mCacheBuf.resize(nmom*nt*cacheBlock*cacheBlock);
+  // Host memory, not Vector<>: mfCache views this buffer and GlobalSumVector
+  // hands it to MPI. Vector<T> is uvmAllocator (hipMallocManaged), and Cray
+  // MPICH aborts in gtlt_hsa_pointer_type on a managed pointer once
+  // MPICH_GPU_SUPPORT_ENABLED=1, which the A2ASpatialSum ring path requires.
+  std::vector<Complex> mCacheBuf; mCacheBuf.resize(nmom*nt*cacheBlock*cacheBlock);
 
   LOG(Message) << "Left: '" << par().left << "' Right: '"
 	       << par().right << "'" << std::endl;
