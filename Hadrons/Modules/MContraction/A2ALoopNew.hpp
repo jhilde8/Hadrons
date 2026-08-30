@@ -183,7 +183,7 @@ void TA2ALoopNew<FImpl>::setup(void)
         auto grid = envGetGrid(FermionField);
 
         envTmp(std::vector<FermionField>, "vtilde", 1, 0, grid);
-        auto &vtilde = envGetTmp(std::vector<FermionField>, vtilde);
+        envGetTmp(std::vector<FermionField>, vtilde);
 
         vtilde.reserve(nsc_);
         for (int sc = 0; sc < nsc_; ++sc)
@@ -210,7 +210,9 @@ void TA2ALoopNew<FImpl>::setup(void)
 template <typename FImpl>
 void TA2ALoopNew<FImpl>::execute(void)
 {
-    typedef A2AExtendedMesonField<FImpl> EMF;
+    // Qualified: MODULE_REGISTER declares a class A2AExtendedMesonField in
+    // this same namespace, which would otherwise shadow the Grid template.
+    typedef Grid::A2AExtendedMesonField<FImpl> EMF;
 
     auto &left  = envGet(std::vector<FermionField>, par().left);
     auto &right = envGet(std::vector<FermionField>, par().right);
@@ -250,7 +252,7 @@ void TA2ALoopNew<FImpl>::execute(void)
     }
     else
     {
-        auto &vtilde = envGetTmp(std::vector<FermionField>, vtilde);
+        envGetTmp(std::vector<FermionField>, vtilde);
 
         // Low modes carry no dilution, so they pair directly in both
         // representations.
