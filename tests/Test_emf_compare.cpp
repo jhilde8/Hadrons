@@ -11,7 +11,7 @@
  * and A2AExtendedMesonFieldMT (CPU MT reference path) against the same
  * random A2A vectors and quark loop in a single run, for a direct
  * same-job correctness (and, incidentally, timing) comparison -- same
- * pattern as Test_mf_cpu.cpp.
+ * pattern as Test_mf_compare.cpp.
  *
  * Both modules read the same named objects, so there is no seed to keep in
  * step between runs: the two paths contract literally the same arrays.
@@ -22,7 +22,7 @@
  *
  * Output files: emf_gpu_out.<traj>/, emf_mt_out.<traj>/
  * Compare every type and gamma pair with:
- *   for f in emf_gpu_out.0/*.h5; do n=$(basename "$f" .h5); \
+ *   for f in emf_gpu_out.0/.h5; do n=$(basename "$f" .h5); \
  *     h5diff "$f" "emf_mt_out.0/$n.h5" "/$n" "/$n" || echo "MISMATCH $n"; done
  *
  * Every parameter below is settable on the command line -- see the block of

@@ -5,7 +5,7 @@
 #endif
 
 /*
- * Test_mf_cpu.cpp
+ * Test_mf_compare.cpp
  *
  * Hadrons application: runs A2AMesonField (A2ASpatialSum ring path) and
  * A2AFewMesonField (CPU MT production path) against the same random A2A
@@ -22,7 +22,7 @@
  *          /Gamma5_0_0_0 /Gamma5_0_0_0
  *
  * Usage:
- *   mpirun -n 1 ./Test_mf_cpu --grid 4.4.4.8 --mpi 1.1.1.1 --seed "1 2 3 4"
+ *   mpirun -n 1 ./Test_mf_compare --grid 4.4.4.8 --mpi 1.1.1.1 --seed "1 2 3 4"
  */
 
 #define HADRONS_A2AM_IO_TYPE ComplexD

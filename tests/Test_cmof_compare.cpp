@@ -11,7 +11,7 @@
  * GEMM path) and A2AChromoMagneticOperatorFieldMT (CPU MT reference path)
  * against the same random A2A vectors and gauge field in a single run, for
  * a direct same-job correctness (and, incidentally, timing) comparison --
- * same pattern as Test_mf_cpu.cpp / Test_emf_compare.cpp.
+ * same pattern as Test_mf_compare.cpp / Test_emf_compare.cpp.
  *
  * Both modules read the same named objects, including the one MGauge::Random
  * configuration, so there is no seed to keep in step between runs: the two
@@ -19,7 +19,7 @@
  *
  * Output files: cmof_gpu_out.<traj>/, cmof_mt_out.<traj>/
  * Compare every parity and orthogonality choice with:
- *   for f in cmof_gpu_out.0/*.h5; do n=$(basename "$f" .h5); \
+ *   for f in cmof_gpu_out.0/.h5; do n=$(basename "$f" .h5); \
  *     h5diff "$f" "cmof_mt_out.0/$n.h5" "/$n" "/$n" || echo "MISMATCH $n"; done
  *
  * Every parameter below is settable on the command line -- see the block of
