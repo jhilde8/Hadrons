@@ -248,15 +248,31 @@ void TA2AMesonField<FImpl>::execute(void)
     // Scratch right vectors for GammaRight output (zero-momentum base pack).
     std::vector<FermionField> gammaRight(block, grid);
 
-    // Pre-allocated result buffer: one tensor covering all momenta at once,
-    // reused across all blocks. SumRing fills only [0..Nii-1][0..Njj-1]; the
-    // IO fill reads with explicit Nii/Njj bounds.
+    // Result buffers, one per distinct block shape. A block is either full or
+    // on the tail in each axis independently, so there are at most four shapes
+    // and a 2x2 pool indexed by (i on tail, j on tail) covers every case. Each
+    // slot is asked for the same dimensions every time it is selected, so the
+    // first visit allocates and every later one is a dimension assignment --
+    // Eigen's resize reallocates only when the total element count changes.
     //
-    // Dimension order (nt, N_i, nmom, N_j) -- nmom BEFORE N_j -- is the
-    // layout SumRing writes, matching its GEMM's [i][m][j] output. RowMajor
-    // then makes N_j the fastest dimension, so the IO fill below, which reads
-    // at fixed m and walks jj innermost, is contiguous on both sides.
-    Eigen::Tensor<ComplexD, 4, Eigen::RowMajor> all_results(nt, block, nmom, block);
+    // Holding the shapes side by side rather than resizing one buffer is what
+    // keeps the kernel from re-zeroing a freshly mapped region on every grow:
+    // the tail shape and the full shape otherwise alternate once per jb
+    // iteration, and the full shape here is gigabytes. The cost is the sum of
+    // the shapes instead of the max, a few GB against the A2A vectors' tens of
+    // TB. It also makes `block` a free choice again -- N_i = nLow + Nsc*nHit
+    // and N_j = nLow + Nhigh*nHit move with the hit count, so no fixed block
+    // divides both, and a block that divides neither now costs two extra
+    // buffers rather than anything on the critical path.
+    //
+    // Dimension order (nt, Nii, nmom, Njj) -- nmom BEFORE N_j -- is the layout
+    // SumRing writes, matching its GEMM's [i][m][j] output. RowMajor then makes
+    // N_j the fastest dimension, so the IO fill below, which reads at fixed m
+    // and walks jj innermost, is contiguous on both sides. Passing the true
+    // per-block dimensions rather than one buffer padded to block is also what
+    // lets SumRing take its direct device->host path on every block including
+    // the tails, which leaves its "scatter" timer at zero.
+    Eigen::Tensor<ComplexD, 4, Eigen::RowMajor> resPool[2][2];
 
     // Every rank creates the output directory itself, rather than relying
     // on makeFileDir's boss-rank-only mkdir. File writes below are spread
@@ -343,8 +359,15 @@ void TA2AMesonField<FImpl>::execute(void)
             {
                 int Nii = std::min(N_i - ib, block);
 
+                // Pick the pool slot for this block's shape. Allocates on the
+                // first visit to each shape, dimension assignment after that,
+                // so a nonzero "Allocate" time past the first jb iteration
+                // means a shape is being reallocated and the pool is missing.
+                auto &all_results = resPool[Nii != block][Njj != block];
+
                 startTimer("Allocate");
                 spatial_sum_.AllocateLeft(Nii);
+                all_results.resize(nt, Nii, nmom, Njj);
                 stopTimer("Allocate");
 
                 startTimer("Pack vectors");

@@ -368,6 +368,24 @@ void TA2AExtendedMesonField<FImpl>::execute(void)
 	//LOG(Message) << "Making EMF" << std::endl;
 	A2ASpatialSum<SpinColourVector_v> spatial_sum;
 
+	// Result buffers, one per distinct block shape. A block is full or on the
+	// tail in each axis independently, so a 2x2 pool indexed by (i on tail, j
+	// on tail) covers every case. Each slot is asked for the same dimensions
+	// every time it is selected, so the first visit allocates and every later
+	// one is a dimension assignment -- Eigen's resize reallocates only when the
+	// total element count changes. That replaces one construct/destruct per
+	// (i,j) block, which over all the gamma families is thousands of
+	// allocations per trajectory of a buffer SumRing overwrites in full anyway.
+	//
+	// RowMajor is what lets SumRing take its direct device->host path: the
+	// gathered panel's [gt][iii][m][jjj] layout and a RowMajor (nt, Nii, 1,
+	// Njj) tensor are then the same addresses, so its scatter is skipped and
+	// its "scatter" timer stays at zero. ColMajor would put t fastest in
+	// memory while the copy-out below walks t outermost, which is both the
+	// wrong order for that loop and the reason the direct path could not apply.
+	// Element access is layout independent, so the values are unchanged.
+	Eigen::Tensor<ComplexD, 4, Eigen::RowMajor> resPool[2][2];
+
 	for ( unsigned int j = 0; j < N_j; j += block ){
 	  int Njj = MIN(N_j-j,block);
 	  startTimer("LoopRight contraction");
@@ -402,16 +420,25 @@ void TA2AExtendedMesonField<FImpl>::execute(void)
 	    // Rank 4 with a singleton momentum axis: SumRing writes
 	    // result[t][i][m][j] for the general nmom case, and EMF carries no
 	    // momentum projection.
-	    Eigen::Tensor<ComplexD,4> emfBlock(nt, Nii, 1, Njj);
-	    emfBlock.setZero();
+	    //
+	    // No setZero: SumRing writes every element of the tensor on both its
+	    // direct and its scatter path, so zeroing first is dead work.
+	    auto &emfBlock = resPool[Nii != block][Njj != block];
+	    startTimer("Allocate");
+	    emfBlock.resize(nt, Nii, 1, Njj);
+	    stopTimer("Allocate");
+
 	    startTimer("Sum");
 	    spatial_sum.SumRing(emfBlock, cacheBlock, &sumTimings, &sumBytes);
 	    stopTimer("Sum");
 
-	    for(int t =0;t< nt;t++)
+	    startTimer("Copy out");
+	    thread_for_collapse(3, t, nt, {
 	      for(int ii=0;ii< Nii;ii++)
-		for(int jj=0;jj< Njj;jj++)
-		  emf(0,0,t,i+ii,j+jj) = emfBlock(t,ii,0,jj);
+	      for(int jj=0;jj< Njj;jj++)
+		emf(0,0,(int)t,i+ii,j+jj) = emfBlock((int)t,ii,0,jj);
+	    });
+	    stopTimer("Copy out");
 	}
 	//LOG(Message) << "EMF made for j-block " << j/block << " type " << type << std::endl;
 
