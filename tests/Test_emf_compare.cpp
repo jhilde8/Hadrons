@@ -5,7 +5,7 @@
 #endif
 
 /*
- * Test_emf_cpu.cpp
+ * Test_emf_compare.cpp
  *
  * Hadrons application: runs A2AExtendedMesonField (A2ASpatialSum/GEMM path)
  * and A2AExtendedMesonFieldMT (CPU MT reference path) against the same
@@ -13,13 +13,31 @@
  * same-job correctness (and, incidentally, timing) comparison -- same
  * pattern as Test_mf_cpu.cpp.
  *
+ * Both modules read the same named objects, so there is no seed to keep in
+ * step between runs: the two paths contract literally the same arrays.
+ *
+ * The current module is driven through loop_vw1/loop_vw2 with 'loop' left
+ * empty, because that is the only loop path the MT module has. Handing it a
+ * precomputed 'loop' instead would be comparing two different calculations.
+ *
  * Output files: emf_gpu_out.<traj>/, emf_mt_out.<traj>/
- * Compare with h5diff, e.g.:
- *   h5diff emf_gpu_out.0/type0_GammaMU_GammaMU.h5 emf_mt_out.0/type0_GammaMU_GammaMU.h5 \
- *          /type0_GammaMU_GammaMU /type0_GammaMU_GammaMU
+ * Compare every type and gamma pair with:
+ *   for f in emf_gpu_out.0/*.h5; do n=$(basename "$f" .h5); \
+ *     h5diff "$f" "emf_mt_out.0/$n.h5" "/$n" "/$n" || echo "MISMATCH $n"; done
+ *
+ * Every parameter below is settable on the command line -- see the block of
+ * GridCmdOptionExists calls. Two runs cover both SumRing paths: cacheBlock
+ * equal to block puts it on the direct device->host path (its "scatter"
+ * timer reads zero), and a smaller cacheBlock forces the scatter fallback.
+ * Sizes that are not a multiple of block exercise the tail-shape slots of
+ * the module's result buffer pool.
  *
  * Usage:
- *   mpirun -n 1 ./Test_emf_cpu --grid 4.4.4.8 --mpi 1.1.1.1 --seed "1 2 3 4"
+ *   mpirun -n 1 ./Test_emf_compare --grid 4.4.4.8 --mpi 1.1.1.1 --seed "1 2 3 4"
+ *   mpirun -n 1 ./Test_emf_compare --grid 4.4.4.8 --mpi 1.1.1.1 --seed "1 2 3 4" \
+ *          --Ni 20 --Nj 20 --block 16 --cacheBlock 16   # all four pool shapes
+ *   mpirun -n 1 ./Test_emf_compare --grid 4.4.4.8 --mpi 1.1.1.1 --seed "1 2 3 4" \
+ *          --Ni 20 --Nj 20 --block 16 --cacheBlock 8    # scatter fallback
  */
 
 #define HADRONS_A2AM_IO_TYPE ComplexD
