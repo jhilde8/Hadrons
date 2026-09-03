@@ -26,6 +26,7 @@ EXTRA_PROGRAMS = \
   Test_cmof_compare         \
   Test_mf_gpu               \
   Test_mf_compare           \
+  Test_writer_spread        \
   Test_load_combined_regression \
   Test_mf_multihit          \
   Test_savebinned_gpu       \
@@ -107,6 +108,9 @@ Test_mf_gpu_LDADD=-lHadrons -lGrid
 
 Test_mf_compare_SOURCES=Test_mf_compare.cpp
 Test_mf_compare_LDADD=-lHadrons -lGrid
+
+Test_writer_spread_SOURCES=Test_writer_spread.cpp
+Test_writer_spread_LDADD=-lHadrons -lGrid
 
 Test_load_combined_regression_SOURCES=Test_load_combined_regression.cpp
 Test_load_combined_regression_LDADD=-lHadrons -lGrid

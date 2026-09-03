@@ -19,6 +19,7 @@ Author: Masaaki Tomii <masaaki.tomii@uconn.edu>
 #include <Hadrons/ModuleFactory.hpp>
 #include <Hadrons/A2AMatrix.hpp>
 #include <Grid/qcd/utils/A2Autils.h>
+#include <iomanip>
 
 BEGIN_HADRONS_NAMESPACE
 /******************************************************************************
@@ -37,7 +38,8 @@ public:
                                     std::string, right,
                                     std::string, gauge,
                                     std::string, output,
-                                    std::string, ifOrthogs);
+                                    std::string, ifOrthogs,
+                                    bool,        timeSliceIO);
 };
 
 class A2AChromoMagneticOperatorFieldMetadata: Serializable
@@ -129,7 +131,43 @@ void TA2AChromoMagneticOperatorField<GImpl,FImpl>::execute(void)
   int N_j        = right.size();
   int block = par().block;
   int cacheBlock = par().cacheBlock;
-  Vector<HADRONS_A2AM_IO_TYPE> mBuf; mBuf.resize(nt*N_i*N_j);
+
+  // timeSliceIO: SumRing stops after the spatial reduce, so this rank holds
+  // only its own t slab and writes one file per timeslice it owns. Global
+  // timeslice of local index lt is ct*ntOut + lt. mBuf follows ntOut.
+  const bool tsIO = par().timeSliceIO;
+  int nd     = grid->Nd();
+  int ct     = grid->ThisProcessorCoor()[nd - 1];
+  int ntOut  = tsIO ? grid->LocalDimensions()[nd - 1] : nt;
+  int ntFile = tsIO ? 1 : nt;
+
+  Vector<HADRONS_A2AM_IO_TYPE> mBuf; mBuf.resize(ntOut*N_i*N_j);
+
+  // Seat among the P_xyz ranks sharing this t coordinate. The (ifOrthog,
+  // parity) loop is sequential, so all concurrency comes from the timeslice
+  // axis; see the header comment.
+  unsigned int mySeat = 0, P_xyz = 1;
+  for (int mu = 0; mu < nd - 1; mu++)
+  {
+      mySeat += (unsigned int)grid->ThisProcessorCoor()[mu] * P_xyz;
+      P_xyz  *= (unsigned int)grid->ProcessorGrid()[mu];
+  }
+
+  unsigned int nFiles = (unsigned int)(ifOrthogs_.size() * parities_.size());
+  auto ownerFn = [tsIO, ntOut, ct, P_xyz, mySeat, nFiles, grid]
+                 (const unsigned int f, const int gt)
+  {
+      if (!tsIO)
+          return grid->ThisRank() == 0;
+      if (gt / ntOut != ct)
+          return false;
+
+      unsigned int base = (unsigned int)(((uint64_t)f * P_xyz) / nFiles);
+      unsigned int step = (P_xyz > (unsigned int)ntOut)
+                        ? P_xyz / (unsigned int)ntOut : 1u;
+      return (base + (unsigned int)(gt % ntOut) * step) % P_xyz == mySeat;
+  };
+  unsigned int fileIdx = 0;
 
   LOG(Message) << "Left: '"        << par().left  << "' Right: '"
                << par().right      << "'"          << std::endl;
@@ -138,7 +176,11 @@ void TA2AChromoMagneticOperatorField<GImpl,FImpl>::execute(void)
   for (auto &p: parities_)
     LOG(Message) << "  " << p << std::endl;
   LOG(Message) << "CMO field size: " << nt << "*" << N_i << "*" << N_j
-               << " (filesize " << sizeString(nt*N_i*N_j*sizeof(HADRONS_A2AM_IO_TYPE)) << std::endl;
+               << " (filesize " << sizeString(ntFile*N_i*N_j*sizeof(HADRONS_A2AM_IO_TYPE))
+               << (tsIO ? "/timeslice)" : ")") << std::endl;
+  if (tsIO)
+      LOG(Message) << "Per-timeslice IO: this rank holds t = " << ct*ntOut
+                   << ".." << ct*ntOut + ntOut - 1 << std::endl;
 
   std::vector<FermionField> loopRight(block, grid);
 
@@ -161,7 +203,7 @@ void TA2AChromoMagneticOperatorField<GImpl,FImpl>::execute(void)
     for (auto &parity: parities_) {
       LOG(Message) << "Starting calculation with ifOrthog=" << ifOrthog
                    << " parity=" << parity << std::endl;
-      A2AMatrixSet<HADRONS_A2AM_IO_TYPE> cmf(mBuf.data(), 1, 1, nt, N_i, N_j);
+      A2AMatrixSet<HADRONS_A2AM_IO_TYPE> cmf(mBuf.data(), 1, 1, ntOut, N_i, N_j);
       A2ASpatialSum<SpinColourVector_v> spatial_sum;
 
       // Result buffers, one per distinct block shape. A block is full or on
@@ -174,7 +216,7 @@ void TA2AChromoMagneticOperatorField<GImpl,FImpl>::execute(void)
       // in full anyway.
       //
       // RowMajor is what lets SumRing take its direct device->host path: the
-      // gathered panel's [gt][iii][m][jjj] layout and a RowMajor (nt, Nii, 1,
+      // gathered panel's [gt][iii][m][jjj] layout and a RowMajor (ntOut, Nii, 1,
       // Njj) tensor are then the same addresses, so its scatter is skipped and
       // its "scatter" timer stays at zero. ColMajor would put t fastest in
       // memory while the copy-out below walks t outermost, which is both the
@@ -221,15 +263,15 @@ void TA2AChromoMagneticOperatorField<GImpl,FImpl>::execute(void)
           // direct and its scatter path, so zeroing first is dead work.
           auto &cmfBlock = resPool[Nii != block][Njj != block];
           startTimer("Allocate");
-          cmfBlock.resize(nt, Nii, 1, Njj);
+          cmfBlock.resize(ntOut, Nii, 1, Njj);
           stopTimer("Allocate");
 
           startTimer("Sum");
-          spatial_sum.SumRing(cmfBlock, cacheBlock, &sumTimings, &sumBytes);
+          spatial_sum.SumRing(cmfBlock, cacheBlock, &sumTimings, &sumBytes, tsIO);
           stopTimer("Sum");
 
           startTimer("Copy out");
-          thread_for_collapse(3, t, nt, {
+          thread_for_collapse(3, t, ntOut, {
             for (int ii = 0; ii < Nii; ii++)
             for (int jj = 0; jj < Njj; jj++)
               cmf(0,0,(int)t,i+ii,j+jj) = cmfBlock((int)t,ii,0,jj);
@@ -251,26 +293,43 @@ void TA2AChromoMagneticOperatorField<GImpl,FImpl>::execute(void)
         ioname = ioname + "_GijSij";
       else
         ioname = ioname + "_GitSit";
-      std::string filename = par().output + "." + std::to_string(vm().getTrajectory())
-                           + "/" + ioname + ".h5";
-      LOG(Message) << "Writing block to " << filename << std::endl;
-      makeFileDir(filename, grid);
+      std::string dirBase = par().output + "." + std::to_string(vm().getTrajectory());
+
+      // Every rank makes the directory rather than makeFileDir's boss-only
+      // mkdir: under timeSliceIO the writers are spread across ranks, and on
+      // node-local storage a directory made on one node is absent on the rest.
+      Hadrons::mkdir(dirBase);
+      LOG(Message) << "Writing " << (tsIO ? nt : 1) << " file(s) to "
+                   << dirBase << "/" << ioname << std::endl;
       startTimer("IO");
 #ifdef HADRONS_A2AM_PARALLEL_IO
       startTimer("Barrier");
       grid->Barrier();
       stopTimer("Barrier");
-      if (grid->ThisRank() == 0) {
 #endif
-      A2AMatrixIo<HADRONS_A2AM_IO_TYPE> io(filename, ioname, nt, N_i, N_j);
-      A2AChromoMagneticOperatorFieldMetadata md;
-      md.meta = ioname;
-      startTimer("initFile");
-      io.initFile(md, MAX(N_i,N_j));
-      stopTimer("initFile");
-      io.saveBlock(cmf, 0, 0, 0, 0, &ioTimings);
-#ifdef HADRONS_A2AM_PARALLEL_IO
+      for (int lt = 0; lt < (tsIO ? ntOut : 1); ++lt)
+      {
+        int gt = tsIO ? ct*ntOut + lt : 0;
+
+        if (!ownerFn(fileIdx, gt)) continue;
+
+        std::stringstream fn;
+        fn << dirBase << "/" << ioname;
+        if (tsIO) fn << ".t" << std::setfill('0') << std::setw(4) << gt;
+        fn << ".h5";
+
+        A2AMatrixSet<HADRONS_A2AM_IO_TYPE> slice(mBuf.data() + (size_t)lt*N_i*N_j,
+                                                 1, 1, ntFile, N_i, N_j);
+        A2AMatrixIo<HADRONS_A2AM_IO_TYPE> io(fn.str(), ioname, ntFile, N_i, N_j);
+        A2AChromoMagneticOperatorFieldMetadata md;
+        md.meta = ioname;
+        startTimer("initFile");
+        io.initFile(md, MAX(N_i,N_j));
+        stopTimer("initFile");
+        io.saveBlock(slice, 0, 0, 0, 0, &ioTimings);
       }
+      fileIdx++;
+#ifdef HADRONS_A2AM_PARALLEL_IO
       startTimer("Barrier");
       grid->Barrier();
       stopTimer("Barrier");

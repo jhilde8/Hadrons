@@ -87,6 +87,13 @@ int main(int argc, char *argv[])
     std::string types      = "0 1 2 3";
     std::string gammas1    = "GammaMU";
     std::string gammas2    = "GammaMU";
+    // Presence-only flag. The oracle (A2AExtendedMesonFieldMT) always writes
+    // the merged layout, so with this set the comparison is per-timeslice
+    // files against one full-nt file -- use diffs/diff_mf_ts.py rather than
+    // diff_mf.py. Needs P_t > 1 in --mpi or the flag is a no-op.
+    bool        tsIO       = false;
+    if (GridCmdOptionExists(argv, argv + argc, "--timeSliceIO"))
+        tsIO       = true;
     if (GridCmdOptionExists(argv, argv + argc, "--Ni"))
         N_i        = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--Ni"));
     if (GridCmdOptionExists(argv, argv + argc, "--Nj"))
@@ -133,6 +140,7 @@ int main(int argc, char *argv[])
     emfPar.output     = "emf_gpu_out";
     emfPar.gammas1    = gammas1;
     emfPar.gammas2    = gammas2;
+    emfPar.timeSliceIO = tsIO;
 
     application.createModule<MContraction::A2AExtendedMesonField>("emf_gpu", emfPar);
 
