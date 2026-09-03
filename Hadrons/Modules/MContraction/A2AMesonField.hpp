@@ -36,6 +36,7 @@
 #include <Hadrons/A2AMatrix.hpp>
 #include <Grid/qcd/utils/A2Autils.h>
 #include <Grid/algorithms/blas/A2ASpatialSum.h>
+#include <iomanip>
 
 BEGIN_HADRONS_NAMESPACE
 
@@ -49,6 +50,26 @@ BEGIN_HADRONS_NAMESPACE
  *  complete the spatial + spin-colour reduction followed by a purely temporal
  *  gather, constructing the full meson field through a ring rather than
  *  GlobalSumVector.
+ *
+ *  timeSliceIO selects between two output layouts, and it is not only an IO
+ *  switch -- it decides whether SumRing runs its temporal gather at all.
+ *
+ *    false  one file per (mom, gamma) holding all nt timeslices. SumRing
+ *           gathers, so every rank ends up with the whole field and one rank
+ *           per file writes it.
+ *    true   one file per (mom, gamma, timeslice). SumRing stops after the
+ *           spatial reduce, so a rank holds only the timeslices its own t
+ *           coordinate owns, and writes only those.
+ *
+ *  The second is what makes the writes parallel. With the gather in place a
+ *  file has exactly one legal writer, so concurrency is capped at nmom*ngamma;
+ *  without it every timeslice is a separate file whose P_xyz candidate ranks
+ *  hold identical data, so the writers spread over nmom*ngamma*nt ranks and
+ *  the per-rank output buffer shrinks by P_t as well.
+ *
+ *  Consequences worth knowing before setting it: the reader has to open one
+ *  file per timeslice, and a rank that mislabels a timeslice writes a
+ *  well-formed file containing the wrong data rather than failing.
  ******************************************************************************/
 BEGIN_MODULE_NAMESPACE(MContraction)
 
@@ -62,7 +83,8 @@ public:
                                     std::string,             right,
                                     std::string,             output,
                                     std::string,             gammas,
-                                    std::vector<std::string>, mom);
+                                    std::vector<std::string>, mom,
+                                    bool,                    timeSliceIO);
 };
 
 class A2AMesonFieldMetadata: Serializable
@@ -183,6 +205,16 @@ void TA2AMesonField<FImpl>::execute(void)
     int block  = par().block;
     int cacheBlock = par().cacheBlock;
 
+    // Time decomposition. ntOut is the time extent this rank actually holds
+    // after SumRing: the whole lattice normally, its own slab in timeSliceIO.
+    // ntFile is the extent of one output file. Global timeslice of local
+    // index lt is ct*ntOut + lt, which LocalStarts asserts inside SumRing.
+    const bool tsIO = par().timeSliceIO;
+    int nd     = grid->Nd();
+    int ct     = grid->ThisProcessorCoor()[nd - 1];
+    int ntOut  = tsIO ? grid->LocalDimensions()[nd - 1] : nt;
+    int ntFile = tsIO ? 1 : nt;
+
     LOG(Message) << "Computing all-to-all meson fields" << std::endl;
     LOG(Message) << "Left: '" << par().left << "' Right: '" << par().right << "'" << std::endl;
     LOG(Message) << "Momenta:" << std::endl;
@@ -192,8 +224,14 @@ void TA2AMesonField<FImpl>::execute(void)
     for (auto &g: gamma_)
         LOG(Message) << "  " << g << std::endl;
     LOG(Message) << "Meson field size: " << nt << "*" << N_i << "*" << N_j
-                 << " (filesize " << sizeString(nt*N_i*N_j*sizeof(HADRONS_A2AM_IO_TYPE))
-                 << "/momentum/bilinear)" << std::endl;
+                 << " (filesize "
+                 << sizeString(ntFile*N_i*N_j*sizeof(HADRONS_A2AM_IO_TYPE))
+                 << "/momentum/bilinear" << (tsIO ? "/timeslice)" : ")")
+                 << std::endl;
+    if (tsIO)
+        LOG(Message) << "Per-timeslice IO: " << nt << " files/momentum/bilinear, "
+                     << "this rank holds t = " << ct*ntOut << ".."
+                     << ct*ntOut + ntOut - 1 << std::endl;
 
     auto &ph = envGet(std::vector<ComplexField>, momphName_);
 
@@ -235,15 +273,22 @@ void TA2AMesonField<FImpl>::execute(void)
         return md;
     };
 
-    auto filenameFn = [this, &ionameFn](const int m, const int g)
+    // gt is the global timeslice, ignored unless timeSliceIO. The zero padding
+    // is what lets a reader recover t from the name by position.
+    auto filenameFn = [this, &ionameFn, tsIO](const int m, const int g, const int gt)
     {
-        return par().output + "." + std::to_string(vm().getTrajectory())
-               + "/" + ionameFn(m, g) + ".h5";
+        std::stringstream ss;
+        ss << par().output << "." << vm().getTrajectory()
+           << "/" << ionameFn(m, g);
+        if (tsIO)
+            ss << ".t" << std::setfill('0') << std::setw(4) << gt;
+        ss << ".h5";
+        return ss.str();
     };
 
-    // Output buffer: one (nt, Nii, Njj) block at a time.
+    // Output buffer: one (ntFile, Nii, Njj) block at a time.
     Vector<HADRONS_A2AM_IO_TYPE> mBuf;
-    mBuf.resize(nt * block * block);
+    mBuf.resize(ntFile * block * block);
 
     // Scratch right vectors for GammaRight output (zero-momentum base pack).
     std::vector<FermionField> gammaRight(block, grid);
@@ -265,7 +310,7 @@ void TA2AMesonField<FImpl>::execute(void)
     // divides both, and a block that divides neither now costs two extra
     // buffers rather than anything on the critical path.
     //
-    // Dimension order (nt, Nii, nmom, Njj) -- nmom BEFORE N_j -- is the layout
+    // Dimension order (ntOut, Nii, nmom, Njj) -- nmom BEFORE N_j -- is the layout
     // SumRing writes, matching its GEMM's [i][m][j] output. RowMajor then makes
     // N_j the fastest dimension, so the IO fill below, which reads at fixed m
     // and walks jj innermost, is contiguous on both sides. Passing the true
@@ -276,7 +321,7 @@ void TA2AMesonField<FImpl>::execute(void)
 
     // Every rank creates the output directory itself, rather than relying
     // on makeFileDir's boss-rank-only mkdir. File writes below are spread
-    // across ranks (owned by (m*ngamma+g) % nRank), and output can land on
+    // across ranks (see ownerFn below), and output can land on
     // physically separate per-node storage (e.g. a node-local NVMe burst
     // buffer) where a directory created on the boss rank's node is simply
     // absent on every other node -- no barrier can fix that, since it isn't
@@ -291,17 +336,61 @@ void TA2AMesonField<FImpl>::execute(void)
     unsigned int myRank = grid->ThisRank();
     unsigned int nRank  = grid->RankCount();
 
-    // Initialise one HDF5 file per (mom, gamma) pair before the block loops.
-    // Each rank initialises only its assigned files; single barrier after.
+    // Seat of this rank among the P_xyz ranks sharing its t coordinate,
+    // dimension 0 fastest; one loop yields both the seat and P_xyz.
+    unsigned int mySeat = 0, P_xyz = 1;
+    for (int mu = 0; mu < nd - 1; mu++)
+    {
+        mySeat += (unsigned int)grid->ThisProcessorCoor()[mu] * P_xyz;
+        P_xyz  *= (unsigned int)grid->ProcessorGrid()[mu];
+    }
+
+    // File ownership, spread rather than packed onto the first nFiles ranks:
+    // the writes below are concurrent inside one barrier pair, so packing puts
+    // the whole field on a handful of nodes' devices and serializes any
+    // node-local stage-out onto the same few.
+    //
+    // Without timeSliceIO the gather leaves every rank holding the whole
+    // field, so any rank may own any file. With it a rank holds only its own
+    // slab, so the t half is forced and only the seat is free; stepping the
+    // seat by P_xyz/ntOut gives each timeslice of a slab a different writer.
+    //
+    // Index-space spread is not node-space spread on Frontier, where
+    // OptimalCommunicator relabels ranks for shm locality (see
+    // Grid/communicator/RingAllReduce.h) -- measure it, do not assume it.
+    unsigned int nFiles = nmom * ngamma;
+    auto ownerFn = [nRank, nFiles, ngamma, myRank, tsIO, ntOut, ct, P_xyz, mySeat]
+                   (const int m, const int g, const int gt)
+    {
+        unsigned int f = (unsigned int)(m * ngamma + g);
+
+        if (!tsIO)
+            return (unsigned int)(((uint64_t)f * nRank) / nFiles) == myRank;
+        if (gt / ntOut != ct)
+            return false;
+
+        unsigned int base = (unsigned int)(((uint64_t)f * P_xyz) / nFiles);
+        unsigned int step = (P_xyz > (unsigned int)ntOut)
+                          ? P_xyz / (unsigned int)ntOut : 1u;
+        return (base + (unsigned int)(gt % ntOut) * step) % P_xyz == mySeat;
+    };
+
+    // Initialise one HDF5 file per (mom, gamma), or per (mom, gamma, t) under
+    // timeSliceIO. Each rank initialises only the files it will write; single
+    // barrier after. The tLoop bound collapses the t axis when it is unused.
+    int tLoop = tsIO ? ntOut : 1;
     for (int m = 0; m < nmom; m++)
     for (int g = 0; g < ngamma; g++)
+    for (int lt = 0; lt < tLoop; lt++)
     {
-        if ((unsigned int)(m * ngamma + g) % nRank == myRank)
+        int gt = tsIO ? ct*ntOut + lt : 0;
+
+        if (ownerFn(m, g, gt))
         {
             std::string ioname   = ionameFn(m, g);
-            std::string filename = filenameFn(m, g);
+            std::string filename = filenameFn(m, g, gt);
             A2AMesonFieldMetadata md = metadataFn(m, g);
-            A2AMatrixIo<HADRONS_A2AM_IO_TYPE> io(filename, ioname, nt, N_i, N_j);
+            A2AMatrixIo<HADRONS_A2AM_IO_TYPE> io(filename, ioname, ntFile, N_i, N_j);
             io.initFile(md, block);
         }
     }
@@ -367,7 +456,7 @@ void TA2AMesonField<FImpl>::execute(void)
 
                 startTimer("Allocate");
                 spatial_sum_.AllocateLeft(Nii);
-                all_results.resize(nt, Nii, nmom, Njj);
+                all_results.resize(ntOut, Nii, nmom, Njj);
                 stopTimer("Allocate");
 
                 startTimer("Pack vectors");
@@ -375,40 +464,49 @@ void TA2AMesonField<FImpl>::execute(void)
                 stopTimer("Pack vectors");
 
                 startTimer("Sum");
-                spatial_sum_.SumRing(all_results, cacheBlock, &sumTimings, &sumBytes);
+                spatial_sum_.SumRing(all_results, cacheBlock, &sumTimings,
+                                     &sumBytes, tsIO);
                 stopTimer("Sum");
 
                 // Parallel IO: each rank writes its assigned momenta simultaneously.
                 // Barrier count drops from 2*nmom to 2 per outer block.
                 //
-                // Ownership key matches the (m*ngamma+g) % nRank used by the
-                // initFile loop above, so the rank that writes a given (m,g)
-                // file is always the same rank that created it -- creating on
-                // one rank and writing from another would depend on that
-                // file being visible from a different rank's node right
-                // after the barrier, which a plain MPI_Barrier does not
-                // guarantee on a parallel filesystem (client-side metadata
-                // caching can lag), and "file not found" races result.
+                // Ownership goes through the same ownerFn as the initFile loop
+                // above, so the rank that writes a given (m,g) file is always
+                // the same rank that created it -- creating on one rank and
+                // writing from another would depend on that file being visible
+                // from a different rank's node right after the barrier, which a
+                // plain MPI_Barrier does not guarantee on a parallel filesystem
+                // (client-side metadata caching can lag), and "file not found"
+                // races result. On node-local storage it would not be a race at
+                // all, just an absent file.
                 double ioBytes = static_cast<double>(nmom) * nt * Nii * Njj
                                  * sizeof(HADRONS_A2AM_IO_TYPE);
                 startTimer("IO");
                 double writeTime = -usecond();
                 grid->Barrier();
                 for (int m = 0; m < nmom; m++)
+                for (int lt = 0; lt < tLoop; lt++)
                 {
-                    if ((unsigned int)(m * ngamma + g) % nRank != myRank) continue;
+                    int gt   = tsIO ? ct*ntOut + lt : 0;
+                    int tSrc = tsIO ? lt : 0;
 
-                    A2AMatrixSet<HADRONS_A2AM_IO_TYPE> mf(mBuf.data(), 1, 1, nt, Nii, Njj);
+                    if (!ownerFn(m, g, gt)) continue;
+
+                    A2AMatrixSet<HADRONS_A2AM_IO_TYPE> mf(mBuf.data(), 1, 1,
+                                                          ntFile, Nii, Njj);
                     double dt = -usecond();
-                    thread_for_collapse(3, t, nt, {
+                    thread_for_collapse(3, t, ntFile, {
                         for (int ii = 0; ii < Nii; ii++)
                         for (int jj = 0; jj < Njj; jj++)
-                            mf(0, 0, (int)t, ii, jj) = all_results((int)t, ii, m, jj);
+                            mf(0, 0, (int)t, ii, jj)
+                                = all_results(tSrc + (int)t, ii, m, jj);
                     });
                     dt += usecond();
                     fillTime += dt;
-                    A2AMatrixIo<HADRONS_A2AM_IO_TYPE> io(filenameFn(m, g), ionameFn(m, g),
-                                                         nt, N_i, N_j);
+                    A2AMatrixIo<HADRONS_A2AM_IO_TYPE> io(filenameFn(m, g, gt),
+                                                         ionameFn(m, g),
+                                                         ntFile, N_i, N_j);
                     io.saveBlock(mf, 0, 0, ib, jb, &ioTimings);
                 }
                 grid->Barrier();
