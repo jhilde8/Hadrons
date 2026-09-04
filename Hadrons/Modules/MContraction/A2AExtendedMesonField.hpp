@@ -411,12 +411,14 @@ void TA2AExtendedMesonField<FImpl>::execute(void)
     // "errno = 2" from H5Fcreate much further downstream.
     std::string dirBase = par().output + "." + std::to_string(vm().getTrajectory());
 
+    startTimer("mkdir");
     if (Hadrons::mkdir(dirBase))
     {
         HADRONS_ERROR(Io, "cannot create directory '" + dirBase + "' ("
                           + std::strerror(errno) + ")");
     }
     grid->Barrier();
+    stopTimer("mkdir");
 
     for (int &type: types_){
 

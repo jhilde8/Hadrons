@@ -329,9 +329,18 @@ void TA2AMesonField<FImpl>::execute(void)
     // Hadrons::mkdir checks access() first and only costs a few redundant
     // syscalls when the directory already exists, so doing this on every
     // rank is harmless (if a little repetitive) on a shared filesystem too.
+    // Checked, because a discarded failure resurfaces as an opaque
+    // "errno = 2" out of H5Fcreate much further downstream.
     std::string dirBase = par().output + "." + std::to_string(vm().getTrajectory());
-    Hadrons::mkdir(dirBase);
+
+    startTimer("mkdir");
+    if (Hadrons::mkdir(dirBase))
+    {
+        HADRONS_ERROR(Io, "cannot create directory '" + dirBase + "' ("
+                          + std::strerror(errno) + ")");
+    }
     grid->Barrier();
+    stopTimer("mkdir");
 
     unsigned int myRank = grid->ThisRank();
     unsigned int nRank  = grid->RankCount();
@@ -378,7 +387,14 @@ void TA2AMesonField<FImpl>::execute(void)
     // Initialise one HDF5 file per (mom, gamma), or per (mom, gamma, t) under
     // timeSliceIO. Each rank initialises only the files it will write; single
     // barrier after. The tLoop bound collapses the t axis when it is unused.
+    //
+    // Timed separately from "IO" below, which covers only saveBlock -- by then
+    // the file exists and the write is pure bandwidth. Every H5Fcreate lives
+    // here instead, and its cost goes as the file COUNT, which timeSliceIO
+    // multiplies by nt. On a metadata-bound filesystem this phase, not the
+    // write, is the whole cost.
     int tLoop = tsIO ? ntOut : 1;
+    startTimer("initFile");
     for (int m = 0; m < nmom; m++)
     for (int g = 0; g < ngamma; g++)
     for (int lt = 0; lt < tLoop; lt++)
@@ -395,6 +411,7 @@ void TA2AMesonField<FImpl>::execute(void)
         }
     }
     grid->Barrier();
+    stopTimer("initFile");
 
     // Pre-pack flat phase arrays, one absolute phase per momentum -- no
     // difference-encoding needed here since ApplyAllPhaseRight reads a single

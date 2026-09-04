@@ -188,6 +188,23 @@ void TA2AChromoMagneticOperatorField<GImpl,FImpl>::execute(void)
   std::array<double, 6> sumBytes   = {};
   std::array<double, 7> ioTimings  = {};
 
+  // Every rank makes the output directory itself rather than relying on
+  // makeFileDir's boss-only mkdir: under timeSliceIO the writers are spread
+  // across ranks, and on node-local storage (an NVMe burst buffer) a directory
+  // made on the boss node is simply absent on every other one. Checked,
+  // because a discarded failure resurfaces as an opaque "errno = 2" out of
+  // H5Fcreate much further downstream.
+  std::string dirBase = par().output + "." + std::to_string(vm().getTrajectory());
+
+  startTimer("mkdir");
+  if (Hadrons::mkdir(dirBase))
+  {
+      HADRONS_ERROR(Io, "cannot create directory '" + dirBase + "' ("
+                        + std::strerror(errno) + ")");
+  }
+  grid->Barrier();
+  stopTimer("mkdir");
+
   for (auto &ifOrthog: ifOrthogs_) {
     std::vector<GaugeMat>  G;
     Vector<Gamma::Algebra> Sigma;
@@ -293,12 +310,6 @@ void TA2AChromoMagneticOperatorField<GImpl,FImpl>::execute(void)
         ioname = ioname + "_GijSij";
       else
         ioname = ioname + "_GitSit";
-      std::string dirBase = par().output + "." + std::to_string(vm().getTrajectory());
-
-      // Every rank makes the directory rather than makeFileDir's boss-only
-      // mkdir: under timeSliceIO the writers are spread across ranks, and on
-      // node-local storage a directory made on one node is absent on the rest.
-      Hadrons::mkdir(dirBase);
       LOG(Message) << "Writing " << (tsIO ? nt : 1) << " file(s) to "
                    << dirBase << "/" << ioname << std::endl;
       startTimer("IO");
