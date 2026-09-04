@@ -87,6 +87,7 @@ int main(int argc, char *argv[])
     std::string types      = "0 1 2 3";
     std::string gammas1    = "GammaMU";
     std::string gammas2    = "GammaMU";
+    std::string output_path = "emf_gpu_out";
     // Presence-only flag. The oracle (A2AExtendedMesonFieldMT) always writes
     // the merged layout, so with this set the comparison is per-timeslice
     // files against one full-nt file -- use diffs/diff_mf_ts.py rather than
@@ -110,6 +111,9 @@ int main(int argc, char *argv[])
         gammas1    = GridCmdOptionPayload(argv, argv + argc, "--gammas1");
     if (GridCmdOptionExists(argv, argv + argc, "--gammas2"))
         gammas2    = GridCmdOptionPayload(argv, argv + argc, "--gammas2");
+    //make this a command line arg to switch between lustre and nvme without recompiling. defaults to lustre path
+    if (GridCmdOptionExists(argv, argv + argc, "--output"))
+        output_path    = GridCmdOptionPayload(argv, argv + argc, "--output");
 
     // ------------------------------------------------------------------
     // Random A2A vectors and quark loop -- generated once, referenced by
@@ -137,7 +141,7 @@ int main(int argc, char *argv[])
     emfPar.right      = "right";
     emfPar.loop_vw1   = "loop_vw1";
     emfPar.loop_vw2   = "loop_vw2";
-    emfPar.output     = "emf_gpu_out";
+    emfPar.output     = output_path;
     emfPar.gammas1    = gammas1;
     emfPar.gammas2    = gammas2;
     emfPar.timeSliceIO = tsIO;

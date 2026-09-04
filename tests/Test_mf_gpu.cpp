@@ -106,7 +106,7 @@ int main(int argc, char *argv[])
     mfPar.cacheBlock = cacheBlock; 
     mfPar.left   = "left";
     mfPar.right  = "right";
-    mfPar.output = "mf_gpu_out";
+    mfPar.output = "/mnt/bb/jhilde/mf_stage";
     mfPar.gammas = gammas;
     mfPar.mom    = momenta;
 

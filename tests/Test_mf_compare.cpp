@@ -67,6 +67,7 @@ int main(int argc, char *argv[])
     int         cacheBlock = 8;
     int         momShell   = 0;
     std::string gammas     = "Gamma5 Identity";
+    std::string output_path= "mf_gpu_out";
     // Presence-only flag. The oracle (A2AFewMesonField) always writes the
     // merged layout, so with this set the comparison is per-timeslice files
     // against one full-nt file -- use diffs/diff_mf_ts.py rather than
@@ -86,6 +87,8 @@ int main(int argc, char *argv[])
         momShell   = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--mom"));
     if (GridCmdOptionExists(argv, argv + argc, "--gammas"))
         gammas     = GridCmdOptionPayload(argv, argv + argc, "--gammas");
+    if (GridCmdOptionExists(argv, argv + argc, "--output"))
+        output_path     = GridCmdOptionPayload(argv, argv + argc, "--output");
 
     std::vector<std::string> momenta = momentumShells(momShell);
 
@@ -109,7 +112,7 @@ int main(int argc, char *argv[])
     mfPar.cacheBlock = cacheBlock;
     mfPar.left   = "left";
     mfPar.right  = "right";
-    mfPar.output = "mf_gpu_out";
+    mfPar.output = output_path;
     mfPar.gammas = gammas;
     mfPar.mom    = momenta;
     mfPar.timeSliceIO = tsIO;

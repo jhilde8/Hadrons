@@ -79,6 +79,7 @@ int main(int argc, char *argv[])
     int         cacheBlock = 8;
     std::string parities   = "0 1";
     std::string ifOrthogs  = "0 1";
+    std::string output_path= "cmof_gpu_out";
     // Presence-only flag. The oracle (A2AChromoMagneticOperatorFieldMT)
     // always writes the merged layout, so with this set the comparison is
     // per-timeslice files against one full-nt file -- use
@@ -99,6 +100,8 @@ int main(int argc, char *argv[])
         parities   = GridCmdOptionPayload(argv, argv + argc, "--parities");
     if (GridCmdOptionExists(argv, argv + argc, "--ifOrthogs"))
         ifOrthogs  = GridCmdOptionPayload(argv, argv + argc, "--ifOrthogs");
+    if (GridCmdOptionExists(argv, argv + argc, "--output"))
+        output_path  = GridCmdOptionPayload(argv, argv + argc, "--output");
 
     // ------------------------------------------------------------------
     // Random gauge configuration and A2A vectors -- generated once,
@@ -124,7 +127,7 @@ int main(int argc, char *argv[])
     cmofPar.left       = "left";
     cmofPar.right      = "right";
     cmofPar.gauge      = "gauge";
-    cmofPar.output     = "cmof_gpu_out";
+    cmofPar.output     = output_path;
     cmofPar.ifOrthogs  = ifOrthogs;
     cmofPar.timeSliceIO = tsIO;
 
