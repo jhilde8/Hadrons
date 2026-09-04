@@ -403,6 +403,21 @@ void TA2AExtendedMesonField<FImpl>::execute(void)
     std::array<double, 7> ioTimings  = {};
     unsigned int          fileIdx    = 0;
 
+    // Every rank makes the output directory itself rather than relying on
+    // makeFileDir's boss-only mkdir: under timeSliceIO the writers are spread
+    // across ranks, and on node-local storage (an NVMe burst buffer) a
+    // directory made on the boss node is simply absent on every other one.
+    // Checked, because a discarded failure here resurfaces as an opaque
+    // "errno = 2" from H5Fcreate much further downstream.
+    std::string dirBase = par().output + "." + std::to_string(vm().getTrajectory());
+
+    if (Hadrons::mkdir(dirBase))
+    {
+        HADRONS_ERROR(Io, "cannot create directory '" + dirBase + "' ("
+                          + std::strerror(errno) + ")");
+    }
+    grid->Barrier();
+
     for (int &type: types_){
 
       for (int ig = 0 ; ig < gamma1_.size() ; ++ig ){
@@ -503,12 +518,7 @@ void TA2AExtendedMesonField<FImpl>::execute(void)
 	LOG(Message) << "EMF made for type " << type << "; gamma1: " << nameg1_[ig] << "; gamma2: " << nameg2_[ig] << std::endl;
 
 	std::string ioname  = "type" + std::to_string(type) + "_" + nameg1_[ig] + "_" + nameg2_[ig];
-	std::string dirBase = par().output + "." + std::to_string(vm().getTrajectory());
 
-	// Every rank makes the directory rather than makeFileDir's boss-only
-	// mkdir: under timeSliceIO the writers are spread across ranks, and on
-	// node-local storage a directory made on one node is absent on the rest.
-	Hadrons::mkdir(dirBase);
         LOG(Message) << "Writing " << (tsIO ? nt : 1) << " file(s) to "
                      << dirBase << "/" << ioname << std::endl;
         double ioBytes = static_cast<double>(nt) * N_i * N_j * sizeof(HADRONS_A2AM_IO_TYPE);
