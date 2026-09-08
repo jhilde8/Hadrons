@@ -50,6 +50,19 @@ BEGIN_HADRONS_NAMESPACE
  *  'highStem + highExtensions[h]' -- e.g. highStem = ".../vw/" and          *
  *  highExtensions = {"l0_v", "l1_v", ...} -- so the common directory only   *
  *  has to be written once rather than once per hit.                        *
+ *                                                                            *
+ *  Staging is one bin at a time. setup() allocates the whole output array up  *
+ *  front, so holding a full block's worth of binned files alongside it would  *
+ *  double the largest object in the job -- one hit of high modes is 1536       *
+ *  fields, TB-scale on a production volume, and the doubling is what decides  *
+ *  the node count. It buys nothing: A2AVectorsIo::read already opens, reads   *
+ *  and closes one file per element when multiFile is set, and readElement is  *
+ *  that same cycle for a single index, so reading bin by bin and unpacking    *
+ *  each as it lands is identical IO for a factor binSize less memory.         *
+ *  UnpackBinnedVectors loops over whatever bins it is handed and writes       *
+ *  out[offset + ib*binSize + j], so passing one bin and advancing offset by   *
+ *  i*binSize writes the same slots in the same order -- the output is         *
+ *  bit-identical to the bulk form.                                            *
  ******************************************************************************/
 BEGIN_MODULE_NAMESPACE(MIO)
 
@@ -162,28 +175,41 @@ void TLoadCombinedA2AVecsV<FImpl, lowBinSize, highBinSize>::execute(void)
     if (par().nLow > 0)
     {
         int Nb = par().nLow / lowBinSize;
-        std::vector<Lattice<LowBinnedSpinor>> bvec(Nb, envGetGrid(Lattice<LowBinnedSpinor>));
+        // One bin resident, not Nb -- see the staging note in the class comment.
+        std::vector<Lattice<LowBinnedSpinor>> bvec(1, envGetGrid(Lattice<LowBinnedSpinor>));
 
         LOG(Message) << "Loading " << par().nLow << " low-mode A2A vectors from "
                      << Nb << " files of " << lowBinSize << " binned vectors" << std::endl;
-        A2AVectorsIo::read(bvec, par().lowFilestem, true, vm().getTrajectory());
-        A2Autils<FImpl>::template UnpackBinnedVectors<lowBinSize>(out, offset, bvec);
+        for (int i = 0; i < Nb; ++i)
+        {
+            A2AVectorsIo::readElement(par().lowFilestem, bvec[0], i,
+                                      vm().getTrajectory());
+            A2Autils<FImpl>::template UnpackBinnedVectors<lowBinSize>(
+                out, offset + i*lowBinSize, bvec);
+        }
         offset += par().nLow;
     }
 
     int  Nb   = par().highSize / highBinSize;
     Real norm = (par().nHit > 0) ? (1.0/par().nHit) : 1.0;
 
+    // Hoisted out of the extension loop: one bin costs little enough to keep
+    // alive across hits, and it was never the per-hit allocation that mattered.
+    std::vector<Lattice<HighBinnedSpinor>> bvec(1, envGetGrid(Lattice<HighBinnedSpinor>));
+
     for (unsigned int h = 0; h < par().highExtensions.size(); ++h)
     {
         std::string filestem = par().highStem + par().highExtensions[h];
-        std::vector<Lattice<HighBinnedSpinor>> bvec(Nb, envGetGrid(Lattice<HighBinnedSpinor>));
 
         LOG(Message) << "Loading " << par().highSize << " high-mode A2A vectors from '"
                      << filestem << "' (" << Nb << " files of "
                      << highBinSize << " binned vectors)" << std::endl;
-        A2AVectorsIo::read(bvec, filestem, true, vm().getTrajectory());
-        A2Autils<FImpl>::template UnpackBinnedVectors<highBinSize>(out, offset, bvec);
+        for (int i = 0; i < Nb; ++i)
+        {
+            A2AVectorsIo::readElement(filestem, bvec[0], i, vm().getTrajectory());
+            A2Autils<FImpl>::template UnpackBinnedVectors<highBinSize>(
+                out, offset + i*highBinSize, bvec);
+        }
         if (norm != 1.0)
         {
             LOG(Message) << "Applying 1/nHit = " << norm

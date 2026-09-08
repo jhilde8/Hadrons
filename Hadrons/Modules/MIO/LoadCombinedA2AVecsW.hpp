@@ -163,12 +163,22 @@ void TLoadCombinedA2AVecsW<FImpl, lowBinSize>::execute(void)
     if (par().nLow > 0)
     {
         int Nb = par().nLow / lowBinSize;
-        std::vector<Lattice<LowBinnedSpinor>> bvec(Nb, envGetGrid(Lattice<LowBinnedSpinor>));
+        // One bin resident, not Nb. setup() has already allocated the whole
+        // output array, and A2AVectorsIo::read opens, reads and closes one file
+        // per element anyway, so unpacking each bin as it lands is the same IO
+        // for a factor lowBinSize less staging. Slots and order are unchanged:
+        // the bin index moves from UnpackBinnedVectors' own loop into offset.
+        std::vector<Lattice<LowBinnedSpinor>> bvec(1, envGetGrid(Lattice<LowBinnedSpinor>));
 
         LOG(Message) << "Loading " << par().nLow << " low-mode A2A vectors from "
                      << Nb << " files of " << lowBinSize << " binned vectors" << std::endl;
-        A2AVectorsIo::read(bvec, par().lowFilestem, true, vm().getTrajectory());
-        A2Autils<FImpl>::template UnpackBinnedVectors<lowBinSize>(out, offset, bvec);
+        for (int i = 0; i < Nb; ++i)
+        {
+            A2AVectorsIo::readElement(par().lowFilestem, bvec[0], i,
+                                      vm().getTrajectory());
+            A2Autils<FImpl>::template UnpackBinnedVectors<lowBinSize>(
+                out, offset + i*lowBinSize, bvec);
+        }
         offset += par().nLow;
     }
 

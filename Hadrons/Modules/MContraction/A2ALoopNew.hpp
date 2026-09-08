@@ -66,6 +66,19 @@ BEGIN_HADRONS_NAMESPACE
  *                                                                            *
  *  No normalization is applied: by convention the 1/nHit hit-average factor   *
  *  lives on the V side and is already baked in by the loader.                 *
+ *                                                                            *
+ *  Chaining over mode blocks: inputLoop names a loop to seed the sum with     *
+ *  instead of zero, so a job too large to hold every mode at once can load    *
+ *  one block at a time and hand the running loop from one module to the next.  *
+ *  Declaring it as an input is what orders the chain and keeps each link       *
+ *  alive until its successor has read it, so the VM frees all but the pair in  *
+ *  flight. The seed is copied rather than moved: one extra PropagatorField is  *
+ *  a fraction of a percent of the budget, and moving would silently empty a    *
+ *  link that anything else happened to consume.                               *
+ *                                                                            *
+ *  Normalization composes with the chain, since each block carries whatever    *
+ *  its loader gave it -- low-mode blocks loaded unnormalized, high-mode        *
+ *  blocks with nHit set, and the chain simply adds them.                      *
  ******************************************************************************/
 BEGIN_MODULE_NAMESPACE(MContraction)
 
@@ -78,11 +91,15 @@ public:
     //        field views are open on the device at once. Bounds device memory
     //        independently of the mode count; the high-mode phase in the dense
     //        case is only Nsc modes and ignores it.
+    // inputLoop: optional loop to seed the sum with instead of zero, making
+    //        this module one link of a chain that accumulates across
+    //        separately loaded mode blocks. Empty starts at zero.
     GRID_SERIALIZABLE_CLASS_MEMBERS(A2ALoopNewPar,
                                     std::string,  left,
                                     std::string,  right,
                                     unsigned int, nLow,
-                                    unsigned int, block);
+                                    unsigned int, block,
+                                    std::string,  inputLoop);
 };
 
 template <typename FImpl>
@@ -124,6 +141,13 @@ template <typename FImpl>
 std::vector<std::string> TA2ALoopNew<FImpl>::getInput(void)
 {
     std::vector<std::string> in = {par().left, par().right};
+
+    // Declaring the seed is what orders the chain and keeps the predecessor
+    // alive until this link has read it.
+    if (!par().inputLoop.empty())
+    {
+        in.push_back(par().inputLoop);
+    }
 
     return in;
 }
@@ -234,8 +258,17 @@ void TA2ALoopNew<FImpl>::execute(void)
     LOG(Message) << "nLow " << nLow << ", nHit " << nHit_ << ", nt " << nt_
                  << ", Nsc " << nsc_ << ", block " << block << std::endl;
 
-    // Every phase below accumulates, so the sum starts here and nowhere else.
-    loop = Zero();
+    // Every phase below accumulates, so the sum starts here and nowhere else:
+    // at zero, or at the previous link's loop when chaining over mode blocks.
+    if (par().inputLoop.empty())
+    {
+        loop = Zero();
+    }
+    else
+    {
+        LOG(Message) << "Seeding from '" << par().inputLoop << "'" << std::endl;
+        loop = envGet(PropagatorField, par().inputLoop);
+    }
 
     if (!denseW_)
     {
