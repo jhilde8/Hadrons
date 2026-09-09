@@ -19,6 +19,7 @@ Author: Masaaki Tomii <masaaki.tomii@uconn.edu>
 #include <Hadrons/ModuleFactory.hpp>
 #include <Hadrons/A2AMatrix.hpp>
 #include <Grid/qcd/utils/A2Autils.h>
+#include <Grid/algorithms/blas/A2ASpatialSum.h>
 #include <iomanip>
 
 BEGIN_HADRONS_NAMESPACE
@@ -75,6 +76,10 @@ public:
 private:
   std::vector<int> parities_;
   std::vector<int> ifOrthogs_;
+  // One per module, not one per (ifOrthog, parity) pair -- see the same member
+  // in TA2AExtendedMesonField. Nothing carries across a pair; a fresh object
+  // cost 4 rounds of freeing and reallocating the largest device buffers here.
+  A2ASpatialSum<vobj> spatial_sum_;
 };
 
 MODULE_REGISTER(A2AChromoMagneticOperatorField, ARG(TA2AChromoMagneticOperatorField<GIMPL,FIMPL>), MContraction);
@@ -116,8 +121,6 @@ void TA2AChromoMagneticOperatorField<GImpl,FImpl>::setup(void)
 template <typename GImpl, typename FImpl>
 void TA2AChromoMagneticOperatorField<GImpl,FImpl>::execute(void)
 {
-  typedef iSpinColourVector<vector_type> SpinColourVector_v;
-
   auto &left    = envGet(std::vector<FermionField>, par().left);
   auto &right   = envGet(std::vector<FermionField>, par().right);
   const auto &U = envGet(GaugeField, par().gauge);
@@ -134,14 +137,17 @@ void TA2AChromoMagneticOperatorField<GImpl,FImpl>::execute(void)
 
   // timeSliceIO: SumRing stops after the spatial reduce, so this rank holds
   // only its own t slab and writes one file per timeslice it owns. Global
-  // timeslice of local index lt is ct*ntOut + lt. mBuf follows ntOut.
+  // timeslice of local index lt is ct*ntOut + lt.
+  //
+  // There is no staging buffer: each (i,j) block is written as a hyperslab
+  // straight out of SumRing's result tensor, the way A2AMesonField and
+  // A2AFewMesonField already do it. Buffering the whole field first cost
+  // ntOut*N_i*N_j per rank, which scales with the square of the hit count.
   const bool tsIO = par().timeSliceIO;
   int nd     = grid->Nd();
   int ct     = grid->ThisProcessorCoor()[nd - 1];
   int ntOut  = tsIO ? grid->LocalDimensions()[nd - 1] : nt;
   int ntFile = tsIO ? 1 : nt;
-
-  Vector<HADRONS_A2AM_IO_TYPE> mBuf; mBuf.resize(ntOut*N_i*N_j);
 
   // Seat among the P_xyz ranks sharing this t coordinate. The (ifOrthog,
   // parity) loop is sequential, so all concurrency comes from the timeslice
@@ -205,6 +211,20 @@ void TA2AChromoMagneticOperatorField<GImpl,FImpl>::execute(void)
   grid->Barrier();
   stopTimer("mkdir");
 
+  // Regenerated per write rather than cached: A2AMatrixIo holds only names and
+  // dimensions, never an open handle -- saveBlock opens and closes itself -- so
+  // rebuilding one costs two string copies against a 256 KiB write.
+  auto filenameFn = [&dirBase, tsIO](const std::string &ioname, const int gt)
+  {
+      std::stringstream fn;
+
+      fn << dirBase << "/" << ioname;
+      if (tsIO) fn << ".t" << std::setfill('0') << std::setw(4) << gt;
+      fn << ".h5";
+
+      return fn.str();
+  };
+
   for (auto &ifOrthog: ifOrthogs_) {
     std::vector<GaugeMat>  G;
     Vector<Gamma::Algebra> Sigma;
@@ -220,8 +240,45 @@ void TA2AChromoMagneticOperatorField<GImpl,FImpl>::execute(void)
     for (auto &parity: parities_) {
       LOG(Message) << "Starting calculation with ifOrthog=" << ifOrthog
                    << " parity=" << parity << std::endl;
-      A2AMatrixSet<HADRONS_A2AM_IO_TYPE> cmf(mBuf.data(), 1, 1, ntOut, N_i, N_j);
-      A2ASpatialSum<SpinColourVector_v> spatial_sum;
+      std::string ioname = "parity" + std::to_string(parity);
+      if (ifOrthog == 1)
+        ioname = ioname + "_GijSij";
+      else
+        ioname = ioname + "_GitSit";
+
+      // Create the timeslice files this rank owns before the block sweep, then
+      // write each (i,j) block into them as it is produced. Both loops test the
+      // same ownerFn(fileIdx, gt), so the rank that creates a file is always
+      // the rank that writes it -- creating on one rank and writing from
+      // another races on client-side metadata caching, since a plain Barrier
+      // does not make the file visible from another node. The chunk is `block`,
+      // matching the write granularity, so a hyperslab covers exactly one chunk
+      // and never forces a read-modify-write.
+      A2AChromoMagneticOperatorFieldMetadata md;
+      md.meta = ioname;
+      int nOwned = 0;
+      for (int lt = 0; lt < (tsIO ? ntOut : 1); ++lt)
+      {
+        int gt = tsIO ? ct*ntOut + lt : 0;
+
+        if (!ownerFn(fileIdx, gt)) continue;
+
+        A2AMatrixIo<HADRONS_A2AM_IO_TYPE> io(filenameFn(ioname, gt), ioname,
+                                             ntFile, N_i, N_j);
+        startTimer("initFile");
+        io.initFile(md, block);
+        stopTimer("initFile");
+        nOwned++;
+      }
+
+      LOG(Message) << "Writing " << (tsIO ? nt : 1) << " file(s) to "
+                   << dirBase << "/" << ioname << std::endl;
+#ifdef HADRONS_A2AM_PARALLEL_IO
+      startTimer("Barrier");
+      grid->Barrier();
+      stopTimer("Barrier");
+#endif
+      double writeTime = 0.;
 
       // Result buffers, one per distinct block shape. A block is full or on
       // the tail in each axis independently, so a 2x2 pool indexed by (i on
@@ -252,24 +309,22 @@ void TA2AChromoMagneticOperatorField<GImpl,FImpl>::execute(void)
           Grid::A2AChromoMagneticOperator<GImpl,FImpl>::CMOContractRight(
               loopRight[jj], G, Sigma, right[j+jj], parity);
         stopTimer("CMOContractRight");
-        LOG(Message) << "loopRight packed for j-block " << j/block
-                     << " ifOrthog=" << ifOrthog << " parity=" << parity << std::endl;
 
         startTimer("Allocate");
-        spatial_sum.AllocateRight(Njj, grid);
+        spatial_sum_.AllocateRight(Njj, grid);
         stopTimer("Allocate");
         startTimer("Pack vectors");
-        spatial_sum.PackRight(loopRight, 0, Njj);
+        spatial_sum_.PackRight(loopRight, 0, Njj);
         stopTimer("Pack vectors");
 
         for (unsigned int i = 0; i < N_i; i += block) {
           int Nii = MIN(N_i-i, block);
 
           startTimer("Allocate");
-          spatial_sum.AllocateLeft(Nii);
+          spatial_sum_.AllocateLeft(Nii);
           stopTimer("Allocate");
           startTimer("Pack vectors");
-          spatial_sum.PackLeftConj(left, i, Nii);
+          spatial_sum_.PackLeftConj(left, i, Nii);
           stopTimer("Pack vectors");
 
           // Rank 4 with a singleton momentum axis: SumRing writes
@@ -284,16 +339,29 @@ void TA2AChromoMagneticOperatorField<GImpl,FImpl>::execute(void)
           stopTimer("Allocate");
 
           startTimer("Sum");
-          spatial_sum.SumRing(cmfBlock, cacheBlock, &sumTimings, &sumBytes, tsIO);
+          spatial_sum_.SumRing(cmfBlock, cacheBlock, &sumTimings, &sumBytes, tsIO);
           stopTimer("Sum");
 
-          startTimer("Copy out");
-          thread_for_collapse(3, t, ntOut, {
-            for (int ii = 0; ii < Nii; ii++)
-            for (int jj = 0; jj < Njj; jj++)
-              cmf(0,0,(int)t,i+ii,j+jj) = cmfBlock((int)t,ii,0,jj);
-          });
-          stopTimer("Copy out");
+          // Straight out of the result tensor: cmfBlock is RowMajor
+          // (ntOut, Nii, 1, Njj), so the Nii x Njj slab at fixed t is
+          // contiguous and needs no staging. Without tsIO there is one file
+          // with ntFile = nt = ntOut, and saveBlock's count of {nt, Nii, Njj}
+          // spans the whole tensor from lt = 0.
+          startTimer("IO");
+          double dt = -usecond();
+          for (int lt = 0; lt < (tsIO ? ntOut : 1); ++lt)
+          {
+            int gt = tsIO ? ct*ntOut + lt : 0;
+
+            if (!ownerFn(fileIdx, gt)) continue;
+
+            A2AMatrixIo<HADRONS_A2AM_IO_TYPE> io(filenameFn(ioname, gt), ioname,
+                                                 ntFile, N_i, N_j);
+            io.saveBlock(&cmfBlock(lt, 0, 0, 0), i, j, Nii, Njj, "", &ioTimings);
+          }
+          dt += usecond();
+          writeTime += dt;
+          stopTimer("IO");
 
           //LOG(Message) << "CMF made for i-block " << i/block
           //             << " j-block "             << j/block
@@ -305,47 +373,22 @@ void TA2AChromoMagneticOperatorField<GImpl,FImpl>::execute(void)
 
       LOG(Message) << "CMF made for ifOrthog=" << ifOrthog << " parity=" << parity << std::endl;
 
-      std::string ioname = "parity" + std::to_string(parity);
-      if (ifOrthog == 1)
-        ioname = ioname + "_GijSij";
-      else
-        ioname = ioname + "_GitSit";
-      LOG(Message) << "Writing " << (tsIO ? nt : 1) << " file(s) to "
-                   << dirBase << "/" << ioname << std::endl;
-      startTimer("IO");
-#ifdef HADRONS_A2AM_PARALLEL_IO
-      startTimer("Barrier");
-      grid->Barrier();
-      stopTimer("Barrier");
-#endif
-      for (int lt = 0; lt < (tsIO ? ntOut : 1); ++lt)
-      {
-        int gt = tsIO ? ct*ntOut + lt : 0;
-
-        if (!ownerFn(fileIdx, gt)) continue;
-
-        std::stringstream fn;
-        fn << dirBase << "/" << ioname;
-        if (tsIO) fn << ".t" << std::setfill('0') << std::setw(4) << gt;
-        fn << ".h5";
-
-        A2AMatrixSet<HADRONS_A2AM_IO_TYPE> slice(mBuf.data() + (size_t)lt*N_i*N_j,
-                                                 1, 1, ntFile, N_i, N_j);
-        A2AMatrixIo<HADRONS_A2AM_IO_TYPE> io(fn.str(), ioname, ntFile, N_i, N_j);
-        A2AChromoMagneticOperatorFieldMetadata md;
-        md.meta = ioname;
-        startTimer("initFile");
-        io.initFile(md, MAX(N_i,N_j));
-        stopTimer("initFile");
-        io.saveBlock(slice, 0, 0, 0, 0, &ioTimings);
-      }
       fileIdx++;
 #ifdef HADRONS_A2AM_PARALLEL_IO
       startTimer("Barrier");
       grid->Barrier();
       stopTimer("Barrier");
 #endif
-      stopTimer("IO");
+      // Per rank, not global: writeTime accumulates this rank's own saveBlock
+      // calls and ioBytes counts only the files it owns, so the rate is what
+      // this rank achieved rather than the whole field over a barrier window.
+      double ioBytes = static_cast<double>(nOwned) * ntFile * N_i * N_j
+                       * sizeof(HADRONS_A2AM_IO_TYPE);
+      if (writeTime > 0.)
+          LOG(Message) << "IO ifOrthog=" << ifOrthog << " parity=" << parity
+                       << ": " << sizeString(ioBytes) << " in " << writeTime
+                       << " us local (" << ioBytes / writeTime * 1.e6 / 1024. / 1024.
+                       << " MB/s effective)" << std::endl;
     }// parity
   }// ifOrthog
 

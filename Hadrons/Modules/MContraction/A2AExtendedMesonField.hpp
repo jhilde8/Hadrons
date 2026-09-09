@@ -19,6 +19,7 @@ Author: Masaaki Tomii <masaaki.tomii@uconn.edu>
 #include <Hadrons/ModuleFactory.hpp>
 #include <Hadrons/A2AMatrix.hpp>
 #include <Grid/qcd/utils/A2Autils.h>
+#include <Grid/algorithms/blas/A2ASpatialSum.h>
 #include <iomanip>
 
 BEGIN_HADRONS_NAMESPACE
@@ -35,9 +36,14 @@ BEGIN_HADRONS_NAMESPACE
  *  the output is laid out.
  *
  *    false  one file per (type, gamma pair) holding all nt timeslices, written
- *           by rank 0 alone. mBuf is nt*N_i*N_j on every rank.
+ *           by rank 0 alone.
  *    true   one file per (type, gamma pair, timeslice). A rank holds only its
- *           own t slab and writes the timeslices it owns; mBuf shrinks by P_t.
+ *           own t slab and writes the timeslices it owns.
+ *
+ *  Either way the output goes out one (i,j) block at a time, as a hyperslab
+ *  straight from SumRing's result tensor, so nothing scaling with N_i*N_j is
+ *  ever resident. The buffered form this replaced held ntOut*N_i*N_j per rank,
+ *  which is 45 GB at eight hits.
  *
  *  The (type, ig) loop is sequential, so unlike A2AMesonField there is no
  *  concurrency to be had along the file axis - every rank walks all files in
@@ -121,6 +127,12 @@ private:
   std::vector<std::string> nameg1_;
   std::vector<std::string> nameg2_;
   std::vector<int> types_;
+  // One per module, not one per (type, gamma) pair. Every scalar it holds is
+  // re-derived by the next AllocateRight/AllocateLeft and its buffers are
+  // grow-only and overwritten by the packs, so nothing carries across a pair;
+  // what a fresh object cost was 20 rounds of freeing and reallocating the
+  // largest device buffers in the module, and 20 rebuilds of the site map.
+  A2ASpatialSum<vobj> spatial_sum_;
 };
 
 MODULE_REGISTER(A2AExtendedMesonField, TA2AExtendedMesonField<FIMPL>, MContraction);
@@ -281,7 +293,6 @@ void TA2AExtendedMesonField<FImpl>::setup(void)
 template <typename FImpl>
 void TA2AExtendedMesonField<FImpl>::execute(void)
 {
-  typedef iSpinColourVector<vector_type> SpinColourVector_v;
     auto &left  = envGet(std::vector<FermionField>, par().left);
     auto &right = envGet(std::vector<FermionField>, par().right);
 
@@ -299,14 +310,18 @@ void TA2AExtendedMesonField<FImpl>::execute(void)
     // timeSliceIO: SumRing stops after the spatial reduce, so this rank holds
     // only its own t slab and writes one file per timeslice it owns. ntOut is
     // what it holds, ntFile what one file holds, and global timeslice of local
-    // index lt is ct*ntOut + lt. mBuf follows ntOut, so it shrinks by P_t.
+    // index lt is ct*ntOut + lt.
+    //
+    // There is no staging buffer: each (i,j) block is written as a hyperslab
+    // straight out of SumRing's result tensor, the way A2AMesonField and
+    // A2AFewMesonField already do it. Buffering the whole field first cost
+    // ntOut*N_i*N_j, which at eight hits is 45 GB a rank for something the
+    // block sweep delivers 256 KiB at a time.
     const bool tsIO = par().timeSliceIO;
     int nd     = grid->Nd();
     int ct     = grid->ThisProcessorCoor()[nd - 1];
     int ntOut  = tsIO ? grid->LocalDimensions()[nd - 1] : nt;
     int ntFile = tsIO ? 1 : nt;
-
-    Vector<HADRONS_A2AM_IO_TYPE> mBuf; mBuf.resize(ntOut*N_i*N_j);
 
     // Seat among the P_xyz ranks sharing this t coordinate. The (type, ig)
     // loop is sequential, so the concurrency comes entirely from the
@@ -420,14 +435,65 @@ void TA2AExtendedMesonField<FImpl>::execute(void)
     grid->Barrier();
     stopTimer("mkdir");
 
+    // Regenerated per write rather than cached: A2AMatrixIo holds only names
+    // and dimensions, never an open handle -- saveBlock opens and closes
+    // itself -- so rebuilding one costs two string copies against a 256 KiB
+    // write. Same reason A2AMesonField keeps a filenameFn instead of a
+    // container of writers.
+    auto filenameFn = [&dirBase, tsIO](const std::string &ioname, const int gt)
+    {
+        std::stringstream fn;
+
+        fn << dirBase << "/" << ioname;
+        if (tsIO) fn << ".t" << std::setfill('0') << std::setw(4) << gt;
+        fn << ".h5";
+
+        return fn.str();
+    };
+
     for (int &type: types_){
 
       for (int ig = 0 ; ig < gamma1_.size() ; ++ig ){
 
-	A2AMatrixSet<HADRONS_A2AM_IO_TYPE> emf(mBuf.data(),1,1,ntOut,N_i,N_j);
-
 	Vector<Gamma::Algebra> gamma1(gamma1_[ig].begin(), gamma1_[ig].end());
 	Vector<Gamma::Algebra> gamma2(gamma2_[ig].begin(), gamma2_[ig].end());
+
+	std::string ioname  = "type" + std::to_string(type) + "_" + nameg1_[ig] + "_" + nameg2_[ig];
+
+	// Create the timeslice files this rank owns before the block sweep, then
+	// write each (i,j) block into them as it is produced. Both loops test the
+	// same ownerFn(fileIdx, gt), so the rank that creates a file is always the
+	// rank that writes it -- creating on one rank and writing from another
+	// races on client-side metadata caching, since a plain Barrier does not
+	// make the file visible from another node. The chunk is `block`, matching
+	// the write granularity, so a hyperslab covers exactly one chunk and never
+	// forces a read-modify-write.
+	A2AExtendedMesonFieldMetadata md;
+	md.gamma1 = nameg1_[ig];
+	md.gamma2 = nameg2_[ig];
+	int nOwned = 0;
+	for (int lt = 0; lt < (tsIO ? ntOut : 1); ++lt)
+	{
+	  int gt = tsIO ? ct*ntOut + lt : 0;
+
+	  if (!ownerFn(fileIdx, gt)) continue;
+
+	  A2AMatrixIo<HADRONS_A2AM_IO_TYPE> io(filenameFn(ioname, gt), ioname,
+	                                       ntFile, N_i, N_j);
+	  startTimer("initFile");
+	  io.initFile(md, block);
+	  stopTimer("initFile");
+	  nOwned++;
+	}
+
+        LOG(Message) << "Writing " << (tsIO ? nt : 1) << " file(s) to "
+                     << dirBase << "/" << ioname << std::endl;
+#ifdef HADRONS_A2AM_PARALLEL_IO
+	startTimer("Barrier");
+	grid->Barrier();
+	stopTimer("Barrier");
+#endif
+	double writeTime = 0.;
 
 	startTimer("Loop contraction");
 	tloop = Zero();
@@ -440,7 +506,6 @@ void TA2AExtendedMesonField<FImpl>::execute(void)
 	stopTimer("Loop contraction");
 	//LOG(Message) << "tloop contraction done for type " << type << std::endl;
 	//LOG(Message) << "Making EMF" << std::endl;
-	A2ASpatialSum<SpinColourVector_v> spatial_sum;
 
 	// Result buffers, one per distinct block shape. A block is full or on the
 	// tail in each axis independently, so a 2x2 pool indexed by (i on tail, j
@@ -475,20 +540,20 @@ void TA2AExtendedMesonField<FImpl>::execute(void)
 	  //LOG(Message) << "loopRight packed for j-block " << j/block << " type " << type << std::endl;
 
 	  startTimer("Allocate");
-	  spatial_sum.AllocateRight(Njj, grid);
+	  spatial_sum_.AllocateRight(Njj, grid);
 	  stopTimer("Allocate");
 	  startTimer("Pack vectors");
-	  spatial_sum.PackRight(loopRight, 0, Njj);
+	  spatial_sum_.PackRight(loopRight, 0, Njj);
 	  stopTimer("Pack vectors");
 
 	  for ( unsigned int i = 0; i < N_i; i += block ) {
 	    int Nii = MIN(N_i-i,block);
 
 	    startTimer("Allocate");
-	    spatial_sum.AllocateLeft(Nii);
+	    spatial_sum_.AllocateLeft(Nii);
 	    stopTimer("Allocate");
 	    startTimer("Pack vectors");
-	    spatial_sum.PackLeftConj(left, i, Nii);
+	    spatial_sum_.PackLeftConj(left, i, Nii);
 	    stopTimer("Pack vectors");
 
 	    // Rank 4 with a singleton momentum axis: SumRing writes
@@ -503,67 +568,48 @@ void TA2AExtendedMesonField<FImpl>::execute(void)
 	    stopTimer("Allocate");
 
 	    startTimer("Sum");
-	    spatial_sum.SumRing(emfBlock, cacheBlock, &sumTimings, &sumBytes, tsIO);
+	    spatial_sum_.SumRing(emfBlock, cacheBlock, &sumTimings, &sumBytes, tsIO);
 	    stopTimer("Sum");
 
-	    startTimer("Copy out");
-	    thread_for_collapse(3, t, ntOut, {
-	      for(int ii=0;ii< Nii;ii++)
-	      for(int jj=0;jj< Njj;jj++)
-		emf(0,0,(int)t,i+ii,j+jj) = emfBlock((int)t,ii,0,jj);
-	    });
-	    stopTimer("Copy out");
+	    // Straight out of the result tensor: emfBlock is RowMajor
+	    // (ntOut, Nii, 1, Njj), so the Nii x Njj slab at fixed t is
+	    // contiguous and needs no staging. Without tsIO there is one file
+	    // with ntFile = nt = ntOut, and saveBlock's count of {nt, Nii, Njj}
+	    // spans the whole tensor from lt = 0.
+	    startTimer("IO");
+	    double dt = -usecond();
+	    for (int lt = 0; lt < (tsIO ? ntOut : 1); ++lt)
+	    {
+	      int gt = tsIO ? ct*ntOut + lt : 0;
+
+	      if (!ownerFn(fileIdx, gt)) continue;
+
+	      A2AMatrixIo<HADRONS_A2AM_IO_TYPE> io(filenameFn(ioname, gt), ioname,
+	                                           ntFile, N_i, N_j);
+	      io.saveBlock(&emfBlock(lt, 0, 0, 0), i, j, Nii, Njj, "", &ioTimings);
+	    }
+	    dt += usecond();
+	    writeTime += dt;
+	    stopTimer("IO");
 	}
 	//LOG(Message) << "EMF made for j-block " << j/block << " type " << type << std::endl;
 
 	}// i,j
 	LOG(Message) << "EMF made for type " << type << "; gamma1: " << nameg1_[ig] << "; gamma2: " << nameg2_[ig] << std::endl;
 
-	std::string ioname  = "type" + std::to_string(type) + "_" + nameg1_[ig] + "_" + nameg2_[ig];
-
-        LOG(Message) << "Writing " << (tsIO ? nt : 1) << " file(s) to "
-                     << dirBase << "/" << ioname << std::endl;
-        double ioBytes = static_cast<double>(nt) * N_i * N_j * sizeof(HADRONS_A2AM_IO_TYPE);
-        startTimer("IO");
-        double writeTime = -usecond();
-#ifdef HADRONS_A2AM_PARALLEL_IO
-        startTimer("Barrier");
-        grid->Barrier();
-        stopTimer("Barrier");
-#endif
-	for (int lt = 0; lt < (tsIO ? ntOut : 1); ++lt)
-	{
-	  int gt = tsIO ? ct*ntOut + lt : 0;
-
-	  if (!ownerFn(fileIdx, gt)) continue;
-
-	  std::stringstream fn;
-	  fn << dirBase << "/" << ioname;
-	  if (tsIO) fn << ".t" << std::setfill('0') << std::setw(4) << gt;
-	  fn << ".h5";
-
-	  A2AMatrixSet<HADRONS_A2AM_IO_TYPE> slice(mBuf.data() + (size_t)lt*N_i*N_j,
-	                                           1, 1, ntFile, N_i, N_j);
-	  A2AMatrixIo<HADRONS_A2AM_IO_TYPE> io(fn.str(), ioname, ntFile, N_i, N_j);
-	  A2AExtendedMesonFieldMetadata md;
-	  md.gamma1 = nameg1_[ig];
-	  md.gamma2 = nameg2_[ig];
-	  startTimer("initFile");
-	  io.initFile(md, MAX(N_i,N_j));
-	  stopTimer("initFile");
-	  io.saveBlock(slice, 0, 0, 0, 0, &ioTimings);
-	}
 	fileIdx++;
 #ifdef HADRONS_A2AM_PARALLEL_IO
 	startTimer("Barrier");
 	grid->Barrier();
 	stopTimer("Barrier");
 #endif
-        writeTime += usecond();
-        stopTimer("IO");
-        // writeTime is this rank's own wall time from barrier to barrier
-        // (only rank 0's LOG output survives, since Grid_quiesce_nodes
-        // suppresses the rest by default).
+        // Per-rank now, not global: writeTime accumulates this rank's own
+        // saveBlock calls and ioBytes counts only the files it owns, so the
+        // rate is what this rank achieved. It used to be the whole field's
+        // bytes over a barrier-to-barrier window, which only made sense when
+        // one call wrote everything.
+        double ioBytes = static_cast<double>(nOwned) * ntFile * N_i * N_j
+                         * sizeof(HADRONS_A2AM_IO_TYPE);
         if (writeTime > 0.)
             LOG(Message) << "IO type=" << type << " ig=" << ig << ": "
                          << sizeString(ioBytes) << " in " << writeTime
