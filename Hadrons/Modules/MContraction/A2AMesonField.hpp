@@ -44,7 +44,6 @@ BEGIN_HADRONS_NAMESPACE
  *  All-to-all meson field creation. Drives A2ASpatialSum with mode index
  *  blocking exposed on the Hadrons side. Mode and momentum indices are packed
  *  into buffers that are fed into the GEMM call, which batches over timeslice.
- *  Gamma index is the only explicit loop present in the module.
  *
  *  SumRing does the GEMM, and then we execute a spatial ring all reduce to
  *  complete the spatial + spin-colour reduction followed by a purely temporal
@@ -66,10 +65,6 @@ BEGIN_HADRONS_NAMESPACE
  *  without it every timeslice is a separate file whose P_xyz candidate ranks
  *  hold identical data, so the writers spread over nmom*ngamma*nt ranks and
  *  the per-rank output buffer shrinks by P_t as well.
- *
- *  Consequences worth knowing before setting it: the reader has to open one
- *  file per timeslice, and a rank that mislabels a timeslice writes a
- *  well-formed file containing the wrong data rather than failing.
  ******************************************************************************/
 BEGIN_MODULE_NAMESPACE(MContraction)
 
@@ -300,16 +295,6 @@ void TA2AMesonField<FImpl>::execute(void)
     // first visit allocates and every later one is a dimension assignment --
     // Eigen's resize reallocates only when the total element count changes.
     //
-    // Holding the shapes side by side rather than resizing one buffer is what
-    // keeps the kernel from re-zeroing a freshly mapped region on every grow:
-    // the tail shape and the full shape otherwise alternate once per jb
-    // iteration, and the full shape here is gigabytes. The cost is the sum of
-    // the shapes instead of the max, a few GB against the A2A vectors' tens of
-    // TB. It also makes `block` a free choice again -- N_i = nLow + Nsc*nHit
-    // and N_j = nLow + Nhigh*nHit move with the hit count, so no fixed block
-    // divides both, and a block that divides neither now costs two extra
-    // buffers rather than anything on the critical path.
-    //
     // Dimension order (ntOut, Nii, nmom, Njj) -- nmom BEFORE N_j -- is the layout
     // SumRing writes, matching its GEMM's [i][m][j] output. RowMajor then makes
     // N_j the fastest dimension, so the IO fill below, which reads at fixed m
@@ -324,13 +309,7 @@ void TA2AMesonField<FImpl>::execute(void)
     // across ranks (see ownerFn below), and output can land on
     // physically separate per-node storage (e.g. a node-local NVMe burst
     // buffer) where a directory created on the boss rank's node is simply
-    // absent on every other node -- no barrier can fix that, since it isn't
-    // a visibility-lag problem, the directory really doesn't exist there.
-    // Hadrons::mkdir checks access() first and only costs a few redundant
-    // syscalls when the directory already exists, so doing this on every
-    // rank is harmless (if a little repetitive) on a shared filesystem too.
-    // Checked, because a discarded failure resurfaces as an opaque
-    // "errno = 2" out of H5Fcreate much further downstream.
+    // absent on every other node
     std::string dirBase = par().output + "." + std::to_string(vm().getTrajectory());
 
     startTimer("mkdir");
@@ -387,12 +366,6 @@ void TA2AMesonField<FImpl>::execute(void)
     // Initialise one HDF5 file per (mom, gamma), or per (mom, gamma, t) under
     // timeSliceIO. Each rank initialises only the files it will write; single
     // barrier after. The tLoop bound collapses the t axis when it is unused.
-    //
-    // Timed separately from "IO" below, which covers only saveBlock -- by then
-    // the file exists and the write is pure bandwidth. Every H5Fcreate lives
-    // here instead, and its cost goes as the file COUNT, which timeSliceIO
-    // multiplies by nt. On a metadata-bound filesystem this phase, not the
-    // write, is the whole cost.
     int tLoop = tsIO ? ntOut : 1;
     startTimer("initFile");
     for (int m = 0; m < nmom; m++)
@@ -420,7 +393,7 @@ void TA2AMesonField<FImpl>::execute(void)
     startTimer("Pack phases");
     std::vector<deviceVector<scalar_t>> ph_flat(nmom);
     for (int m = 0; m < nmom; m++)
-        A2ASpatialSum<SpinColourVector_v>::PackPhase(grid, ph[m], ph_flat[m]);
+        spatial_sum_.PackPhase(grid, ph[m], ph_flat[m]);
     stopTimer("Pack phases");
 
     // One-time allocation for the full block size; subsequent pointer rewrites are cheap.
