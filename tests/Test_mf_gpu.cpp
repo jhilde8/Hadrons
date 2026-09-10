@@ -91,7 +91,7 @@ int main(int argc, char *argv[])
     if (GridCmdOptionExists(argv, argv + argc, "--mom"))
         momShell = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--mom"));
     if (GridCmdOptionExists(argv, argv + argc, "--gammas"))
-        gammas   = GridCmdOptionPayload(argv, argv + argc, "--gammas");
+        gammas   = cliListToPar(GridCmdOptionPayload(argv, argv + argc, "--gammas"));
     if (GridCmdOptionExists(argv, argv + argc, "--output"))
         output_path   = GridCmdOptionPayload(argv, argv + argc, "--output");
 

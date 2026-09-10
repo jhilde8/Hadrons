@@ -4,6 +4,28 @@
 #include <string>
 #include <vector>
 
+// Turn a comma-separated command-line list into the whitespace-separated form
+// the module Par structs expect.
+//
+// No Grid command-line option may contain whitespace: GridCmdOptionPayload
+// returns a single argv element, so "--gammas Gamma5 Identity" yields only
+// "Gamma5". A quoted payload survives direct invocation but not an unquoted
+// variable expansion in a batch script, which is how it usually arrives. Hence
+// the Grid convention of dots for coordinates (8.8.8.16) and commas for lists.
+// The module side parses with strToVec and wants spaces, so the two meet here.
+//
+// A payload that already contains spaces passes through unchanged, so both
+// forms work once the shell has been persuaded to deliver one argv element.
+inline std::string cliListToPar(const std::string &csl)
+{
+    std::string par = csl;
+
+    for (auto &c : par)
+        if (c == ',') c = ' ';
+
+    return par;
+}
+
 // Returns all momentum strings in shells 0..maxShell (cumulative).
 // Each string is "px py pz" with components in {-1,0,1}.
 //

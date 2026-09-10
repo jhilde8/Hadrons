@@ -24,6 +24,7 @@
 #define HADRONS_A2AM_IO_TYPE ComplexD
 #include <Hadrons/Application.hpp>
 #include <Hadrons/Modules.hpp>
+#include "TestMFShells.hpp"
 
 using namespace Grid;
 using namespace Hadrons;
@@ -88,9 +89,9 @@ int main(int argc, char *argv[])
     if (GridCmdOptionExists(argv, argv + argc, "--cacheBlock"))
         cacheBlock = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--cacheBlock"));
     if (GridCmdOptionExists(argv, argv + argc, "--types"))
-        types      = GridCmdOptionPayload(argv, argv + argc, "--types");
+        types      = cliListToPar(GridCmdOptionPayload(argv, argv + argc, "--types"));
     if (GridCmdOptionExists(argv, argv + argc, "--gammas"))
-        gammas    = GridCmdOptionPayload(argv, argv + argc, "--gammas");
+        gammas    = cliListToPar(GridCmdOptionPayload(argv, argv + argc, "--gammas"));
     //make this a command line arg to switch between lustre and nvme without recompiling. defaults to lustre path
     if (GridCmdOptionExists(argv, argv + argc, "--output"))
         output_path    = GridCmdOptionPayload(argv, argv + argc, "--output");
@@ -115,14 +116,14 @@ int main(int argc, char *argv[])
     MContraction::A2AExtendedMesonFieldPar emfPar;
     emfPar.block      = block;
     emfPar.cacheBlock = cacheBlock;
-    emfPar.types      = "0 1 2 3";
+    emfPar.types      = types;
     emfPar.left       = "left";
     emfPar.right      = "right";
     emfPar.loop_vw1   = "loop_vw1";
     emfPar.loop_vw2   = "loop_vw2";
-    emfPar.output     = "emf_gpu_out";
-    emfPar.gammas1    = "GammaMU";
-    emfPar.gammas2    = "GammaMU";
+    emfPar.output     = output_path;
+    emfPar.gammas1    = gammas;
+    emfPar.gammas2    = gammas;
     emfPar.timeSliceIO = tsIO;
 
     application.createModule<MContraction::A2AExtendedMesonField>("emf_gpu", emfPar);

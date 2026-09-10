@@ -44,6 +44,7 @@
 #include <Hadrons/Application.hpp>
 #include <Hadrons/Modules.hpp>
 #include <Hadrons/Modules/MContraction/A2AExtendedMesonFieldMT.hpp>
+#include "TestMFShells.hpp"
 
 using namespace Grid;
 using namespace Hadrons;
@@ -105,9 +106,9 @@ int main(int argc, char *argv[])
     if (GridCmdOptionExists(argv, argv + argc, "--cacheBlock"))
         cacheBlock = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--cacheBlock"));
     if (GridCmdOptionExists(argv, argv + argc, "--types"))
-        types      = GridCmdOptionPayload(argv, argv + argc, "--types");
+        types      = cliListToPar(GridCmdOptionPayload(argv, argv + argc, "--types"));
     if (GridCmdOptionExists(argv, argv + argc, "--gammas"))
-        gammas    = GridCmdOptionPayload(argv, argv + argc, "--gammas");
+        gammas    = cliListToPar(GridCmdOptionPayload(argv, argv + argc, "--gammas"));
     //make this a command line arg to switch between lustre and nvme without recompiling. defaults to lustre path
     if (GridCmdOptionExists(argv, argv + argc, "--output"))
         output_path    = GridCmdOptionPayload(argv, argv + argc, "--output");

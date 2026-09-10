@@ -40,6 +40,7 @@
 #define HADRONS_A2AM_IO_TYPE ComplexD
 #include <Hadrons/Application.hpp>
 #include <Hadrons/Modules.hpp>
+#include "TestMFShells.hpp"
 
 using namespace Grid;
 using namespace Hadrons;
@@ -97,9 +98,9 @@ int main(int argc, char *argv[])
     if (GridCmdOptionExists(argv, argv + argc, "--cacheBlock"))
         cacheBlock = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--cacheBlock"));
     if (GridCmdOptionExists(argv, argv + argc, "--parities"))
-        parities   = GridCmdOptionPayload(argv, argv + argc, "--parities");
+        parities   = cliListToPar(GridCmdOptionPayload(argv, argv + argc, "--parities"));
     if (GridCmdOptionExists(argv, argv + argc, "--ifOrthogs"))
-        ifOrthogs  = GridCmdOptionPayload(argv, argv + argc, "--ifOrthogs");
+        ifOrthogs  = cliListToPar(GridCmdOptionPayload(argv, argv + argc, "--ifOrthogs"));
     if (GridCmdOptionExists(argv, argv + argc, "--output"))
         output_path  = GridCmdOptionPayload(argv, argv + argc, "--output");
 

@@ -60,15 +60,21 @@ int main(int argc, char *argv[])
     // Parse optional CLI arguments (must match Test_cmof_mt_cpu.cpp values
     // to get identical random fields in both runs).
     // ------------------------------------------------------------------
-    int N_i   = 8;
-    int N_j   = 8;
-    int block = 3;
+    int         N_i         = 8;
+    int         N_j         = 8;
+    int         block       = 3;
+    std::string output_path = "cmof_gpu_out";
+    bool        tsIO        = false;
     if (GridCmdOptionExists(argv, argv + argc, "--Ni"))
         N_i   = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--Ni"));
     if (GridCmdOptionExists(argv, argv + argc, "--Nj"))
         N_j   = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--Nj"));
     if (GridCmdOptionExists(argv, argv + argc, "--block"))
         block = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--block"));
+    if (GridCmdOptionExists(argv, argv + argc, "--output"))
+        output_path = GridCmdOptionPayload(argv, argv + argc, "--output");
+    if (GridCmdOptionExists(argv, argv + argc, "--timeSliceIO"))
+        tsIO  = true;
 
     // ------------------------------------------------------------------
     // Random gauge configuration
@@ -96,8 +102,9 @@ int main(int argc, char *argv[])
     cmofPar.left       = "left";
     cmofPar.right      = "right";
     cmofPar.gauge      = "gauge";
-    cmofPar.output     = "cmof_gpu_out";
+    cmofPar.output     = output_path;
     cmofPar.ifOrthogs  = "0 1";
+    cmofPar.timeSliceIO = tsIO;
 
     application.createModule<MContraction::A2AChromoMagneticOperatorField>("cmof_gpu", cmofPar);
 
