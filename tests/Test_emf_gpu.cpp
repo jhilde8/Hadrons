@@ -60,25 +60,41 @@ int main(int argc, char *argv[])
     application.setPar(globalPar);
 
     // ------------------------------------------------------------------
-    // Parse optional --Ni / --Nj from command line (default 8).
-    // Must match Test_emf_mt_cpu.cpp values for identical random vectors.
+    // Parse optional CLI arguments.
     // ------------------------------------------------------------------
-    int N_i   = 8;
-    int N_j   = 8;
-    int Nloop = 4;
-    int block = 8;
-    int cacheBlock = 8;
+    int         N_i        = 8;
+    int         N_j        = 8;
+    int         Nloop      = 4;
+    int         block      = 8;
+    int         cacheBlock = 8;
+    std::string types      = "0 1 2 3";
+    std::string gammas    = "GammaMU GammaMUGamma5 Identity Gamma5 SigmaMUNU";
+    std::string output_path = "emf_gpu_out";
+    // Presence-only flag. The oracle (A2AExtendedMesonFieldMT) always writes
+    // the merged layout, so with this set the comparison is per-timeslice
+    // files against one full-nt file -- use diffs/diff_mf_ts.py rather than
+    // diff_mf.py. Needs P_t > 1 in --mpi or the flag is a no-op.
+    bool        tsIO       = false;
+    if (GridCmdOptionExists(argv, argv + argc, "--timeSliceIO"))
+        tsIO       = true;
     if (GridCmdOptionExists(argv, argv + argc, "--Ni"))
-        N_i = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--Ni"));
+        N_i        = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--Ni"));
     if (GridCmdOptionExists(argv, argv + argc, "--Nj"))
-        N_j = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--Nj"));
+        N_j        = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--Nj"));
     if (GridCmdOptionExists(argv, argv + argc, "--Nloop"))
-        Nloop = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--Nloop"));
+        Nloop      = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--Nloop"));
     if (GridCmdOptionExists(argv, argv + argc, "--block"))
-        block = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--block"));
+        block      = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--block"));
     if (GridCmdOptionExists(argv, argv + argc, "--cacheBlock"))
         cacheBlock = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--cacheBlock"));
-
+    if (GridCmdOptionExists(argv, argv + argc, "--types"))
+        types      = GridCmdOptionPayload(argv, argv + argc, "--types");
+    if (GridCmdOptionExists(argv, argv + argc, "--gammas"))
+        gammas    = GridCmdOptionPayload(argv, argv + argc, "--gammas");
+    //make this a command line arg to switch between lustre and nvme without recompiling. defaults to lustre path
+    if (GridCmdOptionExists(argv, argv + argc, "--output"))
+        output_path    = GridCmdOptionPayload(argv, argv + argc, "--output");
+    
     // ------------------------------------------------------------------
     // Random A2A vectors
     // Names and sizes must match Test_emf_mt_cpu.cpp exactly.
@@ -107,6 +123,7 @@ int main(int argc, char *argv[])
     emfPar.output     = "emf_gpu_out";
     emfPar.gammas1    = "GammaMU";
     emfPar.gammas2    = "GammaMU";
+    emfPar.timeSliceIO = tsIO;
 
     application.createModule<MContraction::A2AExtendedMesonField>("emf_gpu", emfPar);
 

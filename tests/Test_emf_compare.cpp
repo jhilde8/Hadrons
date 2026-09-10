@@ -85,8 +85,7 @@ int main(int argc, char *argv[])
     int         block      = 8;
     int         cacheBlock = 8;
     std::string types      = "0 1 2 3";
-    std::string gammas1    = "GammaMU";
-    std::string gammas2    = "GammaMU";
+    std::string gammas    = "GammaMU GammaMUGamma5 Identity Gamma5 SigmaMUNU";
     std::string output_path = "emf_gpu_out";
     // Presence-only flag. The oracle (A2AExtendedMesonFieldMT) always writes
     // the merged layout, so with this set the comparison is per-timeslice
@@ -107,10 +106,8 @@ int main(int argc, char *argv[])
         cacheBlock = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--cacheBlock"));
     if (GridCmdOptionExists(argv, argv + argc, "--types"))
         types      = GridCmdOptionPayload(argv, argv + argc, "--types");
-    if (GridCmdOptionExists(argv, argv + argc, "--gammas1"))
-        gammas1    = GridCmdOptionPayload(argv, argv + argc, "--gammas1");
-    if (GridCmdOptionExists(argv, argv + argc, "--gammas2"))
-        gammas2    = GridCmdOptionPayload(argv, argv + argc, "--gammas2");
+    if (GridCmdOptionExists(argv, argv + argc, "--gammas"))
+        gammas    = GridCmdOptionPayload(argv, argv + argc, "--gammas");
     //make this a command line arg to switch between lustre and nvme without recompiling. defaults to lustre path
     if (GridCmdOptionExists(argv, argv + argc, "--output"))
         output_path    = GridCmdOptionPayload(argv, argv + argc, "--output");
@@ -142,8 +139,8 @@ int main(int argc, char *argv[])
     emfPar.loop_vw1   = "loop_vw1";
     emfPar.loop_vw2   = "loop_vw2";
     emfPar.output     = output_path;
-    emfPar.gammas1    = gammas1;
-    emfPar.gammas2    = gammas2;
+    emfPar.gammas1    = gammas;
+    emfPar.gammas2    = gammas;
     emfPar.timeSliceIO = tsIO;
 
     application.createModule<MContraction::A2AExtendedMesonField>("emf_gpu", emfPar);
@@ -159,8 +156,8 @@ int main(int argc, char *argv[])
     emfMtPar.loop_vw1   = "loop_vw1";
     emfMtPar.loop_vw2   = "loop_vw2";
     emfMtPar.output     = "emf_mt_out";
-    emfMtPar.gammas1    = gammas1;
-    emfMtPar.gammas2    = gammas2;
+    emfMtPar.gammas1    = gammas;
+    emfMtPar.gammas2    = gammas;
 
     application.createModule<MContraction::A2AExtendedMesonFieldMT>("emf_mt", emfMtPar);
 

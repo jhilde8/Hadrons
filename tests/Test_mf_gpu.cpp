@@ -71,7 +71,15 @@ int main(int argc, char *argv[])
     int         block    = 16;
     int 	cacheBlock = 16;
     int         momShell = 0;
-    std::string gammas   = "Gamma5";
+    std::string gammas   = "Gamma5 Identity";
+    std::string output_path = "mf_gpu_out";
+    // Presence-only flag. The oracle (A2AFewMesonField) always writes the
+    // merged layout, so with this set the comparison is per-timeslice files
+    // against one full-nt file -- use diffs/diff_mf_ts.py rather than
+    // diff_mf.py. Needs P_t > 1 in --mpi or the flag is a no-op.
+    bool        tsIO       = false;
+    if (GridCmdOptionExists(argv, argv + argc, "--timeSliceIO"))
+        tsIO       = true;
     if (GridCmdOptionExists(argv, argv + argc, "--Ni"))
         N_i      = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--Ni"));
     if (GridCmdOptionExists(argv, argv + argc, "--Nj"))
@@ -84,6 +92,8 @@ int main(int argc, char *argv[])
         momShell = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--mom"));
     if (GridCmdOptionExists(argv, argv + argc, "--gammas"))
         gammas   = GridCmdOptionPayload(argv, argv + argc, "--gammas");
+    if (GridCmdOptionExists(argv, argv + argc, "--output"))
+        output_path   = GridCmdOptionPayload(argv, argv + argc, "--output");
 
     std::vector<std::string> momenta = momentumShells(momShell);
 
@@ -106,9 +116,10 @@ int main(int argc, char *argv[])
     mfPar.cacheBlock = cacheBlock; 
     mfPar.left   = "left";
     mfPar.right  = "right";
-    mfPar.output = "/mnt/bb/jhilde/mf_stage";
+    mfPar.output = output_path;
     mfPar.gammas = gammas;
     mfPar.mom    = momenta;
+    mfPar.timeSliceIO = tsIO;
 
     application.createModule<MContraction::A2AMesonField>("mf_gpu", mfPar);
 
