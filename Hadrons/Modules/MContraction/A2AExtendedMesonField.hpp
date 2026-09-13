@@ -618,6 +618,9 @@ void TA2AExtendedMesonField<FImpl>::execute(void)
       }// ig
     }// type
 
+    // The VM keeps this module until the job ends; do not keep its buffers.
+    spatial_sum_.Deallocate();
+
     // Throughput of the post-GEMM SumRing stages -- bytesMoved[k] and
     // sumTimings[k] accumulate the same way across all (type,ig,i,j) calls
     // and all cacheBlock tiles, so their ratio is the average effective
