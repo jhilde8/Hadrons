@@ -26,18 +26,17 @@
  *     h5diff "$f" "emf_mt_out.0/$n.h5" "/$n" "/$n" || echo "MISMATCH $n"; done
  *
  * Every parameter below is settable on the command line -- see the block of
- * GridCmdOptionExists calls. Two runs cover both SumRing paths: cacheBlock
- * equal to block puts it on the direct device->host path (its "scatter"
- * timer reads zero), and a smaller cacheBlock forces the scatter fallback.
- * Sizes that are not a multiple of block exercise the tail-shape slots of
- * the module's result buffer pool.
+ * GridCmdOptionExists calls. Sizes that are not a multiple of the blocks
+ * exercise the tail-shape slots of the module's result buffer pool, and
+ * unequal blocks exercise the two sides independently. The MT reference keeps
+ * its own cache tiling fixed at 12.
  *
  * Usage:
  *   mpirun -n 1 ./Test_emf_compare --grid 4.4.4.8 --mpi 1.1.1.1 --seed "1 2 3 4"
  *   mpirun -n 1 ./Test_emf_compare --grid 4.4.4.8 --mpi 1.1.1.1 --seed "1 2 3 4" \
- *          --Ni 20 --Nj 20 --block 16 --cacheBlock 16   # all four pool shapes
+ *          --Ni 20 --Nj 20 --leftBlock 16 --rightBlock 16  # all four pool shapes
  *   mpirun -n 1 ./Test_emf_compare --grid 4.4.4.8 --mpi 1.1.1.1 --seed "1 2 3 4" \
- *          --Ni 20 --Nj 20 --block 16 --cacheBlock 8    # scatter fallback
+ *          --Ni 20 --Nj 20 --leftBlock 20 --rightBlock 8   # one left block
  */
 
 #define HADRONS_A2AM_IO_TYPE ComplexD
@@ -83,8 +82,8 @@ int main(int argc, char *argv[])
     int         N_i        = 8;
     int         N_j        = 8;
     int         Nloop      = 4;
-    int         block      = 8;
-    int         cacheBlock = 8;
+    int         leftBlock  = 8;
+    int         rightBlock = 8;
     std::string types      = "0 1 2 3";
     std::string gammas    = "GammaMU GammaMUGamma5 Identity Gamma5 SigmaMUNU";
     std::string output_path = "emf_gpu_out";
@@ -101,10 +100,10 @@ int main(int argc, char *argv[])
         N_j        = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--Nj"));
     if (GridCmdOptionExists(argv, argv + argc, "--Nloop"))
         Nloop      = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--Nloop"));
-    if (GridCmdOptionExists(argv, argv + argc, "--block"))
-        block      = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--block"));
-    if (GridCmdOptionExists(argv, argv + argc, "--cacheBlock"))
-        cacheBlock = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--cacheBlock"));
+    if (GridCmdOptionExists(argv, argv + argc, "--leftBlock"))
+        leftBlock  = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--leftBlock"));
+    if (GridCmdOptionExists(argv, argv + argc, "--rightBlock"))
+        rightBlock = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--rightBlock"));
     if (GridCmdOptionExists(argv, argv + argc, "--types"))
         types      = cliListToPar(GridCmdOptionPayload(argv, argv + argc, "--types"));
     if (GridCmdOptionExists(argv, argv + argc, "--gammas"))
@@ -132,8 +131,8 @@ int main(int argc, char *argv[])
     // A2AExtendedMesonField -- A2ASpatialSum/GEMM path
     // ------------------------------------------------------------------
     MContraction::A2AExtendedMesonFieldPar emfPar;
-    emfPar.block      = block;
-    emfPar.cacheBlock = cacheBlock;
+    emfPar.leftBlock  = leftBlock;
+    emfPar.rightBlock = rightBlock;
     emfPar.types      = types;
     emfPar.left       = "left";
     emfPar.right      = "right";
@@ -150,7 +149,7 @@ int main(int argc, char *argv[])
     // A2AExtendedMesonFieldMT -- CPU MT reference path
     // ------------------------------------------------------------------
     MContraction::A2AExtendedMesonFieldMTPar emfMtPar;
-    emfMtPar.cacheBlock = cacheBlock;
+    emfMtPar.cacheBlock = 12;
     emfMtPar.types      = types;
     emfMtPar.left       = "left";
     emfMtPar.right      = "right";

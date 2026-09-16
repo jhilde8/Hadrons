@@ -23,18 +23,17 @@
  *     h5diff "$f" "cmof_mt_out.0/$n.h5" "/$n" "/$n" || echo "MISMATCH $n"; done
  *
  * Every parameter below is settable on the command line -- see the block of
- * GridCmdOptionExists calls. Two runs cover both SumRing paths: cacheBlock
- * equal to block puts it on the direct device->host path (its "scatter"
- * timer reads zero), and a smaller cacheBlock forces the scatter fallback.
- * Sizes that are not a multiple of block exercise the tail-shape slots of
- * the module's result buffer pool.
+ * GridCmdOptionExists calls. Sizes that are not a multiple of the blocks
+ * exercise the tail-shape slots of the module's result buffer pool, and
+ * unequal blocks exercise the two sides independently. The MT reference keeps
+ * its own cache tiling fixed at 12.
  *
  * Usage:
  *   mpirun -n 1 ./Test_cmof_compare --grid 4.4.4.8 --mpi 1.1.1.1 --seed "1 2 3 4"
  *   mpirun -n 1 ./Test_cmof_compare --grid 4.4.4.8 --mpi 1.1.1.1 --seed "1 2 3 4" \
- *          --Ni 20 --Nj 20 --block 16 --cacheBlock 16   # all four pool shapes
+ *          --Ni 20 --Nj 20 --leftBlock 16 --rightBlock 16  # all four pool shapes
  *   mpirun -n 1 ./Test_cmof_compare --grid 4.4.4.8 --mpi 1.1.1.1 --seed "1 2 3 4" \
- *          --Ni 20 --Nj 20 --block 16 --cacheBlock 8    # scatter fallback
+ *          --Ni 20 --Nj 20 --leftBlock 20 --rightBlock 8   # one left block
  */
 
 #define HADRONS_A2AM_IO_TYPE ComplexD
@@ -76,8 +75,8 @@ int main(int argc, char *argv[])
     // ------------------------------------------------------------------
     int         N_i        = 8;
     int         N_j        = 8;
-    int         block      = 8;
-    int         cacheBlock = 8;
+    int         leftBlock  = 8;
+    int         rightBlock = 8;
     std::string parities   = "0 1";
     std::string ifOrthogs  = "0 1";
     std::string output_path= "cmof_gpu_out";
@@ -93,10 +92,10 @@ int main(int argc, char *argv[])
         N_i        = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--Ni"));
     if (GridCmdOptionExists(argv, argv + argc, "--Nj"))
         N_j        = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--Nj"));
-    if (GridCmdOptionExists(argv, argv + argc, "--block"))
-        block      = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--block"));
-    if (GridCmdOptionExists(argv, argv + argc, "--cacheBlock"))
-        cacheBlock = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--cacheBlock"));
+    if (GridCmdOptionExists(argv, argv + argc, "--leftBlock"))
+        leftBlock  = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--leftBlock"));
+    if (GridCmdOptionExists(argv, argv + argc, "--rightBlock"))
+        rightBlock = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--rightBlock"));
     if (GridCmdOptionExists(argv, argv + argc, "--parities"))
         parities   = cliListToPar(GridCmdOptionPayload(argv, argv + argc, "--parities"));
     if (GridCmdOptionExists(argv, argv + argc, "--ifOrthogs"))
@@ -122,8 +121,8 @@ int main(int argc, char *argv[])
     // A2AChromoMagneticOperatorField -- A2ASpatialSum/GEMM path
     // ------------------------------------------------------------------
     MContraction::A2AChromoMagneticOperatorFieldPar cmofPar;
-    cmofPar.block      = block;
-    cmofPar.cacheBlock = cacheBlock;
+    cmofPar.leftBlock  = leftBlock;
+    cmofPar.rightBlock = rightBlock;
     cmofPar.parities   = parities;
     cmofPar.left       = "left";
     cmofPar.right      = "right";
@@ -138,7 +137,7 @@ int main(int argc, char *argv[])
     // A2AChromoMagneticOperatorFieldMT -- deprecated CPU MT reference path
     // ------------------------------------------------------------------
     MContraction::A2AChromoMagneticOperatorFieldMTPar cmofMtPar;
-    cmofMtPar.cacheBlock = cacheBlock;
+    cmofMtPar.cacheBlock = 12;
     cmofMtPar.parities   = parities;
     cmofMtPar.left       = "left";
     cmofMtPar.right      = "right";

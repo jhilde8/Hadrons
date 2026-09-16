@@ -65,6 +65,12 @@ BEGIN_HADRONS_NAMESPACE
  *  without it every timeslice is a separate file whose P_xyz candidate ranks
  *  hold identical data, so the writers spread over nmom*ngamma*nt ranks and
  *  the per-rank output buffer shrinks by P_t as well.
+ *
+ *  leftBlock and rightBlock are the GEMM operand sizes on each side, set
+ *  independently: a left leg that fits on the device in one block
+ *  (leftBlock >= N_i) is packed once for the whole module. The HDF5 chunk is
+ *  the smaller block among the sides that are actually split, so writes
+ *  cover whole chunks as long as the larger block is a multiple of it.
  ******************************************************************************/
 BEGIN_MODULE_NAMESPACE(MContraction)
 
@@ -72,8 +78,8 @@ class A2AMesonFieldPar: Serializable
 {
 public:
     GRID_SERIALIZABLE_CLASS_MEMBERS(A2AMesonFieldPar,
-                                    int,                     block,
-                                    int,                     cacheBlock,
+                                    int,                     leftBlock,
+                                    int,                     rightBlock,
                                     std::string,             left,
                                     std::string,             right,
                                     std::string,             output,
@@ -197,8 +203,17 @@ void TA2AMesonField<FImpl>::execute(void)
     int N_j    = right.size();
     int ngamma = gamma_.size();
     int nmom   = mom_.size();
-    int block  = par().block;
-    int cacheBlock = par().cacheBlock;
+
+    // Clamped to the legs, so a block at least as large as its leg is one
+    // block and every size below is one that is actually used.
+    int leftBlock  = std::min(par().leftBlock,  N_i);
+    int rightBlock = std::min(par().rightBlock, N_j);
+
+    // HDF5 chunk: the smaller block that actually splits its leg. A side
+    // written in one block never cuts a chunk, so it must not shrink it.
+    int chunk = (leftBlock  == N_i) ? rightBlock
+              : (rightBlock == N_j) ? leftBlock
+              : std::min(leftBlock, rightBlock);
 
     // Time decomposition. ntOut is the time extent this rank actually holds
     // after SumRing: the whole lattice normally, its own slab in timeSliceIO.
@@ -283,10 +298,10 @@ void TA2AMesonField<FImpl>::execute(void)
 
     // Output buffer: one (ntFile, Nii, Njj) block at a time.
     Vector<HADRONS_A2AM_IO_TYPE> mBuf;
-    mBuf.resize(ntFile * block * block);
+    mBuf.resize(ntFile * leftBlock * rightBlock);
 
     // Scratch right vectors for GammaRight output (zero-momentum base pack).
-    std::vector<FermionField> gammaRight(block, grid);
+    std::vector<FermionField> gammaRight(rightBlock, grid);
 
     // Result buffers, one per distinct block shape. A block is either full or
     // on the tail in each axis independently, so there are at most four shapes
@@ -298,10 +313,9 @@ void TA2AMesonField<FImpl>::execute(void)
     // Dimension order (ntOut, Nii, nmom, Njj) -- nmom BEFORE N_j -- is the layout
     // SumRing writes, matching its GEMM's [i][m][j] output. RowMajor then makes
     // N_j the fastest dimension, so the IO fill below, which reads at fixed m
-    // and walks jj innermost, is contiguous on both sides. Passing the true
-    // per-block dimensions rather than one buffer padded to block is also what
-    // lets SumRing take its direct device->host path on every block including
-    // the tails, which leaves its "scatter" timer at zero.
+    // and walks jj innermost, is contiguous on both sides. SumRing requires
+    // the true per-block dimensions, tails included, because it copies its
+    // gathered panel straight into the tensor's storage.
     Eigen::Tensor<ComplexD, 4, Eigen::RowMajor> resPool[2][2];
 
     // Every rank creates the output directory itself, rather than relying
@@ -380,44 +394,38 @@ void TA2AMesonField<FImpl>::execute(void)
             std::string filename = filenameFn(m, g, gt);
             A2AMesonFieldMetadata md = metadataFn(m, g);
             A2AMatrixIo<HADRONS_A2AM_IO_TYPE> io(filename, ioname, ntFile, N_i, N_j);
-            io.initFile(md, block);
+            io.initFile(md, chunk);
         }
     }
     grid->Barrier();
     stopTimer("initFile");
 
-    // Pre-pack flat phase arrays, one absolute phase per momentum -- no
-    // difference-encoding needed here since ApplyAllPhaseRight reads a single
-    // unphased base pack and writes all nmom copies directly, rather than
-    // stepping an in-place buffer through consecutive momenta.
+    startTimer("Allocate");
+    spatial_sum_.Allocate(grid, nmom, leftBlock, rightBlock);
+    stopTimer("Allocate");
+
+    // Pre-pack flat phase arrays, one absolute phase per momentum --
+    // ApplyPhaseRight builds every momentum slot from the single unphased pack.
     startTimer("Pack phases");
     std::vector<deviceVector<scalar_t>> ph_flat(nmom);
     for (int m = 0; m < nmom; m++)
-        spatial_sum_.PackPhase(grid, ph[m], ph_flat[m]);
+        spatial_sum_.PackPhase(ph[m], ph_flat[m]);
     stopTimer("Pack phases");
 
-    // One-time allocation for the full block size; subsequent pointer rewrites are cheap.
-    startTimer("Allocate");
-    spatial_sum_.AllocateRight(block, grid, nmom);
-    spatial_sum_.AllocateLeft(block);
-    stopTimer("Allocate");
-
     // Loop order (jb, g, ib):
-    //   AllocateRight + PackRight + ApplyAllPhaseRight - once per (jb, g)
-    //   AllocateLeft  + PackLeftConj + SumRing         - once per (jb, g, ib)
+    //   PackRight + ApplyPhaseRight - once per (jb, g)
+    //   PackLeftConj                - once per left block change
+    //   SumRing                     - once per (jb, g, ib)
+    int packedLeft = -1;
 
     double                fillTime     = 0.;
     std::array<double, 7> ioTimings    = {};
-    std::array<double, 6> sumTimings   = {};
-    std::array<double, 6> sumBytes     = {};
+    std::array<double, 5> sumTimings   = {};
+    std::array<double, 5> sumBytes     = {};
 
-    for (int jb = 0; jb < N_j; jb += block)
+    for (int jb = 0; jb < N_j; jb += rightBlock)
     {
-        int Njj = std::min(N_j - jb, block);
-
-        startTimer("Allocate");
-        spatial_sum_.AllocateRight(Njj, grid, nmom);
-        stopTimer("Allocate");
+        int Njj = std::min(N_j - jb, rightBlock);
 
         for (int g = 0; g < ngamma; g++)
         {
@@ -431,31 +439,33 @@ void TA2AMesonField<FImpl>::execute(void)
             stopTimer("Pack vectors");
 
             startTimer("Phase");
-            spatial_sum_.ApplyAllPhaseRight(ph_flat);
+            spatial_sum_.ApplyPhaseRight(ph_flat);
             stopTimer("Phase");
 
-            for (int ib = 0; ib < N_i; ib += block)
+            for (int ib = 0; ib < N_i; ib += leftBlock)
             {
-                int Nii = std::min(N_i - ib, block);
+                int Nii = std::min(N_i - ib, leftBlock);
 
                 // Pick the pool slot for this block's shape. Allocates on the
                 // first visit to each shape, dimension assignment after that,
                 // so a nonzero "Allocate" time past the first jb iteration
                 // means a shape is being reallocated and the pool is missing.
-                auto &all_results = resPool[Nii != block][Njj != block];
+                auto &all_results = resPool[Nii != leftBlock][Njj != rightBlock];
 
                 startTimer("Allocate");
-                spatial_sum_.AllocateLeft(Nii);
                 all_results.resize(ntOut, Nii, nmom, Njj);
                 stopTimer("Allocate");
 
-                startTimer("Pack vectors");
-                spatial_sum_.PackLeftConj(left, ib, Nii);
-                stopTimer("Pack vectors");
+                if (ib != packedLeft)
+                {
+                    startTimer("Pack vectors");
+                    spatial_sum_.PackLeftConj(left, ib, Nii);
+                    stopTimer("Pack vectors");
+                    packedLeft = ib;
+                }
 
                 startTimer("Sum");
-                spatial_sum_.SumRing(all_results, cacheBlock, &sumTimings,
-                                     &sumBytes, tsIO);
+                spatial_sum_.SumRing(all_results, &sumTimings, &sumBytes, tsIO);
                 stopTimer("Sum");
 
                 // Parallel IO: each rank writes its assigned momenta simultaneously.
@@ -520,10 +530,9 @@ void TA2AMesonField<FImpl>::execute(void)
     spatial_sum_.Deallocate();
 
     // Throughput of the post-GEMM SumRing stages -- bytesMoved[k] and
-    // sumTimings[k] accumulate the same way across all (jb,g,ib) calls and
-    // all cacheBlock tiles, so their ratio is the average effective
-    // bandwidth of that stage over the whole run, comparable across
-    // different cacheBlock choices.
+    // sumTimings[k] accumulate the same way across all (jb,g,ib) calls, so
+    // their ratio is the average effective bandwidth of that stage over the
+    // whole run, comparable across different block choices.
     //
     // The two ring stages report bytes on the wire rather than payload, so
     // their rates are the ones comparable with a link rate; the local stages
@@ -540,10 +549,8 @@ void TA2AMesonField<FImpl>::execute(void)
                  << " (" << gbps(sumBytes[2], sumTimings[2]) << " GB/s)" << std::endl;
     LOG(Message) << "  spatial reduce  = " << sumTimings[3]
                  << " (" << gbps(sumBytes[3], sumTimings[3]) << " GB/s wire)" << std::endl;
-    LOG(Message) << "  scatter         = " << sumTimings[4]
-                 << " (" << gbps(sumBytes[4], sumTimings[4]) << " GB/s)" << std::endl;
-    LOG(Message) << "  temporal gather = " << sumTimings[5]
-                 << " (" << gbps(sumBytes[5], sumTimings[5]) << " GB/s wire)" << std::endl;
+    LOG(Message) << "  temporal gather = " << sumTimings[4]
+                 << " (" << gbps(sumBytes[4], sumTimings[4]) << " GB/s wire)" << std::endl;
     LOG(Message) << "IO detail (us), rank " << myRank << ":" << std::endl;
     LOG(Message) << "  fill            = " << fillTime      << std::endl;
     LOG(Message) << "  open            = " << ioTimings[0]  << std::endl;

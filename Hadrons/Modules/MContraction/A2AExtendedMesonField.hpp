@@ -50,6 +50,12 @@ BEGIN_HADRONS_NAMESPACE
  *  the same order. All of it comes from the timeslice axis instead: the P_xyz
  *  ranks sharing a t coordinate hold identical data after the spatial reduce,
  *  so each timeslice of a slab can be written by a different one of them.
+ *
+ *  leftBlock and rightBlock are the GEMM operand sizes on each side, set
+ *  independently: a left leg that fits on the device in one block
+ *  (leftBlock >= N_i) is packed once for the whole module. The HDF5 chunk is
+ *  the smaller block among the sides that are actually split, so writes
+ *  cover whole chunks as long as the larger block is a multiple of it.
  ******************************************************************************/
 BEGIN_MODULE_NAMESPACE(MContraction)
 
@@ -77,8 +83,8 @@ public:
     //
     // setup() rejects neither and both.
     GRID_SERIALIZABLE_CLASS_MEMBERS(A2AExtendedMesonFieldPar,
-                                    int, block,
-                                    int, cacheBlock,
+                                    int, leftBlock,
+                                    int, rightBlock,
 				    std::string, types,
                                     std::string, left,
                                     std::string, right,
@@ -127,11 +133,11 @@ private:
   std::vector<std::string> nameg1_;
   std::vector<std::string> nameg2_;
   std::vector<int> types_;
-  // One per module, not one per (type, gamma) pair. Every scalar it holds is
-  // re-derived by the next AllocateRight/AllocateLeft and its buffers are
-  // grow-only and overwritten by the packs, so nothing carries across a pair;
-  // what a fresh object cost was 20 rounds of freeing and reallocating the
-  // largest device buffers in the module, and 20 rebuilds of the site map.
+  // One per module, not one per (type, gamma) pair: execute() allocates it
+  // once for the largest blocks and the packs overwrite its buffers, so
+  // nothing carries across a pair. A fresh object per pair cost 20 rounds of
+  // freeing and reallocating the largest device buffers in the module, and
+  // 20 rebuilds of the site map.
   A2ASpatialSum<vobj> spatial_sum_;
 };
 
@@ -304,8 +310,17 @@ void TA2AExtendedMesonField<FImpl>::execute(void)
     int nt         = env().getDim().back();
     int N_i        = left.size();
     int N_j        = right.size();
-    int block = par().block;
-    int cacheBlock = par().cacheBlock;
+
+    // Clamped to the legs, so a block at least as large as its leg is one
+    // block and every size below is one that is actually used.
+    int leftBlock  = MIN(par().leftBlock,  N_i);
+    int rightBlock = MIN(par().rightBlock, N_j);
+
+    // HDF5 chunk: the smaller block that actually splits its leg. A side
+    // written in one block never cuts a chunk, so it must not shrink it.
+    int chunk = (leftBlock  == N_i) ? rightBlock
+              : (rightBlock == N_j) ? leftBlock
+              : MIN(leftBlock, rightBlock);
 
     // timeSliceIO: SumRing stops after the spatial reduce, so this rank holds
     // only its own t slab and writes one file per timeslice it owns. ntOut is
@@ -410,11 +425,11 @@ void TA2AExtendedMesonField<FImpl>::execute(void)
     auto &loop = *loopPtr;
     LOG(Message) << "Quark loop norm2 = " << norm2(loop) << std::endl;
 
-    std::vector<FermionField> loopRight(block, grid);
+    std::vector<FermionField> loopRight(rightBlock, grid);
     PropagatorField tloop(grid);
 
-    std::array<double, 6> sumTimings = {};
-    std::array<double, 6> sumBytes   = {};
+    std::array<double, 5> sumTimings = {};
+    std::array<double, 5> sumBytes   = {};
     std::array<double, 7> ioTimings  = {};
     unsigned int          fileIdx    = 0;
 
@@ -451,6 +466,14 @@ void TA2AExtendedMesonField<FImpl>::execute(void)
         return fn.str();
     };
 
+    startTimer("Allocate");
+    spatial_sum_.Allocate(grid, 1, leftBlock, rightBlock);
+    stopTimer("Allocate");
+
+    // The conjugated left pack does not depend on type, gamma or j, so it is
+    // redone only when the left block changes.
+    int packedLeft = -1;
+
     for (int &type: types_){
 
       for (int ig = 0 ; ig < gamma1_.size() ; ++ig ){
@@ -465,9 +488,8 @@ void TA2AExtendedMesonField<FImpl>::execute(void)
 	// same ownerFn(fileIdx, gt), so the rank that creates a file is always the
 	// rank that writes it -- creating on one rank and writing from another
 	// races on client-side metadata caching, since a plain Barrier does not
-	// make the file visible from another node. The chunk is `block`, matching
-	// the write granularity, so a hyperslab covers exactly one chunk and never
-	// forces a read-modify-write.
+	// make the file visible from another node. See chunk above for why each
+	// hyperslab covers whole chunks.
 	A2AExtendedMesonFieldMetadata md;
 	md.gamma1 = nameg1_[ig];
 	md.gamma2 = nameg2_[ig];
@@ -481,7 +503,7 @@ void TA2AExtendedMesonField<FImpl>::execute(void)
 	  A2AMatrixIo<HADRONS_A2AM_IO_TYPE> io(filenameFn(ioname, gt), ioname,
 	                                       ntFile, N_i, N_j);
 	  startTimer("initFile");
-	  io.initFile(md, block);
+	  io.initFile(md, chunk);
 	  stopTimer("initFile");
 	  nOwned++;
 	}
@@ -516,17 +538,13 @@ void TA2AExtendedMesonField<FImpl>::execute(void)
 	// (i,j) block, which over all the gamma families is thousands of
 	// allocations per trajectory of a buffer SumRing overwrites in full anyway.
 	//
-	// RowMajor is what lets SumRing take its direct device->host path: the
-	// gathered panel's [gt][iii][m][jjj] layout and a RowMajor (ntOut, Nii, 1,
-	// Njj) tensor are then the same addresses, so its scatter is skipped and
-	// its "scatter" timer stays at zero. ColMajor would put t fastest in
-	// memory while the copy-out below walks t outermost, which is both the
-	// wrong order for that loop and the reason the direct path could not apply.
-	// Element access is layout independent, so the values are unchanged.
+	// RowMajor (ntOut, Nii, 1, Njj) is the shape SumRing requires: its
+	// gathered panel is laid out [gt][i][m][j], the same addresses, so it
+	// copies straight into the tensor's storage.
 	Eigen::Tensor<ComplexD, 4, Eigen::RowMajor> resPool[2][2];
 
-	for ( unsigned int j = 0; j < N_j; j += block ){
-	  int Njj = MIN(N_j-j,block);
+	for ( unsigned int j = 0; j < N_j; j += rightBlock ){
+	  int Njj = MIN(N_j-j,rightBlock);
 	  startTimer("LoopRight contraction");
 	  for (int jj = 0; jj < Njj; jj++) {
 	    switch (type) {
@@ -537,38 +555,34 @@ void TA2AExtendedMesonField<FImpl>::execute(void)
 	    }
 	  }
 	  stopTimer("LoopRight contraction");
-	  //LOG(Message) << "loopRight packed for j-block " << j/block << " type " << type << std::endl;
 
-	  startTimer("Allocate");
-	  spatial_sum_.AllocateRight(Njj, grid);
-	  stopTimer("Allocate");
 	  startTimer("Pack vectors");
 	  spatial_sum_.PackRight(loopRight, 0, Njj);
 	  stopTimer("Pack vectors");
 
-	  for ( unsigned int i = 0; i < N_i; i += block ) {
-	    int Nii = MIN(N_i-i,block);
+	  for ( unsigned int i = 0; i < N_i; i += leftBlock ) {
+	    int Nii = MIN(N_i-i,leftBlock);
 
-	    startTimer("Allocate");
-	    spatial_sum_.AllocateLeft(Nii);
-	    stopTimer("Allocate");
-	    startTimer("Pack vectors");
-	    spatial_sum_.PackLeftConj(left, i, Nii);
-	    stopTimer("Pack vectors");
+	    if ((int)i != packedLeft) {
+	      startTimer("Pack vectors");
+	      spatial_sum_.PackLeftConj(left, i, Nii);
+	      stopTimer("Pack vectors");
+	      packedLeft = i;
+	    }
 
 	    // Rank 4 with a singleton momentum axis: SumRing writes
 	    // result[t][i][m][j] for the general nmom case, and EMF carries no
 	    // momentum projection.
 	    //
-	    // No setZero: SumRing writes every element of the tensor on both its
-	    // direct and its scatter path, so zeroing first is dead work.
-	    auto &emfBlock = resPool[Nii != block][Njj != block];
+	    // No setZero: SumRing writes every element of the tensor, so zeroing
+	    // first is dead work.
+	    auto &emfBlock = resPool[Nii != leftBlock][Njj != rightBlock];
 	    startTimer("Allocate");
 	    emfBlock.resize(ntOut, Nii, 1, Njj);
 	    stopTimer("Allocate");
 
 	    startTimer("Sum");
-	    spatial_sum_.SumRing(emfBlock, cacheBlock, &sumTimings, &sumBytes, tsIO);
+	    spatial_sum_.SumRing(emfBlock, &sumTimings, &sumBytes, tsIO);
 	    stopTimer("Sum");
 
 	    // Straight out of the result tensor: emfBlock is RowMajor
@@ -592,7 +606,6 @@ void TA2AExtendedMesonField<FImpl>::execute(void)
 	    writeTime += dt;
 	    stopTimer("IO");
 	}
-	//LOG(Message) << "EMF made for j-block " << j/block << " type " << type << std::endl;
 
 	}// i,j
 	LOG(Message) << "EMF made for type " << type << "; gamma1: " << nameg1_[ig] << "; gamma2: " << nameg2_[ig] << std::endl;
@@ -622,10 +635,9 @@ void TA2AExtendedMesonField<FImpl>::execute(void)
     spatial_sum_.Deallocate();
 
     // Throughput of the post-GEMM SumRing stages -- bytesMoved[k] and
-    // sumTimings[k] accumulate the same way across all (type,ig,i,j) calls
-    // and all cacheBlock tiles, so their ratio is the average effective
-    // bandwidth of that stage over the whole run, comparable across
-    // different cacheBlock choices.
+    // sumTimings[k] accumulate the same way across all (type,ig,i,j) calls,
+    // so their ratio is the average effective bandwidth of that stage over
+    // the whole run, comparable across different block choices.
     //
     // The two ring stages report bytes on the wire rather than payload, so
     // their rates are the ones comparable with a link rate; the local stages
@@ -642,10 +654,8 @@ void TA2AExtendedMesonField<FImpl>::execute(void)
                  << " (" << gbps(sumBytes[2], sumTimings[2]) << " GB/s)" << std::endl;
     LOG(Message) << "  spatial reduce  = " << sumTimings[3]
                  << " (" << gbps(sumBytes[3], sumTimings[3]) << " GB/s wire)" << std::endl;
-    LOG(Message) << "  scatter         = " << sumTimings[4]
-                 << " (" << gbps(sumBytes[4], sumTimings[4]) << " GB/s)" << std::endl;
-    LOG(Message) << "  temporal gather = " << sumTimings[5]
-                 << " (" << gbps(sumBytes[5], sumTimings[5]) << " GB/s wire)" << std::endl;
+    LOG(Message) << "  temporal gather = " << sumTimings[4]
+                 << " (" << gbps(sumBytes[4], sumTimings[4]) << " GB/s wire)" << std::endl;
     LOG(Message) << "IO detail (us), rank 0:" << std::endl;
     LOG(Message) << "  open            = " << ioTimings[0]  << std::endl;
     LOG(Message) << "  push/group      = " << ioTimings[1]  << std::endl;

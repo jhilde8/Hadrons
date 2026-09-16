@@ -66,8 +66,8 @@ int main(int argc, char *argv[])
     int         N_i        = 8;
     int         N_j        = 8;
     int         Nloop      = 4;
-    int         block      = 8;
-    int         cacheBlock = 8;
+    int         leftBlock  = 8;
+    int         rightBlock = 8;
     std::string types      = "0 1 2 3";
     std::string gammas    = "GammaMU GammaMUGamma5 Identity Gamma5 SigmaMUNU";
     std::string output_path = "emf_gpu_out";
@@ -84,10 +84,10 @@ int main(int argc, char *argv[])
         N_j        = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--Nj"));
     if (GridCmdOptionExists(argv, argv + argc, "--Nloop"))
         Nloop      = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--Nloop"));
-    if (GridCmdOptionExists(argv, argv + argc, "--block"))
-        block      = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--block"));
-    if (GridCmdOptionExists(argv, argv + argc, "--cacheBlock"))
-        cacheBlock = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--cacheBlock"));
+    if (GridCmdOptionExists(argv, argv + argc, "--leftBlock"))
+        leftBlock  = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--leftBlock"));
+    if (GridCmdOptionExists(argv, argv + argc, "--rightBlock"))
+        rightBlock = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--rightBlock"));
     if (GridCmdOptionExists(argv, argv + argc, "--types"))
         types      = cliListToPar(GridCmdOptionPayload(argv, argv + argc, "--types"));
     if (GridCmdOptionExists(argv, argv + argc, "--gammas"))
@@ -114,8 +114,8 @@ int main(int argc, char *argv[])
     // A2AExtendedMesonField - GPU path (new module)
     // ------------------------------------------------------------------
     MContraction::A2AExtendedMesonFieldPar emfPar;
-    emfPar.block      = block;
-    emfPar.cacheBlock = cacheBlock;
+    emfPar.leftBlock  = leftBlock;
+    emfPar.rightBlock = rightBlock;
     emfPar.types      = types;
     emfPar.left       = "left";
     emfPar.right      = "right";

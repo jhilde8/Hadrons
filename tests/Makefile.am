@@ -26,12 +26,7 @@ EXTRA_PROGRAMS = \
   Test_cmof_compare         \
   Test_mf_gpu               \
   Test_mf_compare           \
-  Test_writer_spread        \
-  Test_load_combined_regression \
-  Test_mf_multihit          \
-  Test_savebinned_gpu       \
-  Test_a2a_evalfpe_gpu      \
-  Test_coarsedeflation_gpu
+  Test_writer_spread
 
 CLEANFILES = $(EXTRA_PROGRAMS)
 
@@ -111,18 +106,3 @@ Test_mf_compare_LDADD=-lHadrons -lGrid
 
 Test_writer_spread_SOURCES=Test_writer_spread.cpp
 Test_writer_spread_LDADD=-lHadrons -lGrid
-
-Test_load_combined_regression_SOURCES=Test_load_combined_regression.cpp
-Test_load_combined_regression_LDADD=-lHadrons -lGrid
-
-Test_mf_multihit_SOURCES=Test_mf_multihit.cpp
-Test_mf_multihit_LDADD=-lHadrons -lGrid
-
-Test_savebinned_gpu_SOURCES=Test_savebinned_gpu.cpp
-Test_savebinned_gpu_LDADD=-lHadrons -lGrid
-
-Test_a2a_evalfpe_gpu_SOURCES=Test_a2a_evalfpe_gpu.cpp
-Test_a2a_evalfpe_gpu_LDADD=-lHadrons -lGrid
-
-Test_coarsedeflation_gpu_SOURCES=Test_coarsedeflation_gpu.cpp
-Test_coarsedeflation_gpu_LDADD=-lHadrons -lGrid

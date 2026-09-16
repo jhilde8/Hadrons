@@ -63,8 +63,11 @@ int main(int argc, char *argv[])
     // ------------------------------------------------------------------
     int         N_i        = 16;
     int         N_j        = 16;
+    // block is the A2AFewMesonField reference's own block (its cache tiling
+    // stays fixed at 12); leftBlock/rightBlock drive A2AMesonField.
     int         block      = 16;
-    int         cacheBlock = 8;
+    int         leftBlock  = 16;
+    int         rightBlock = 16;
     int         momShell   = 0;
     std::string gammas     = "Gamma5 Identity";
     std::string output_path= "mf_gpu_out";
@@ -81,8 +84,10 @@ int main(int argc, char *argv[])
         N_j        = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--Nj"));
     if (GridCmdOptionExists(argv, argv + argc, "--block"))
         block      = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--block"));
-    if (GridCmdOptionExists(argv, argv + argc, "--cacheBlock"))
-        cacheBlock = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--cacheBlock"));
+    if (GridCmdOptionExists(argv, argv + argc, "--leftBlock"))
+        leftBlock  = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--leftBlock"));
+    if (GridCmdOptionExists(argv, argv + argc, "--rightBlock"))
+        rightBlock = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--rightBlock"));
     if (GridCmdOptionExists(argv, argv + argc, "--mom"))
         momShell   = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--mom"));
     if (GridCmdOptionExists(argv, argv + argc, "--gammas"))
@@ -108,8 +113,8 @@ int main(int argc, char *argv[])
     // A2AMesonField -- current GPU path (A2ASpatialSum / batched GEMM)
     // ------------------------------------------------------------------
     MContraction::A2AMesonFieldPar mfPar;
-    mfPar.block      = block;
-    mfPar.cacheBlock = cacheBlock;
+    mfPar.leftBlock  = leftBlock;
+    mfPar.rightBlock = rightBlock;
     mfPar.left   = "left";
     mfPar.right  = "right";
     mfPar.output = output_path;
@@ -123,7 +128,7 @@ int main(int argc, char *argv[])
     // A2AFewMesonField -- CPU MT production path (contract-once + mac)
     // ------------------------------------------------------------------
     MContraction::A2AFewMesonFieldPar fmfPar;
-    fmfPar.cacheBlock = cacheBlock;
+    fmfPar.cacheBlock = 12;
     fmfPar.block      = block;
     fmfPar.left       = "left";
     fmfPar.right      = "right";
@@ -141,8 +146,8 @@ int main(int argc, char *argv[])
     // two-way FMF vs MF comparison in the meantime.
     // ------------------------------------------------------------------
     // MContraction::A2ANewMesonFieldPar nmfPar;
-    // nmfPar.block      = block;
-    // nmfPar.cacheBlock = cacheBlock;
+    // nmfPar.leftBlock  = leftBlock;
+    // nmfPar.rightBlock = rightBlock;
     // nmfPar.left   = "left";
     // nmfPar.right  = "right";
     // nmfPar.output = "mf_new_out";

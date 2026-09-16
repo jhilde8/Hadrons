@@ -68,8 +68,8 @@ int main(int argc, char *argv[])
     // ------------------------------------------------------------------
     int         N_i      = 16;
     int         N_j      = 16;
-    int         block    = 16;
-    int 	cacheBlock = 16;
+    int         leftBlock  = 16;
+    int         rightBlock = 16;
     int         momShell = 0;
     std::string gammas   = "Gamma5 Identity";
     std::string output_path = "mf_gpu_out";
@@ -84,10 +84,10 @@ int main(int argc, char *argv[])
         N_i      = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--Ni"));
     if (GridCmdOptionExists(argv, argv + argc, "--Nj"))
         N_j      = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--Nj"));
-    if (GridCmdOptionExists(argv, argv + argc, "--block"))
-        block    = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--block"));
-    if (GridCmdOptionExists(argv, argv + argc, "--cacheBlock"))
-        cacheBlock    = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--cacheBlock"));
+    if (GridCmdOptionExists(argv, argv + argc, "--leftBlock"))
+        leftBlock  = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--leftBlock"));
+    if (GridCmdOptionExists(argv, argv + argc, "--rightBlock"))
+        rightBlock = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--rightBlock"));
     if (GridCmdOptionExists(argv, argv + argc, "--mom"))
         momShell = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--mom"));
     if (GridCmdOptionExists(argv, argv + argc, "--gammas"))
@@ -112,8 +112,8 @@ int main(int argc, char *argv[])
     // A2AMesonField - GPU path via A2ASpatialSum
     // ------------------------------------------------------------------
     MContraction::A2AMesonFieldPar mfPar;
-    mfPar.block  = block;
-    mfPar.cacheBlock = cacheBlock; 
+    mfPar.leftBlock  = leftBlock;
+    mfPar.rightBlock = rightBlock;
     mfPar.left   = "left";
     mfPar.right  = "right";
     mfPar.output = output_path;
