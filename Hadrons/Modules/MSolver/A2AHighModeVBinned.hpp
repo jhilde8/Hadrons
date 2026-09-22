@@ -38,16 +38,34 @@ BEGIN_HADRONS_NAMESPACE
 /******************************************************************************
  *                    Create high-mode all-to-all V vectors                   *
  ******************************************************************************/
+/*
+ * Bin range: a hit of fermSize noise vectors is written as fermSize/binSize
+ * bins. initBin and nBin select the bins [initBin, initBin + nBin) computed by
+ * this run, so one hit can be split across several jobs (e.g. to fit a
+ * walltime cap) or resumed after a failure from the first incomplete bin.
+ *
+ *   initBin  first bin to compute (default 0)
+ *   nBin     number of bins to compute; 0 (the default) means all bins from
+ *            initBin to the end of the hit
+ *
+ * Bin indices are absolute: bin b is always written as element b, whichever
+ * run computes it. Any range other than the full hit requires multiFile=true,
+ * since a single-file run over a partial range would leave a truncated file.
+ * Nothing is skipped automatically: which bins a run computes is exactly what
+ * the XML says.
+ */
 BEGIN_MODULE_NAMESPACE(MSolver)
 class A2AHighModeVBinnedPar: Serializable
 {
 public:
   GRID_SERIALIZABLE_CLASS_MEMBERS(A2AHighModeVBinnedPar,
-                                  std::string, noise,
-                                  std::string, action,
-                                  std::string, solver,
-                                  std::string, output,
-                                  bool,        multiFile);
+                                  std::string,  noise,
+                                  std::string,  action,
+                                  std::string,  solver,
+                                  std::string,  output,
+                                  bool,         multiFile,
+                                  unsigned int, initBin,
+                                  unsigned int, nBin);
 };
 template <typename FImpl, int binSize>
 class TA2AHighModeVBinned : public Module<A2AHighModeVBinnedPar>
@@ -75,6 +93,14 @@ public:
     virtual void setup(void);
     // execution
     virtual void execute(void);
+private:
+    struct BinRange
+    {
+        unsigned int first;
+        unsigned int count;
+    };
+    // bins computed by this run, validated against the noise size
+    BinRange binRange(unsigned int fermSize);
 };
 MODULE_REGISTER_TMP(A2AHighModeVBinned64,
     ARG(TA2AHighModeVBinned<FIMPL, 64>), MSolver);
@@ -119,6 +145,37 @@ std::vector<std::string> TA2AHighModeVBinned<FImpl, binSize>::getOutput(void)
     std::vector<std::string> out = {};
     return out;
 }
+// bin range ///////////////////////////////////////////////////////////////////
+template <typename FImpl, int binSize>
+typename TA2AHighModeVBinned<FImpl, binSize>::BinRange
+TA2AHighModeVBinned<FImpl, binSize>::binRange(unsigned int fermSize)
+{
+    unsigned int nTotal = fermSize/binSize;
+    BinRange     range;
+
+    range.first = par().initBin;
+    if (range.first >= nTotal)
+    {
+        HADRONS_ERROR(Argument, "initBin = " + std::to_string(range.first)
+                      + " is outside the " + std::to_string(nTotal)
+                      + " bins of noise '" + par().noise + "'");
+    }
+    range.count = (par().nBin == 0) ? nTotal - range.first : par().nBin;
+    if (range.first + range.count > nTotal)
+    {
+        HADRONS_ERROR(Argument, "bins [" + std::to_string(range.first) + ", "
+                      + std::to_string(range.first + range.count)
+                      + ") exceed the " + std::to_string(nTotal)
+                      + " bins of noise '" + par().noise + "'");
+    }
+    if ((range.count < nTotal) && !par().multiFile)
+    {
+        HADRONS_ERROR(Argument, "a partial bin range (initBin/nBin) requires "
+                      "multiFile = true");
+    }
+
+    return range;
+}
 // setup ///////////////////////////////////////////////////////////////////////
 template <typename FImpl, int binSize>
 void TA2AHighModeVBinned<FImpl, binSize>::setup(void)
@@ -136,6 +193,7 @@ void TA2AHighModeVBinned<FImpl, binSize>::setup(void)
     auto &solver = solverSubtract.hasGuesser() ? solverSubtract : solverPlain;
     int  Ls      = env().getObjectLs(par().action);
     assert(noise.fermSize() % binSize == 0);
+    binRange(noise.fermSize());
     envTmpLat(FermionField, "v");
     envTmpLat(Lattice<SiteSpinorSet>, "vBin");
     if (Ls > 1)
@@ -148,8 +206,11 @@ void TA2AHighModeVBinned<FImpl, binSize>::setup(void)
 template <typename FImpl, int binSize>
 void TA2AHighModeVBinned<FImpl, binSize>::execute(void)
 {
-    auto &noise = envGet(SpinColorDiagonalNoise<FImpl>, par().noise);
-    int  Ls     = env().getObjectLs(par().action);
+    auto         &noise  = envGet(SpinColorDiagonalNoise<FImpl>, par().noise);
+    int          Ls      = env().getObjectLs(par().action);
+    BinRange     range   = binRange(noise.fermSize());
+    unsigned int ihBegin = binSize*range.first;
+    unsigned int ihEnd   = binSize*(range.first + range.count);
     envGetTmp(FermionField, v);
     envGetTmp(Lattice<SiteSpinorSet>, vBin);
     envGetTmp(A2A, a2a);
@@ -157,13 +218,17 @@ void TA2AHighModeVBinned<FImpl, binSize>::execute(void)
     LOG(Message) << "Computing high-mode part of all-to-all V vectors "
                  << "using noise '" << par().noise << "' ("
                  << noise.fermSize() << " noise vectors)" << std::endl;
+    LOG(Message) << "Bins [" << range.first << ", "
+                 << range.first + range.count << ") of "
+                 << noise.fermSize()/binSize << " (noise vectors ["
+                 << ihBegin << ", " << ihEnd << "))" << std::endl;
     if ((!par().output.empty()) && (!par().multiFile))
     {
         A2AVectorsIo::openWriter(vWriter, par().output, vBin.Grid(),
                                  vm().getTrajectory());
     }
     // High modes
-    for (unsigned int ih = 0; ih < noise.fermSize(); ih++)
+    for (unsigned int ih = ihBegin; ih < ihEnd; ih++)
     {
         startTimer("V high mode");
         LOG(Message) << "V vector i = " << ih
