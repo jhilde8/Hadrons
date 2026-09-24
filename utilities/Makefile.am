@@ -1,13 +1,23 @@
 AM_LDFLAGS += -L$(top_builddir)/Hadrons
 AM_CXXFLAGS += -I$(top_srcdir)
 
-bin_PROGRAMS = HadronsXmlRun HadronsXmlValidate 
-  
+bin_PROGRAMS = \
+  HadronsXmlRun              \
+  HadronsXmlValidate         \
+  HadronsContractor          \
+  ContractorDense            \
+  K2pipiContractor
+
 EXTRA_PROGRAMS = \
   BatchDeflationBenchmark    \
-  HadronsContractor          \
   HadronsContractorBenchmark \
-  HadronsFermionEP64To32 
+  HadronsXmlRun              \
+  HadronsXmlValidate         \
+  HadronsFermionEP64To32     \
+  BubbleContractor           \
+  A2AMesonFieldSelectHits    \
+  FlexibleContractor         \
+  HadronsFermionEP64To32
 
 CLEANFILES = $(EXTRA_PROGRAMS)
 
@@ -26,6 +36,21 @@ HadronsFermionEP64To32_LDADD    = -lHadrons -lGrid
 
 HadronsContractor_SOURCES = Contractor.cpp
 HadronsContractor_LDADD   = -lHadrons -lGrid
+
+ContractorDense_SOURCES = ContractorDense.cpp
+ContractorDense_LDADD   = -lHadrons -lGrid
+
+FlexibleContractor_SOURCES = FlexibleContractor.cpp
+FlexibleContractor_LDADD   = -lHadrons -lGrid
+
+K2pipiContractor_SOURCES = K2pipiContractor.cpp
+K2pipiContractor_LDADD   = -lHadrons -lGrid
+
+BubbleContractor_SOURCES = BubbleContractor.cpp
+BubbleContractor_LDADD   = -lHadrons -lGrid
+
+A2AMesonFieldSelectHits_SOURCES = A2AMesonFieldSelectHits.cpp
+A2AMesonFieldSelectHits_LDADD   = -lHadrons -lGrid
 
 HadronsContractorBenchmark_SOURCES = ContractorBenchmark.cpp
 HadronsContractorBenchmark_LDADD   = -lHadrons -lGrid

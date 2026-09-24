@@ -179,6 +179,59 @@ private:
 };
 
 /******************************************************************************
+ *                   Dense-W mode index layout of one flavour                 *
+ ******************************************************************************/
+// A meson field built against a dense (combined) W leg is rectangular: its row
+// index is a compact W slot and its column index a fully expanded mode. The
+// two conventions share the low modes and differ above them,
+//
+//     dense slot    d = nLow + h*nSc + sc            nLow + nHit*nSc
+//     expanded mode e = nLow + (h*nt + t)*nSc + sc   nLow + nHit*nt*nSc
+//
+// with h the hit, sc the spin-colour slot and t the dilution timeslice of the
+// W vector behind the slot. A time-diluted W is supported on one timeslice
+// only, so every expanded mode whose t differs from the slice the meson field
+// was taken at multiplies to zero. The dense form stores exactly the surviving
+// slots and the expanded partner is reconstructed from the slice index rather
+// than kept on disk.
+//
+// The layout belongs to a flavour, not to a matrix: the light and strange mode
+// spaces differ in nLow, and a field such as mf_sl carries one on each axis.
+// A contraction therefore names one mode space per summed index.
+struct A2AModeSpace
+{
+    std::size_t nLow{0};
+    std::size_t nSc{0};
+    std::size_t nt{0};
+    std::size_t nHit{0};
+
+    std::size_t denseSize(void) const
+    {
+        return nLow + nHit*nSc;
+    }
+
+    std::size_t expandedSize(void) const
+    {
+        return nLow + nHit*nt*nSc;
+    }
+
+    // Expanded partner of dense slot d, for a field taken at timeslice t.
+    // The identity below nLow, so low modes need no separate code path.
+    std::size_t expand(const std::size_t d, const std::size_t t) const
+    {
+        if (d < nLow)
+        {
+            return d;
+        }
+
+        const std::size_t h  = (d - nLow)/nSc;
+        const std::size_t sc = (d - nLow)%nSc;
+
+        return nLow + (h*nt + t)*nSc + sc;
+    }
+};
+
+/******************************************************************************
  *                       A2A matrix contraction kernels                       *
  ******************************************************************************/
 class A2AContraction
@@ -229,6 +282,86 @@ public:
     static inline double accTrMulFlops(const MatLeft &a, const MatRight &b)
     {
         double n = a.rows()*a.cols();
+
+        return 8.*n;
+    }
+
+    // accTrMulDense(acc, a, ta, b, tb, spaceI, spaceJ): acc += tr(a*b) for two
+    // meson fields with dense W rows and expanded columns, taken at timeslices
+    // ta and tb. spaceI describes a's rows and spaceJ b's rows; the two differ
+    // whenever the W legs are different flavours, as in the kaon. A
+    // time-diluted W is supported on one timeslice, so in the expanded trace
+    // every term dies except those whose row indices are the images of the
+    // dense ranges under expand(., ta) and expand(., tb) -- which is exactly
+    // what the dense form stores. Summing i and j over the dense ranges
+    // therefore visits each surviving term once. Only the row axes shrink: the
+    // columns are stored expanded and are reached through the time of the
+    // other factor, a's with tb and b's with ta.
+    template <typename C, typename MatLeft, typename MatRight>
+    static inline void accTrMulDense(C &acc,
+                                     const MatLeft &a, const std::size_t ta,
+                                     const MatRight &b, const std::size_t tb,
+                                     const A2AModeSpace &spaceI,
+                                     const A2AModeSpace &spaceJ)
+    {
+        const std::size_t nI    = spaceI.denseSize();
+        const std::size_t nJ    = spaceJ.denseSize();
+        const std::size_t nIexp = spaceI.expandedSize();
+        const std::size_t nJexp = spaceJ.expandedSize();
+        const std::size_t nLowJ = spaceJ.nLow;
+
+        // Eigen's bounds assertions compile out under NDEBUG, so a mode space
+        // disagreeing with the data would read out of bounds in silence.
+        if (((std::size_t)a.rows() != nI) or ((std::size_t)a.cols() != nJexp)
+            or ((std::size_t)b.rows() != nJ)
+            or ((std::size_t)b.cols() != nIexp))
+        {
+            HADRONS_ERROR(Size, "dense trace operands do not match the mode "
+                "spaces (got " + std::to_string(a.rows()) + "x"
+                + std::to_string(a.cols()) + " and "
+                + std::to_string(b.rows()) + "x" + std::to_string(b.cols())
+                + ", expected " + std::to_string(nI) + "x"
+                + std::to_string(nJexp) + " and " + std::to_string(nJ) + "x"
+                + std::to_string(nIexp) + ")");
+        }
+
+        std::vector<std::size_t> colA(nJ), colB(nI);
+
+        // Built once, so no integer division reaches the mode sums.
+        for (std::size_t j = 0; j < nJ; ++j)
+        {
+            colA[j] = spaceJ.expand(j, tb);
+        }
+        for (std::size_t i = 0; i < nI; ++i)
+        {
+            colB[i] = spaceI.expand(i, ta);
+        }
+        thread_for(i, nI,
+        {
+            const std::size_t ci  = colB[i];
+            C                 tmp = 0.;
+
+            // Low modes carry no dilution, so both sides run contiguously.
+            if (nLowJ > 0)
+            {
+                tmp += a.row(i).head(nLowJ).conjugate()
+                        .dot(b.col(ci).head(nLowJ));
+            }
+            for (std::size_t j = nLowJ; j < nJ; ++j)
+            {
+                tmp += a(i, colA[j])*b(j, ci);
+            }
+            thread_critical
+            {
+                acc += tmp;
+            }
+        });
+    }
+
+    static inline double accTrMulDenseFlops(const A2AModeSpace &spaceI,
+                                            const A2AModeSpace &spaceJ)
+    {
+        double n = (double)spaceI.denseSize()*(double)spaceJ.denseSize();
 
         return 8.*n;
     }
