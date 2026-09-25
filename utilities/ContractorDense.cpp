@@ -65,6 +65,7 @@ namespace ContractorDense
                                         std::string, file,
                                         std::string, dataset,
                                         unsigned int, cacheSize,
+                                        bool, timeSliceIO,
                                         unsigned int, nLow,
                                         std::string, name);
     };
@@ -187,6 +188,22 @@ std::set<unsigned int> parseTimeRange(const std::string str, const unsigned int 
     return tSet;
 }
 
+std::string sliceFilename(const std::string stem, const unsigned int t)
+{
+    const std::string  ext = ".h5";
+    std::ostringstream ss;
+
+    if ((stem.size() < ext.size())
+        or (stem.compare(stem.size() - ext.size(), ext.size(), ext) != 0))
+    {
+        HADRONS_ERROR(Io, "timeSliceIO file '" + stem + "' does not end in '.h5'");
+    }
+    ss << stem.substr(0, stem.size() - ext.size()) << ".t"
+       << std::setfill('0') << std::setw(4) << t << ext;
+
+    return ss.str();
+}
+
 struct Sec
 {
     Sec(const double usec)
@@ -284,16 +301,42 @@ int main(int argc, char* argv[])
         for (auto &p: par.a2aMatrix)
         {
             std::string filename = p.file;
-            double      t;
+            double      t, tTot = 0.;
+            size_t      bytes = 0;
 
             tokenReplace(filename, "traj", traj);
             std::cout << "======== Loading '" << filename << "'" << std::endl;
 
-            A2AMatrixIo<HADRONS_A2AM_IO_TYPE> a2aIo(filename, p.dataset, par.global.nt);
+            if (p.timeSliceIO)
+            {
+                EigenDiskVector<ComplexD>::Matrix buf;
+                unsigned int                      ni = 0, nj = 0;
 
-            a2aIo.load(a2aMat.at(p.name), &t);
-            std::cout << "Read " << a2aIo.getSize() << " bytes in " << t/1.0e6
-                    << " sec, " << a2aIo.getSize()/t*1.0e6/1024/1024 << " MB/s" << std::endl;
+                for (unsigned int tp1 = par.global.nt; tp1 > 0; --tp1)
+                {
+                    unsigned int tt = tp1 - 1;
+
+                    A2AMatrixIo<HADRONS_A2AM_IO_TYPE> a2aIo(sliceFilename(filename, tt),
+                                                            p.dataset, 1, ni, nj);
+
+                    a2aIo.loadSlice(buf, &t);
+                    ni     = a2aIo.getNi();
+                    nj     = a2aIo.getNj();
+                    bytes += a2aIo.getSize();
+                    tTot  += t;
+                    a2aMat.at(p.name)[tt] = buf;
+                }
+            }
+            else
+            {
+                A2AMatrixIo<HADRONS_A2AM_IO_TYPE> a2aIo(filename, p.dataset, par.global.nt);
+
+                a2aIo.load(a2aMat.at(p.name), &t);
+                bytes = a2aIo.getSize();
+                tTot  = t;
+            }
+            std::cout << "Read " << bytes << " bytes in " << tTot/1.0e6
+                    << " sec, " << bytes/tTot*1.0e6/1024/1024 << " MB/s" << std::endl;
         }
 
         for (auto &p: par.product)

@@ -130,6 +130,11 @@ public:
                    std::string datasetName);
     template <template <class> class Vec, typename VecT>
     void load(Vec<VecT> &v, double *tRead = nullptr, GridBase *grid = nullptr, std::string datasetName="");
+    // One timeslice from a file that holds exactly one, as written under
+    // A2AMesonField's timeSliceIO layout. load() always fills [0, nt_) of its
+    // container and so cannot place a slice at an arbitrary index.
+    template <typename MatType>
+    void loadSlice(MatType &m, double *tRead = nullptr, GridBase *grid = nullptr, std::string datasetName="");
 private:
     std::string  filename_{""}, dataname_{""};
     unsigned int nt_{0}, ni_{0}, nj_{0};
@@ -890,6 +895,81 @@ void A2AMatrixIo<T>::load(Vec<VecT> &v, double *tRead, GridBase *grid, std::stri
         v[t] = buf.template cast<VecT>();
     }
     std::cout << std::endl;
+#else
+    HADRONS_ERROR(Implementation, "all-to-all matrix I/O needs HDF5 library");
+#endif
+}
+
+template <typename T>
+template <typename MatType>
+void A2AMatrixIo<T>::loadSlice(MatType &m, double *tRead, GridBase *grid, std::string datasetName)
+{
+#ifdef HAVE_HDF5
+    std::vector<hsize_t> hdim;
+    H5NS::DataSet        dataset;
+    H5NS::DataSpace      dataspace;
+    H5NS::CompType       datatype;
+
+    if(datasetName.empty()){
+        datasetName = HADRONS_A2AM_NAME;
+    }
+
+    if (!(grid) || grid->IsBoss())
+    {
+        Hdf5Reader reader(filename_);
+        push(reader, dataname_);
+        auto &group = reader.getGroup();
+        dataset = group.openDataSet(datasetName);
+        datatype = dataset.getCompType();
+        dataspace = dataset.getSpace();
+        hdim.resize(dataspace.getSimpleExtentNdims());
+        dataspace.getSimpleExtentDims(hdim.data());
+        if (hdim[0] != 1)
+        {
+            HADRONS_ERROR(Size, "'" + filename_ + "' holds "
+                + std::to_string(hdim[0])
+                + " timeslices, expected 1 (not a timeSliceIO file?)");
+        }
+        if ((ni_*nj_ != 0) and ((hdim[1] != ni_) or (hdim[2] != nj_)))
+        {
+            HADRONS_ERROR(Size, "all-to-all matrix size mismatch (got "
+                + std::to_string(hdim[1]) + "x" + std::to_string(hdim[2])
+                + ", expected " + std::to_string(ni_) + "x"
+                + std::to_string(nj_) + ")");
+        }
+        ni_ = hdim[1];
+        nj_ = hdim[2];
+    }
+    if (grid)
+    {
+        grid->Broadcast(grid->BossRank(), &ni_, sizeof(unsigned int));
+        grid->Broadcast(grid->BossRank(), &nj_, sizeof(unsigned int));
+    }
+
+    A2AMatrix<T>         buf(ni_, nj_);
+    int broadcastSize =  sizeof(T) * buf.size();
+    std::vector<hsize_t> count    = {1, static_cast<hsize_t>(ni_),
+                                     static_cast<hsize_t>(nj_)},
+                         offset   = {0, 0, 0},
+                         stride   = {1, 1, 1},
+                         block    = {1, 1, 1},
+                         memCount = {static_cast<hsize_t>(ni_),
+                                     static_cast<hsize_t>(nj_)};
+    H5NS::DataSpace      memspace(memCount.size(), memCount.data());
+
+    if (tRead) *tRead -= usecond();
+    if (!(grid) || grid->IsBoss())
+    {
+        dataspace.selectHyperslab(H5S_SELECT_SET, count.data(), offset.data(),
+                                  stride.data(), block.data());
+        dataset.read(buf.data(), datatype, memspace, dataspace);
+    }
+    if (grid)
+    {
+        grid->Broadcast(grid->BossRank(), buf.data(), broadcastSize);
+    }
+    if (tRead) *tRead += usecond();
+    m = buf;
 #else
     HADRONS_ERROR(Implementation, "all-to-all matrix I/O needs HDF5 library");
 #endif
