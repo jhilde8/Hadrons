@@ -26,6 +26,7 @@ EXTRA_PROGRAMS = \
   Test_cmof_compare         \
   Test_mf_gpu               \
   Test_mf_compare           \
+  Test_smear_compare        \
   Test_writer_spread
 
 CLEANFILES = $(EXTRA_PROGRAMS)
@@ -103,6 +104,9 @@ Test_mf_gpu_LDADD=-lHadrons -lGrid
 
 Test_mf_compare_SOURCES=Test_mf_compare.cpp
 Test_mf_compare_LDADD=-lHadrons -lGrid
+
+Test_smear_compare_SOURCES=Test_smear_compare.cpp
+Test_smear_compare_LDADD=-lHadrons -lGrid
 
 Test_writer_spread_SOURCES=Test_writer_spread.cpp
 Test_writer_spread_LDADD=-lHadrons -lGrid
