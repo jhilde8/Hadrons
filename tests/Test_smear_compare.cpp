@@ -7,52 +7,57 @@
 /*
  * Test_smear_compare.cpp
  *
- * Hadrons application: runs the A2A covariant smearing modules over the same
- * random A2A vectors and the same gauge field in a single run, then builds one
- * meson field per smearing using the SAME contraction module. The smearing is
- * the only variable, so any difference between the output meson fields is a
- * difference between the smearing implementations.
+ * Hadrons application: smears the same random A2A vectors with both covariant
+ * smearing modules, on each of three gauge fields, and builds one meson field
+ * per combination with the same contraction module. Six meson fields plus an
+ * unsmeared baseline, from one set of vectors in one run.
  *
- *   A2ACovariantSmearMT    - Cshift path via Grid CovariantSmearing, production
- *   A2ACovariantSmear      - 6 point Laplacian stencil, newer
- *   A2ACovariantSmearOrig  - Cshift path, smears in place, production (--orig)
+ *   modules  A2ACovariantSmearMT  Cshift path via Grid CovariantSmearing
+ *            A2ACovariantSmear    6 point Laplacian stencil
  *
- * An unsmeared meson field is written too. It is the reference for the
- * elementwise ratio MF_smeared/MF_unsmeared, and that ratio is the quantity
- * that exposes a smearing behaving as an overall constant: a real smearing
- * changes it element by element, one that has collapsed to a scalar leaves it
- * flat.
+ *   gauge    raw    MGauge::Random, unsmeared
+ *            stout  MGauge::StoutSmearing
+ *            ape    MGauge::APESmear
  *
- * GAUGE CHOICE - run both. With --gauge unit the covariant Laplacian reduces
- * to the free one, whose eigenvectors are plane waves, so the zero momentum
- * component is an exact eigenvector with smearing eigenvalue 1 and a correct
- * module must preserve it exactly. That makes unit links the sharper test of
- * the shift and halo logic, but every link is the identity, so a wrong gauge
- * index or a mis-multiplied link is invisible. --gauge random exercises the
- * parallel transport that unit links hide.
+ * Comparing the two modules at fixed gauge tests the vector smearing.
+ * Comparing the three gauge fields at fixed module tests what the gauge
+ * smearing does to the covariant Laplacian, which is the reason the smeared
+ * gauge arms are here. stout separates a specific problem with APESmear from
+ * any consequence of smoothing the links at all.
  *
- * ITERATION COUNT - start at --N 1. One iteration is analytic,
- * MF(1) = MF(0) + coeff*<w|Gamma Laplacian|v> with coeff = alpha^2/(4N), so
- * all modules must agree to reduction order roundoff and a disagreement
- * localises immediately. Then walk N up: a discrepancy that only appears at
- * large N points at boundary or halo handling accumulating over iterations
- * rather than at the arithmetic of a single application.
+ * The raw field is random rather than unit because stout and APE smearing of
+ * unit links is a no-op -- the staples of unit links are unit -- so all three
+ * gauge arms would coincide and the test would say nothing.
  *
- * orthog_axis is fixed at 3 and is deliberately not a CLI knob.
- * A2ACovariantSmear ignores the parameter (its stencil hardcodes x, y, z and
- * the -6 diagonal) while MT and Orig honour it, so the three agree only at 3
- * and any other value would compare different operators.
+ * A2ACovariantSmearOrig is not included: it agrees with MT bitwise, both being
+ * calls into the same Grid routine, so it adds no coverage, and its result
+ * lands back in its own input array where the dependency graph cannot see it.
  *
- * Output: <output>_unsm/, <output>_mt/, <output>_stencil/, <output>_orig/
+ * The unsmeared baseline is the denominator for the elementwise ratio
+ * MF_smeared/MF_unsmeared. That ratio is the quantity that exposes a smearing
+ * behaving as an overall constant: a real smearing changes it element by
+ * element, one that has collapsed to a scalar leaves it flat.
+ *
+ * Start at --N 1. One iteration is analytic,
+ * MF(1) = MF(0) + coeff*<w|Gamma Laplacian|v> with coeff = alpha^2/(4N), so the
+ * two modules must agree to reduction order roundoff and a disagreement
+ * localises immediately. Then walk N up: a discrepancy appearing only at large
+ * N points at boundary or halo handling accumulating over iterations.
+ *
+ * orthog_axis is fixed at 3 throughout. A2ACovariantSmear ignores the parameter
+ * (its stencil hardcodes x, y, z and the -6 diagonal) while MT honours it, so
+ * the two agree only at 3 and any other value would compare different
+ * operators.
+ *
+ * Output: <output>_unsm/, and <output>_{mt,st}_{raw,stout,ape}/
  * Compare with h5diff, e.g.
- *   h5diff smear_out_mt/Gamma5_0_0_0.h5 smear_out_stencil/Gamma5_0_0_0.h5 \
+ *   h5diff smear_out_mt_ape/Gamma5_0_0_0.h5 smear_out_st_ape/Gamma5_0_0_0.h5 \
  *          /Gamma5_0_0_0 /Gamma5_0_0_0
- * or take the ratio against smear_out_unsm/ to see whether the smearing is
- * acting elementwise or as a constant.
+ * or take the ratio of any arm against smear_out_unsm/ to see whether the
+ * smearing is acting elementwise or as a constant.
  *
  * Usage:
- *   mpirun -n 1 ./Test_smear_compare --grid 4.4.4.8 --mpi 1.1.1.1 \
- *          --alpha 4.1 --N 1 --gauge unit
+ *   mpirun -n 1 ./Test_smear_compare --grid 4.4.4.8 --mpi 1.1.1.1 --N 1
  */
 
 #define HADRONS_A2AM_IO_TYPE ComplexD
@@ -62,6 +67,19 @@
 
 using namespace Grid;
 using namespace Hadrons;
+
+// APE mixing weight, and the stout equivalent. Not command line options: they
+// are not interchangeable with each other and tuning them is a source edit.
+// The APE alpha is dimensionless and does not scale with the lattice spacing.
+static const double APE_ALPHA = 0.615384615;
+static const double STOUT_RHO = 0.1;
+
+// One gauge field the vectors can be smeared with.
+struct GaugeArm
+{
+    std::string object;
+    std::string tag;
+};
 
 // One smearing module, with the parameters every arm shares. orthog_axis is
 // pinned here rather than passed in; see the header note.
@@ -83,9 +101,9 @@ static void addSmear(Application &application, const std::string &name,
     application.createModule<SmearModule>(name, par);
 }
 
-// An exact copy of an A2A vector array, used to hand the destructive modules
-// their own input. A2ACovariantSmearMT at alpha = 0 leaves the field untouched:
-// GaussianSmear forms coeff = alpha^2/(4N) = 0 and its iterations reduce to
+// An exact copy of an A2A vector array, used to hand A2ACovariantSmear its own
+// input. A2ACovariantSmearMT at alpha = 0 leaves the field untouched:
+// GaussianSmear forms coeff = alpha^2/(4N) = 0 and its single iteration is
 // chi = chi + 0*psi.
 static void addCopy(Application &application, const std::string &name,
                     const std::string &vecs, const std::string &gauge)
@@ -127,11 +145,9 @@ int main(int argc, char *argv[])
     Application application;
 
     // ------------------------------------------------------------------
-    // Global parameters. The scheduler is naive rather than genetic on
-    // purpose: A2ACovariantSmearOrig writes its result back into its input
-    // array and advertises only a scratch field as its output, so nothing in
-    // the dependency graph forces it to run before the meson field that reads
-    // that array. Insertion order is what makes the --orig arm correct.
+    // Global parameters. Naive scheduling for a deterministic module order
+    // across runs; the dependency graph is fully expressed, so it is a
+    // convenience rather than a correctness requirement.
     // ------------------------------------------------------------------
     Application::GlobalPar globalPar;
     globalPar.trajCounter.start       = 0;
@@ -155,14 +171,12 @@ int main(int argc, char *argv[])
     int          momShell    = 0;
     double       alpha       = 4.1;
     unsigned int nSmear      = 1;
+    // Gauge smearing steps, shared by the stout and APE arms so the two are
+    // compared at equal iteration count. 45 is 48I's 25 scaled as a^-2.
+    unsigned int nGauge      = 45;
     std::string  gammas      = "Gamma5";
-    std::string  gaugeKind   = "unit";
     std::string  output_path = "smear_out";
-    // A2ACovariantSmearOrig is opt-in: see the scheduler note above.
-    bool         doOrig      = false;
 
-    if (GridCmdOptionExists(argv, argv + argc, "--orig"))
-        doOrig      = true;
     if (GridCmdOptionExists(argv, argv + argc, "--Ni"))
         N_i         = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--Ni"));
     if (GridCmdOptionExists(argv, argv + argc, "--Nj"))
@@ -177,31 +191,33 @@ int main(int argc, char *argv[])
         alpha       = std::stod(GridCmdOptionPayload(argv, argv + argc, "--alpha"));
     if (GridCmdOptionExists(argv, argv + argc, "--N"))
         nSmear      = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--N"));
+    if (GridCmdOptionExists(argv, argv + argc, "--gaugeN"))
+        nGauge      = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--gaugeN"));
     if (GridCmdOptionExists(argv, argv + argc, "--gammas"))
         gammas      = cliListToPar(GridCmdOptionPayload(argv, argv + argc, "--gammas"));
-    if (GridCmdOptionExists(argv, argv + argc, "--gauge"))
-        gaugeKind   = GridCmdOptionPayload(argv, argv + argc, "--gauge");
     if (GridCmdOptionExists(argv, argv + argc, "--output"))
         output_path = GridCmdOptionPayload(argv, argv + argc, "--output");
 
     std::vector<std::string> momenta = momentumShells(momShell);
 
     // ------------------------------------------------------------------
-    // Gauge field, shared by every smearing module.
+    // The three gauge fields.
     // ------------------------------------------------------------------
-    if (gaugeKind == "unit")
-    {
-        application.createModule<MGauge::Unit>("gauge");
-    }
-    else if (gaugeKind == "random")
-    {
-        application.createModule<MGauge::Random>("gauge");
-    }
-    else
-    {
-        HADRONS_ERROR(Argument, "--gauge must be 'unit' or 'random', got '"
-                                + gaugeKind + "'");
-    }
+    application.createModule<MGauge::Random>("gauge_raw");
+
+    MGauge::StoutSmearingPar stoutPar;
+    stoutPar.gauge     = "gauge_raw";
+    stoutPar.steps     = nGauge;
+    stoutPar.orthogDim = "3";   // a string in this module's Par, not an int
+    stoutPar.rho       = STOUT_RHO;
+    application.createModule<MGauge::StoutSmearing>("gauge_stout", stoutPar);
+
+    MGauge::APESmearPar apePar;
+    apePar.gauge       = "gauge_raw";
+    apePar.alpha       = APE_ALPHA;
+    apePar.N           = nGauge;
+    apePar.orthog_axis = 3;
+    application.createModule<MGauge::APESmear>("gauge_ape", apePar);
 
     // ------------------------------------------------------------------
     // Random A2A vectors, generated once and referenced by name from every
@@ -215,57 +231,46 @@ int main(int argc, char *argv[])
     application.createModule<MUtilities::RandomFermions>("right", rvRight);
 
     // ------------------------------------------------------------------
-    // Unsmeared baseline. Also the denominator for the elementwise ratio.
+    // Unsmeared baseline, gauge independent.
     // ------------------------------------------------------------------
     addMesonField(application, "mf_unsm", "left", "right",
                   output_path + "_unsm", leftBlock, rightBlock, gammas, momenta);
 
     // ------------------------------------------------------------------
-    // A2ACovariantSmearMT. Non-destructive, so it reads the shared arrays.
+    // Both modules on each gauge field. MT is non-destructive and reads the
+    // shared arrays; A2ACovariantSmear std::moves its input away, so it gets
+    // private copies -- sharing an array with it would leave whichever arm ran
+    // second smearing an empty one.
     // ------------------------------------------------------------------
-    addSmear<MUtilities::A2ACovariantSmearMT,
-             MUtilities::A2ACovariantSmearMTPar>(application, "l_mt", "left",
-                                                 "gauge", alpha, nSmear);
-    addSmear<MUtilities::A2ACovariantSmearMT,
-             MUtilities::A2ACovariantSmearMTPar>(application, "r_mt", "right",
-                                                 "gauge", alpha, nSmear);
-    addMesonField(application, "mf_mt", "l_mt", "r_mt",
-                  output_path + "_mt", leftBlock, rightBlock, gammas, momenta);
+    const std::vector<GaugeArm> gauges = {{"gauge_raw",   "raw"},
+                                          {"gauge_stout", "stout"},
+                                          {"gauge_ape",   "ape"}};
 
-    // ------------------------------------------------------------------
-    // A2ACovariantSmear. std::move empties its input, so it gets private
-    // copies -- sharing "left"/"right" with it would leave whichever arm ran
-    // second smearing an empty array.
-    // ------------------------------------------------------------------
-    addCopy(application, "l_cp", "left",  "gauge");
-    addCopy(application, "r_cp", "right", "gauge");
-    addSmear<MUtilities::A2ACovariantSmear,
-             MUtilities::A2ACovariantSmearPar>(application, "l_st", "l_cp",
-                                               "gauge", alpha, nSmear);
-    addSmear<MUtilities::A2ACovariantSmear,
-             MUtilities::A2ACovariantSmearPar>(application, "r_st", "r_cp",
-                                               "gauge", alpha, nSmear);
-    addMesonField(application, "mf_stencil", "l_st", "r_st",
-                  output_path + "_stencil", leftBlock, rightBlock, gammas, momenta);
-
-    // ------------------------------------------------------------------
-    // A2ACovariantSmearOrig. Smears in place, so the meson field reads the
-    // copies the module was handed rather than the module's own name.
-    // ------------------------------------------------------------------
-    if (doOrig)
+    for (auto &g : gauges)
     {
-        addCopy(application, "l_cpo", "left",  "gauge");
-        addCopy(application, "r_cpo", "right", "gauge");
-        addSmear<MUtilities::A2ACovariantSmearOrig,
-                 MUtilities::A2ACovariantSmearOrigPar>(application, "l_or",
-                                                       "l_cpo", "gauge",
-                                                       alpha, nSmear);
-        addSmear<MUtilities::A2ACovariantSmearOrig,
-                 MUtilities::A2ACovariantSmearOrigPar>(application, "r_or",
-                                                       "r_cpo", "gauge",
-                                                       alpha, nSmear);
-        addMesonField(application, "mf_orig", "l_cpo", "r_cpo",
-                      output_path + "_orig", leftBlock, rightBlock, gammas, momenta);
+        addSmear<MUtilities::A2ACovariantSmearMT,
+                 MUtilities::A2ACovariantSmearMTPar>(
+            application, "l_mt_" + g.tag, "left", g.object, alpha, nSmear);
+        addSmear<MUtilities::A2ACovariantSmearMT,
+                 MUtilities::A2ACovariantSmearMTPar>(
+            application, "r_mt_" + g.tag, "right", g.object, alpha, nSmear);
+        addMesonField(application, "mf_mt_" + g.tag,
+                      "l_mt_" + g.tag, "r_mt_" + g.tag,
+                      output_path + "_mt_" + g.tag,
+                      leftBlock, rightBlock, gammas, momenta);
+
+        addCopy(application, "l_cp_" + g.tag, "left",  "gauge_raw");
+        addCopy(application, "r_cp_" + g.tag, "right", "gauge_raw");
+        addSmear<MUtilities::A2ACovariantSmear,
+                 MUtilities::A2ACovariantSmearPar>(
+            application, "l_st_" + g.tag, "l_cp_" + g.tag, g.object, alpha, nSmear);
+        addSmear<MUtilities::A2ACovariantSmear,
+                 MUtilities::A2ACovariantSmearPar>(
+            application, "r_st_" + g.tag, "r_cp_" + g.tag, g.object, alpha, nSmear);
+        addMesonField(application, "mf_st_" + g.tag,
+                      "l_st_" + g.tag, "r_st_" + g.tag,
+                      output_path + "_st_" + g.tag,
+                      leftBlock, rightBlock, gammas, momenta);
     }
 
     application.run();
