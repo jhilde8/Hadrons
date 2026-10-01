@@ -26,6 +26,13 @@
 using namespace Grid;
 using namespace Hadrons;
 using namespace MSolver;
+template class HADRONS_NAMESPACE::MSolver::TA2AHighModeVBinned<FIMPL, 1>;
+template class HADRONS_NAMESPACE::MSolver::TA2AHighModeVBinned<FIMPL, 2>;
+template class HADRONS_NAMESPACE::MSolver::TA2AHighModeVBinned<FIMPL, 4>;
+template class HADRONS_NAMESPACE::MSolver::TA2AHighModeVBinned<FIMPL, 8>;
+template class HADRONS_NAMESPACE::MSolver::TA2AHighModeVBinned<FIMPL, 12>;
+template class HADRONS_NAMESPACE::MSolver::TA2AHighModeVBinned<FIMPL, 16>;
+template class HADRONS_NAMESPACE::MSolver::TA2AHighModeVBinned<FIMPL, 32>;
 template class HADRONS_NAMESPACE::MSolver::TA2AHighModeVBinned<FIMPL, 64>;
 template class HADRONS_NAMESPACE::MSolver::TA2AHighModeVBinned<FIMPL, 96>;
 template class HADRONS_NAMESPACE::MSolver::TA2AHighModeVBinned<FIMPL, 128>;

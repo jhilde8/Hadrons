@@ -190,7 +190,7 @@ void TMixedPrecisionRBPrecCGBatched<FImplInner, FImplOuter>::setup(void)
     LOG(Message) << "Setting up Schur red-black preconditioned mixed-precision "
                  << "CG for inner/outer action '" << par().innerAction 
                  << "'/'" << par().outerAction << "', residual "
-                 << par().residual << ", and maximum inner/outer iteration " 
+                 << par().residual << ", and maximum inner/outer iteration "
                  << par().maxInnerIteration << "/" << par().maxOuterIteration
                  << std::endl;
 

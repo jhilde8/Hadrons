@@ -35,49 +35,21 @@
 BEGIN_HADRONS_NAMESPACE
 
 /******************************************************************************
- *  Common interface for the Schur-convention-specific (DiagOne/DiagTwo)     *
- *  A2A vector constructions below. Lets a module hold a single              *
- *  std::unique_ptr<A2AVectorsSchurBase<FImpl>>, chosen and constructed at   *
- *  runtime from an XML schurConvention string in setup() (mirroring how    *
- *  MSolver::MixedPrecisionRBPrecCG already picks a concrete                 *
- *  SchurDiagOneOperator/SchurDiagTwoOperator                                *
- *  at runtime), rather than needing the concrete type fixed at compile     *
- *  time. The high-mode methods never depend on the Schur convention (see   *
- *  A2AVectorsSchurDiagTwo/One below -- neither one's makeHighMode* touches *
- *  op_), so they are implemented once, here, rather than duplicated in     *
- *  both derived classes; only the low-mode methods are pure virtual.       *
+ *  High-mode A2A vector construction. Entirely independent of the Schur      *
+ *  convention: V is whatever the injected solver returns and W is the raw    *
+ *  noise, so nothing here builds or touches a Schur operator. Kept separate  *
+ *  from the low-mode classes below so that a high-mode-only module (e.g.     *
+ *  MSolver::A2AHighModeVBinned) does not allocate their four red-black 5D    *
+ *  scratch fields, which only the low-mode reconstruction needs.             *
  ******************************************************************************/
 template <typename FImpl>
-class A2AVectorsSchurBase
+class A2AHighModes
 {
 public:
     FERM_TYPE_ALIASES(FImpl,);
     SOLVER_TYPE_ALIASES(FImpl,);
 public:
-    // Action-only construction is for low-mode-only users (e.g.
-    // MUtilities::A2ALowModeCoarseBinned): nothing in the low-mode methods or
-    // op() ever touches the solver, so those modules no longer have to wire a
-    // dummy solver dependency through their XML just to satisfy this
-    // constructor. Calling makeHighModeV/V5D on an action-only instance is a
-    // hard error (see makeHighModeV).
-    A2AVectorsSchurBase(FMat &action);
-    A2AVectorsSchurBase(FMat &action, Solver &solver);
-    virtual ~A2AVectorsSchurBase(void) = default;
-    virtual void makeLowModeV(FermionField &vout,
-                              const FermionField &evec, const Real &eval) = 0;
-    virtual void makeLowModeV5D(FermionField &vout_4d, FermionField &vout_5d,
-                                const FermionField &evec, const Real &eval) = 0;
-    virtual void makeLowModeW(FermionField &wout,
-                              const FermionField &evec, const Real &eval) = 0;
-    virtual void makeLowModeW5D(FermionField &wout_4d, FermionField &wout_5d,
-                                const FermionField &evec, const Real &eval) = 0;
-    // Exposes the concrete DiagOne/DiagTwo Schur operator used internally by
-    // makeLowModeW/op_, so callers (e.g. A2ALowModeCoarseBinned's in-program
-    // eigenvector check) can validate evec_i against the exact same operator
-    // this class uses to build V/W, rather than independently re-deriving
-    // which SchurDiagOneOperator/SchurDiagTwoOperator to build from a second
-    // copy of the schurConvention dispatch logic.
-    virtual SchurOperatorBase<FermionField>& op(void) = 0;
+    A2AHighModes(FMat &action, Solver &solver);
     void makeHighModeV(FermionField &vout, const FermionField &noise);
     void makeHighModeV5D(FermionField &vout_4d, FermionField &vout_5d,
                          const FermionField &noise_5d);
@@ -86,73 +58,97 @@ public:
                          const FermionField &noise_5d);
 protected:
     FMat         &action_;
-    // Pointer, not reference, so the action-only constructor above can leave
-    // it null; makeHighModeV checks before dereferencing.
-    Solver       *solver_;
+    Solver       &solver_;
     GridBase     *fGrid_;
     FermionField tmp5_;
 };
 
 /******************************************************************************
- *                 Class to generate V & W all-to-all vectors                 *
+ *  Shared state for the Schur-convention-specific low-mode constructions     *
+ *  below. The convention is a compile-time property of the build             *
+ *  (HADRONS_DEFAULT_SCHUR in Global.hpp, one build per ensemble), so this is *
+ *  a plain base holding the fields both conventions need -- there is no      *
+ *  runtime dispatch and therefore nothing virtual. Modules reach a concrete  *
+ *  class through HADRONS_DEFAULT_SCHUR_A2A and never name a convention.      *
  ******************************************************************************/
 template <typename FImpl>
-class A2AVectorsSchurDiagTwo : public A2AVectorsSchurBase<FImpl>
+class A2ALowModesSchurBase
 {
 public:
     FERM_TYPE_ALIASES(FImpl,);
     SOLVER_TYPE_ALIASES(FImpl,);
 public:
-    A2AVectorsSchurDiagTwo(FMat &action);
-    A2AVectorsSchurDiagTwo(FMat &action, Solver &solver);
-    ~A2AVectorsSchurDiagTwo(void) override = default;
+    A2ALowModesSchurBase(FMat &action);
+protected:
+    FMat         &action_;
+    GridBase     *fGrid_, *frbGrid_;
+    FermionField tmp5_;
+    FermionField src_o_, sol_e_, sol_o_, tmp_;
+};
+
+/******************************************************************************
+ *              Low-mode V & W, DiagTwo Schur convention                      *
+ ******************************************************************************/
+template <typename FImpl>
+class A2ALowModesSchurDiagTwo : public A2ALowModesSchurBase<FImpl>
+{
+public:
+    FERM_TYPE_ALIASES(FImpl,);
+    SOLVER_TYPE_ALIASES(FImpl,);
+public:
+    A2ALowModesSchurDiagTwo(FMat &action);
     void makeLowModeV(FermionField &vout,
-                      const FermionField &evec, const Real &eval) override;
+                      const FermionField &evec, const Real &eval);
     void makeLowModeV5D(FermionField &vout_4d, FermionField &vout_5d,
-                        const FermionField &evec, const Real &eval) override;
+                        const FermionField &evec, const Real &eval);
     void makeLowModeW(FermionField &wout,
-                      const FermionField &evec, const Real &eval) override;
+                      const FermionField &evec, const Real &eval);
     void makeLowModeW5D(FermionField &wout_4d, FermionField &wout_5d,
-                        const FermionField &evec, const Real &eval) override;
-    SchurOperatorBase<FermionField>& op(void) override;
+                        const FermionField &evec, const Real &eval);
+    // Exposes the Schur operator used internally by makeLowModeW/op_, so
+    // callers (e.g. A2ALowModeCoarseBinned's in-program eigenvector check) can
+    // validate evec_i against the exact same operator this class uses to build
+    // V/W rather than building a second one themselves.
+    SchurOperatorBase<FermionField>& op(void);
 private:
-    using A2AVectorsSchurBase<FImpl>::action_;
-    using A2AVectorsSchurBase<FImpl>::solver_;
-    using A2AVectorsSchurBase<FImpl>::fGrid_;
-    using A2AVectorsSchurBase<FImpl>::tmp5_;
-    GridBase                                 *frbGrid_, *gGrid_;
-    bool                                     is5d_;
-    FermionField                             src_o_, sol_e_, sol_o_, tmp_;
+    using A2ALowModesSchurBase<FImpl>::action_;
+    using A2ALowModesSchurBase<FImpl>::fGrid_;
+    using A2ALowModesSchurBase<FImpl>::frbGrid_;
+    using A2ALowModesSchurBase<FImpl>::tmp5_;
+    using A2ALowModesSchurBase<FImpl>::src_o_;
+    using A2ALowModesSchurBase<FImpl>::sol_e_;
+    using A2ALowModesSchurBase<FImpl>::sol_o_;
+    using A2ALowModesSchurBase<FImpl>::tmp_;
     SchurDiagTwoOperator<FMat, FermionField> op_;
 };
 
 template <typename FImpl>
-class A2AVectorsSchurDiagOne : public A2AVectorsSchurBase<FImpl>
+class A2ALowModesSchurDiagOne : public A2ALowModesSchurBase<FImpl>
 {
 public:
     FERM_TYPE_ALIASES(FImpl,);
     SOLVER_TYPE_ALIASES(FImpl,);
 public:
-    A2AVectorsSchurDiagOne(FMat &action);
-    A2AVectorsSchurDiagOne(FMat &action, Solver &solver);
-    ~A2AVectorsSchurDiagOne(void) override = default;
+    A2ALowModesSchurDiagOne(FMat &action);
     void makeLowModeV(FermionField &vout,
-                      const FermionField &evec, const Real &eval) override;
+                      const FermionField &evec, const Real &eval);
     void makeLowModeV5D(FermionField &vout_4d, FermionField &vout_5d,
-                        const FermionField &evec, const Real &eval) override;
+                        const FermionField &evec, const Real &eval);
     void makeLowModeW(FermionField &wout,
-                      const FermionField &evec, const Real &eval) override;
+                      const FermionField &evec, const Real &eval);
     void makeLowModeW5D(FermionField &wout_4d, FermionField &wout_5d,
-                        const FermionField &evec, const Real &eval) override;
-    SchurOperatorBase<FermionField>& op(void) override;
+                        const FermionField &evec, const Real &eval);
+    // See the note on A2ALowModesSchurDiagTwo::op().
+    SchurOperatorBase<FermionField>& op(void);
 private:
-    using A2AVectorsSchurBase<FImpl>::action_;
-    using A2AVectorsSchurBase<FImpl>::solver_;
-    using A2AVectorsSchurBase<FImpl>::fGrid_;
-    using A2AVectorsSchurBase<FImpl>::tmp5_;
-    GridBase                                 *frbGrid_, *gGrid_;
-    bool                                     is5d_;
-    FermionField                             src_o_, sol_e_, sol_o_, tmp_;
+    using A2ALowModesSchurBase<FImpl>::action_;
+    using A2ALowModesSchurBase<FImpl>::fGrid_;
+    using A2ALowModesSchurBase<FImpl>::frbGrid_;
+    using A2ALowModesSchurBase<FImpl>::tmp5_;
+    using A2ALowModesSchurBase<FImpl>::src_o_;
+    using A2ALowModesSchurBase<FImpl>::sol_e_;
+    using A2ALowModesSchurBase<FImpl>::sol_o_;
+    using A2ALowModesSchurBase<FImpl>::tmp_;
     SchurDiagOneOperator<FMat, FermionField> op_;
 };
 
@@ -233,41 +229,27 @@ private:
 };
 
 /******************************************************************************
- *                 A2AVectorsSchurBase template implementation                *
+ *                    A2AHighModes template implementation                    *
  ******************************************************************************/
 template <typename FImpl>
-A2AVectorsSchurBase<FImpl>::A2AVectorsSchurBase(FMat &action)
+A2AHighModes<FImpl>::A2AHighModes(FMat &action, Solver &solver)
 : action_(action)
-, solver_(nullptr)
+, solver_(solver)
 , fGrid_(action_.FermionGrid())
 , tmp5_(fGrid_)
 {}
 
 template <typename FImpl>
-A2AVectorsSchurBase<FImpl>::A2AVectorsSchurBase(FMat &action, Solver &solver)
-: action_(action)
-, solver_(&solver)
-, fGrid_(action_.FermionGrid())
-, tmp5_(fGrid_)
-{}
-
-template <typename FImpl>
-void A2AVectorsSchurBase<FImpl>::makeHighModeV(FermionField &vout,
-                                               const FermionField &noise)
+void A2AHighModes<FImpl>::makeHighModeV(FermionField &vout,
+                                        const FermionField &noise)
 {
-    if (solver_ == nullptr)
-    {
-        HADRONS_ERROR(Definition, "makeHighModeV called on an action-only "
-                      "A2AVectorsSchurBase (no solver was provided at "
-                      "construction)");
-    }
-    (*solver_)(vout, noise);
+    solver_(vout, noise);
 }
 
 template <typename FImpl>
-void A2AVectorsSchurBase<FImpl>::makeHighModeV5D(FermionField &vout_4d,
-                                                 FermionField &vout_5d,
-                                                 const FermionField &noise)
+void A2AHighModes<FImpl>::makeHighModeV5D(FermionField &vout_4d,
+                                          FermionField &vout_5d,
+                                          const FermionField &noise)
 {
     if (noise.Grid()->Dimensions() == fGrid_->Dimensions() - 1)
     {
@@ -282,16 +264,16 @@ void A2AVectorsSchurBase<FImpl>::makeHighModeV5D(FermionField &vout_4d,
 }
 
 template <typename FImpl>
-void A2AVectorsSchurBase<FImpl>::makeHighModeW(FermionField &wout,
-                                               const FermionField &noise)
+void A2AHighModes<FImpl>::makeHighModeW(FermionField &wout,
+                                        const FermionField &noise)
 {
     wout = noise;
 }
 
 template <typename FImpl>
-void A2AVectorsSchurBase<FImpl>::makeHighModeW5D(FermionField &wout_4d,
-                                                 FermionField &wout_5d,
-                                                 const FermionField &noise)
+void A2AHighModes<FImpl>::makeHighModeW5D(FermionField &wout_4d,
+                                          FermionField &wout_5d,
+                                          const FermionField &noise)
 {
     if (noise.Grid()->Dimensions() == fGrid_->Dimensions() - 1)
     {
@@ -306,34 +288,31 @@ void A2AVectorsSchurBase<FImpl>::makeHighModeW5D(FermionField &wout_4d,
 }
 
 /******************************************************************************
- *               A2AVectorsSchurDiagTwo template implementation               *
+ *                A2ALowModesSchurBase template implementation                *
  ******************************************************************************/
 template <typename FImpl>
-A2AVectorsSchurDiagTwo<FImpl>::A2AVectorsSchurDiagTwo(FMat &action)
-: A2AVectorsSchurBase<FImpl>(action)
-, frbGrid_(action.FermionRedBlackGrid())
-, gGrid_(action.GaugeGrid())
+A2ALowModesSchurBase<FImpl>::A2ALowModesSchurBase(FMat &action)
+: action_(action)
+, fGrid_(action_.FermionGrid())
+, frbGrid_(action_.FermionRedBlackGrid())
+, tmp5_(fGrid_)
 , src_o_(frbGrid_)
 , sol_e_(frbGrid_)
 , sol_o_(frbGrid_)
 , tmp_(frbGrid_)
+{}
+
+/******************************************************************************
+ *               A2ALowModesSchurDiagTwo template implementation               *
+ ******************************************************************************/
+template <typename FImpl>
+A2ALowModesSchurDiagTwo<FImpl>::A2ALowModesSchurDiagTwo(FMat &action)
+: A2ALowModesSchurBase<FImpl>(action)
 , op_(action)
 {}
 
 template <typename FImpl>
-A2AVectorsSchurDiagTwo<FImpl>::A2AVectorsSchurDiagTwo(FMat &action, Solver &solver)
-: A2AVectorsSchurBase<FImpl>(action, solver)
-, frbGrid_(action.FermionRedBlackGrid())
-, gGrid_(action.GaugeGrid())
-, src_o_(frbGrid_)
-, sol_e_(frbGrid_)
-, sol_o_(frbGrid_)
-, tmp_(frbGrid_)
-, op_(action)
-{}
-
-template <typename FImpl>
-void A2AVectorsSchurDiagTwo<FImpl>::makeLowModeV(FermionField &vout, const FermionField &evec, const Real &eval)
+void A2ALowModesSchurDiagTwo<FImpl>::makeLowModeV(FermionField &vout, const FermionField &evec, const Real &eval)
 {
     src_o_ = evec;
     src_o_.Checkerboard() = Odd;
@@ -366,14 +345,14 @@ void A2AVectorsSchurDiagTwo<FImpl>::makeLowModeV(FermionField &vout, const Fermi
 }
 
 template <typename FImpl>
-void A2AVectorsSchurDiagTwo<FImpl>::makeLowModeV5D(FermionField &vout_4d, FermionField &vout_5d, const FermionField &evec, const Real &eval)
+void A2ALowModesSchurDiagTwo<FImpl>::makeLowModeV5D(FermionField &vout_4d, FermionField &vout_5d, const FermionField &evec, const Real &eval)
 {
     makeLowModeV(vout_5d, evec, eval);
     action_.ExportPhysicalFermionSolution(vout_5d, vout_4d);
 }
 
 template <typename FImpl>
-void A2AVectorsSchurDiagTwo<FImpl>::makeLowModeW(FermionField &wout, const FermionField &evec, const Real &eval)
+void A2ALowModesSchurDiagTwo<FImpl>::makeLowModeW(FermionField &wout, const FermionField &evec, const Real &eval)
 {
     src_o_ = evec;
     src_o_.Checkerboard() = Odd;
@@ -403,7 +382,7 @@ void A2AVectorsSchurDiagTwo<FImpl>::makeLowModeW(FermionField &wout, const Fermi
 }
 
 template <typename FImpl>
-void A2AVectorsSchurDiagTwo<FImpl>::makeLowModeW5D(FermionField &wout_4d, 
+void A2ALowModesSchurDiagTwo<FImpl>::makeLowModeW5D(FermionField &wout_4d, 
                                                    FermionField &wout_5d, 
                                                    const FermionField &evec, 
                                                    const Real &eval)
@@ -414,40 +393,22 @@ void A2AVectorsSchurDiagTwo<FImpl>::makeLowModeW5D(FermionField &wout_4d,
 }
 
 template <typename FImpl>
-SchurOperatorBase<typename FImpl::FermionField>& A2AVectorsSchurDiagTwo<FImpl>::op(void)
+SchurOperatorBase<typename FImpl::FermionField>& A2ALowModesSchurDiagTwo<FImpl>::op(void)
 {
     return op_;
 }
 
 /******************************************************************************
- *               A2AVectorsSchurDiagOne template implementation               *
+ *               A2ALowModesSchurDiagOne template implementation               *
  ******************************************************************************/
 template <typename FImpl>
-A2AVectorsSchurDiagOne<FImpl>::A2AVectorsSchurDiagOne(FMat &action)
-: A2AVectorsSchurBase<FImpl>(action)
-, frbGrid_(action.FermionRedBlackGrid())
-, gGrid_(action.GaugeGrid())
-, src_o_(frbGrid_)
-, sol_e_(frbGrid_)
-, sol_o_(frbGrid_)
-, tmp_(frbGrid_)
+A2ALowModesSchurDiagOne<FImpl>::A2ALowModesSchurDiagOne(FMat &action)
+: A2ALowModesSchurBase<FImpl>(action)
 , op_(action)
 {}
 
 template <typename FImpl>
-A2AVectorsSchurDiagOne<FImpl>::A2AVectorsSchurDiagOne(FMat &action, Solver &solver)
-: A2AVectorsSchurBase<FImpl>(action, solver)
-, frbGrid_(action.FermionRedBlackGrid())
-, gGrid_(action.GaugeGrid())
-, src_o_(frbGrid_)
-, sol_e_(frbGrid_)
-, sol_o_(frbGrid_)
-, tmp_(frbGrid_)
-, op_(action)
-{}
-
-template <typename FImpl>
-void A2AVectorsSchurDiagOne<FImpl>::makeLowModeV(FermionField &vout, const FermionField &evec, const Real &eval)
+void A2ALowModesSchurDiagOne<FImpl>::makeLowModeV(FermionField &vout, const FermionField &evec, const Real &eval)
 {
     src_o_ = evec;
     src_o_.Checkerboard() = Odd;
@@ -476,14 +437,14 @@ void A2AVectorsSchurDiagOne<FImpl>::makeLowModeV(FermionField &vout, const Fermi
 }
 
 template <typename FImpl>
-void A2AVectorsSchurDiagOne<FImpl>::makeLowModeV5D(FermionField &vout_4d, FermionField &vout_5d, const FermionField &evec, const Real &eval)
+void A2ALowModesSchurDiagOne<FImpl>::makeLowModeV5D(FermionField &vout_4d, FermionField &vout_5d, const FermionField &evec, const Real &eval)
 {
     makeLowModeV(vout_5d, evec, eval);
     action_.ExportPhysicalFermionSolution(vout_5d, vout_4d);
 }
 
 template <typename FImpl>
-void A2AVectorsSchurDiagOne<FImpl>::makeLowModeW(FermionField &wout, const FermionField &evec, const Real &eval)
+void A2ALowModesSchurDiagOne<FImpl>::makeLowModeW(FermionField &wout, const FermionField &evec, const Real &eval)
 {
     src_o_ = evec;
     src_o_.Checkerboard() = Odd;
@@ -515,7 +476,7 @@ void A2AVectorsSchurDiagOne<FImpl>::makeLowModeW(FermionField &wout, const Fermi
 }
 
 template <typename FImpl>
-void A2AVectorsSchurDiagOne<FImpl>::makeLowModeW5D(FermionField &wout_4d,
+void A2ALowModesSchurDiagOne<FImpl>::makeLowModeW5D(FermionField &wout_4d,
                                                    FermionField &wout_5d,
                                                    const FermionField &evec,
                                                    const Real &eval)
@@ -526,7 +487,7 @@ void A2AVectorsSchurDiagOne<FImpl>::makeLowModeW5D(FermionField &wout_4d,
 }
 
 template <typename FImpl>
-SchurOperatorBase<typename FImpl::FermionField>& A2AVectorsSchurDiagOne<FImpl>::op(void)
+SchurOperatorBase<typename FImpl::FermionField>& A2ALowModesSchurDiagOne<FImpl>::op(void)
 {
     return op_;
 }

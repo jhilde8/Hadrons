@@ -90,7 +90,8 @@ public:
     virtual void execute(void);
 };
 
-MODULE_REGISTER_TMP(LoadCombinedA2AVecsW200, ARG(TLoadCombinedA2AVecsW<FIMPL, 200>), MIO);
+MODULE_REGISTER_TMP(LoadCombinedA2AVecsW, ARG(TLoadCombinedA2AVecsW<FIMPL, 0>), MIO);
+MODULE_REGISTER_TMP(LoadCombinedA2AVecsW200,ARG(TLoadCombinedA2AVecsW<FIMPL, 200>), MIO);
 MODULE_REGISTER_TMP(LoadCombinedA2AVecsW100, ARG(TLoadCombinedA2AVecsW<FIMPL, 100>), MIO);
 MODULE_REGISTER_TMP(LoadZCombinedA2AVecsW200, ARG(TLoadCombinedA2AVecsW<ZFIMPL, 200>), MIO);
 MODULE_REGISTER_TMP(LoadZCombinedA2AVecsW100, ARG(TLoadCombinedA2AVecsW<ZFIMPL, 100>), MIO);
@@ -127,7 +128,16 @@ void TLoadCombinedA2AVecsW<FImpl, lowBinSize>::setup(void)
 {
     auto &noise = envGet(SpinColorDiagonalNoise<FImpl>, par().noise);
 
-    if (par().nLow % lowBinSize != 0)
+    if constexpr (lowBinSize == 0)
+    {
+        if (par().nLow > 0)
+        {
+            HADRONS_ERROR(Argument, "nLow = " + std::to_string(par().nLow)
+                                    + " but this high-only loader has no "
+                                    "low-mode block (low bin size 0)");
+        }
+    }
+    else if (par().nLow % lowBinSize != 0)
     {
         HADRONS_ERROR(Size, "nLow (" + std::to_string(par().nLow)
                             + ") is not a multiple of the low-mode bin size ("
@@ -160,26 +170,30 @@ void TLoadCombinedA2AVecsW<FImpl, lowBinSize>::execute(void)
     const int    nsc    = Ns*FImpl::Dimension;
     unsigned int offset = 0;
 
-    if (par().nLow > 0)
+    // Discarded for lowBinSize = 0, so iVector<SiteSpinor, 0> is never built.
+    if constexpr (lowBinSize > 0)
     {
-        int Nb = par().nLow / lowBinSize;
-        // One bin resident, not Nb. setup() has already allocated the whole
-        // output array, and A2AVectorsIo::read opens, reads and closes one file
-        // per element anyway, so unpacking each bin as it lands is the same IO
-        // for a factor lowBinSize less staging. Slots and order are unchanged:
-        // the bin index moves from UnpackBinnedVectors' own loop into offset.
-        std::vector<Lattice<LowBinnedSpinor>> bvec(1, envGetGrid(Lattice<LowBinnedSpinor>));
-
-        LOG(Message) << "Loading " << par().nLow << " low-mode A2A vectors from "
-                     << Nb << " files of " << lowBinSize << " binned vectors" << std::endl;
-        for (int i = 0; i < Nb; ++i)
+        if (par().nLow > 0)
         {
-            A2AVectorsIo::readElement(par().lowFilestem, bvec[0], i,
-                                      vm().getTrajectory());
-            A2Autils<FImpl>::template UnpackBinnedVectors<lowBinSize>(
-                out, offset + i*lowBinSize, bvec);
+            int Nb = par().nLow / lowBinSize;
+            // One bin resident, not Nb. setup() has already allocated the whole
+            // output array, and A2AVectorsIo::read opens, reads and closes one file
+            // per element anyway, so unpacking each bin as it lands is the same IO
+            // for a factor lowBinSize less staging. Slots and order are unchanged:
+            // the bin index moves from UnpackBinnedVectors' own loop into offset.
+            std::vector<Lattice<LowBinnedSpinor>> bvec(1, envGetGrid(Lattice<LowBinnedSpinor>));
+
+            LOG(Message) << "Loading " << par().nLow << " low-mode A2A vectors from "
+                         << Nb << " files of " << lowBinSize << " binned vectors" << std::endl;
+            for (int i = 0; i < Nb; ++i)
+            {
+                A2AVectorsIo::readElement(par().lowFilestem, bvec[0], i,
+                                          vm().getTrajectory());
+                A2Autils<FImpl>::template UnpackBinnedVectors<lowBinSize>(
+                    out, offset + i*lowBinSize, bvec);
+            }
+            offset += par().nLow;
         }
-        offset += par().nLow;
     }
 
     LOG(Message) << "Expanding noise '" << par().noise << "' into "

@@ -73,12 +73,7 @@ class TA2AHighModeVBinned : public Module<A2AHighModeVBinnedPar>
 public:
     FERM_TYPE_ALIASES(FImpl,);
     SOLVER_TYPE_ALIASES(FImpl,);
-    // The concrete Schur class is irrelevant here: this module only calls the
-    // convention-blind high-mode methods (a plain solver invocation), and the
-    // solve's own convention is baked into the injected solver object. DiagOne
-    // is written out (the abstract base cannot be instantiated) to match the
-    // 64I production convention, but any derived class gives identical output.
-    typedef A2AVectorsSchurDiagOne<FImpl> A2A;
+    typedef A2AHighModes<FImpl> A2A;
     typedef typename FImpl::SiteSpinor::vector_type vector_type;
     typedef iVector<iVector<iVector<vector_type, Nc>, Ns>, binSize> SiteSpinorSet;
 public:
@@ -102,6 +97,20 @@ private:
     // bins computed by this run, validated against the noise size
     BinRange binRange(unsigned int fermSize);
 };
+MODULE_REGISTER_TMP(A2AHighModeVBinned1,
+    ARG(TA2AHighModeVBinned<FIMPL, 1>), MSolver);
+MODULE_REGISTER_TMP(A2AHighModeVBinned2,
+    ARG(TA2AHighModeVBinned<FIMPL, 2>), MSolver);
+MODULE_REGISTER_TMP(A2AHighModeVBinned4,
+    ARG(TA2AHighModeVBinned<FIMPL, 4>), MSolver);
+MODULE_REGISTER_TMP(A2AHighModeVBinned8,
+    ARG(TA2AHighModeVBinned<FIMPL, 8>), MSolver);
+MODULE_REGISTER_TMP(A2AHighModeVBinned12,
+    ARG(TA2AHighModeVBinned<FIMPL, 12>), MSolver);
+MODULE_REGISTER_TMP(A2AHighModeVBinned16,
+    ARG(TA2AHighModeVBinned<FIMPL, 16>), MSolver);
+MODULE_REGISTER_TMP(A2AHighModeVBinned32,
+    ARG(TA2AHighModeVBinned<FIMPL, 32>), MSolver);
 MODULE_REGISTER_TMP(A2AHighModeVBinned64,
     ARG(TA2AHighModeVBinned<FIMPL, 64>), MSolver);
 MODULE_REGISTER_TMP(A2AHighModeVBinned96,

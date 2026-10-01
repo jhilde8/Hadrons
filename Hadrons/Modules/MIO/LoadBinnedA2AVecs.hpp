@@ -73,6 +73,13 @@ public:
     virtual void execute(void);
 };
 
+MODULE_REGISTER_TMP(LoadBinnedA2AVecs1, ARG(TLoadBinnedA2AVecs<FIMPL, 1>), MIO);
+MODULE_REGISTER_TMP(LoadBinnedA2AVecs2, ARG(TLoadBinnedA2AVecs<FIMPL, 2>), MIO);
+MODULE_REGISTER_TMP(LoadBinnedA2AVecs4, ARG(TLoadBinnedA2AVecs<FIMPL, 4>), MIO);
+MODULE_REGISTER_TMP(LoadBinnedA2AVecs8, ARG(TLoadBinnedA2AVecs<FIMPL, 8>), MIO);
+MODULE_REGISTER_TMP(LoadBinnedA2AVecs12, ARG(TLoadBinnedA2AVecs<FIMPL, 12>), MIO);
+MODULE_REGISTER_TMP(LoadBinnedA2AVecs16, ARG(TLoadBinnedA2AVecs<FIMPL, 16>), MIO);
+MODULE_REGISTER_TMP(LoadBinnedA2AVecs32, ARG(TLoadBinnedA2AVecs<FIMPL, 32>), MIO);
 MODULE_REGISTER_TMP(LoadBinnedA2AVecs48, ARG(TLoadBinnedA2AVecs<FIMPL, 48>), MIO);
 MODULE_REGISTER_TMP(LoadBinnedA2AVecs64, ARG(TLoadBinnedA2AVecs<FIMPL, 64>), MIO);
 MODULE_REGISTER_TMP(LoadBinnedA2AVecs96, ARG(TLoadBinnedA2AVecs<FIMPL, 96>), MIO);

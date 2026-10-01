@@ -39,7 +39,9 @@ BEGIN_HADRONS_NAMESPACE
  *  low modes (nLow > 0) followed by one or more blocks of high modes, one   *
  *  per hit -- e.g. light gets low modes + N hits of high modes; strange/    *
  *  charm (no low modes, nLow = 0, lowFilestem unused) get just N hits of    *
- *  high modes concatenated. Every vector is read from disk straight into    *
+ *  high modes concatenated. lowBinSize = 0 compiles the low-mode block out  *
+ *  entirely (high-only variants, nLow must then be 0 or absent from XML).   *
+ *  Every vector is read from disk straight into                             *
  *  its final resting slot of one array allocated up front -- unlike         *
  *  Load+Load+...+MUtilities::CombineA2AVecs, there are no per-source        *
  *  temporary arrays and no extra copy pass to splice them together after.  *
@@ -105,7 +107,16 @@ public:
     virtual void execute(void);
 };
 
-MODULE_REGISTER_TMP(LoadCombinedA2AVecsV200x128, ARG(TLoadCombinedA2AVecsV<FIMPL, 200, 128>), MIO);
+MODULE_REGISTER_TMP(LoadCombinedA2AVecsV1,   ARG(TLoadCombinedA2AVecsV<FIMPL, 0, 1>),   MIO);
+MODULE_REGISTER_TMP(LoadCombinedA2AVecsV2,   ARG(TLoadCombinedA2AVecsV<FIMPL, 0, 2>),   MIO);
+MODULE_REGISTER_TMP(LoadCombinedA2AVecsV4,   ARG(TLoadCombinedA2AVecsV<FIMPL, 0, 4>),   MIO);
+MODULE_REGISTER_TMP(LoadCombinedA2AVecsV8,   ARG(TLoadCombinedA2AVecsV<FIMPL, 0, 8>),   MIO);
+MODULE_REGISTER_TMP(LoadCombinedA2AVecsV12,  ARG(TLoadCombinedA2AVecsV<FIMPL, 0, 12>),  MIO);
+MODULE_REGISTER_TMP(LoadCombinedA2AVecsV16,  ARG(TLoadCombinedA2AVecsV<FIMPL, 0, 16>),  MIO);
+MODULE_REGISTER_TMP(LoadCombinedA2AVecsV32,  ARG(TLoadCombinedA2AVecsV<FIMPL, 0, 32>),  MIO);
+MODULE_REGISTER_TMP(LoadCombinedA2AVecsV64,  ARG(TLoadCombinedA2AVecsV<FIMPL, 0, 64>),  MIO);
+MODULE_REGISTER_TMP(LoadCombinedA2AVecsV128, ARG(TLoadCombinedA2AVecsV<FIMPL, 0, 128>), MIO);
+MODULE_REGISTER_TMP(LoadCombinedA2AVecsV200x128,ARG(TLoadCombinedA2AVecsV<FIMPL, 200, 128>), MIO);
 MODULE_REGISTER_TMP(LoadCombinedA2AVecsV100x128, ARG(TLoadCombinedA2AVecsV<FIMPL, 100, 128>), MIO);
 MODULE_REGISTER_TMP(LoadCombinedA2AVecsV200x96,  ARG(TLoadCombinedA2AVecsV<FIMPL, 200, 96>),  MIO);
 MODULE_REGISTER_TMP(LoadCombinedA2AVecsV100x96,  ARG(TLoadCombinedA2AVecsV<FIMPL, 100, 96>),  MIO);
@@ -140,7 +151,16 @@ std::vector<std::string> TLoadCombinedA2AVecsV<FImpl, lowBinSize, highBinSize>::
 template <typename FImpl, int lowBinSize, int highBinSize>
 void TLoadCombinedA2AVecsV<FImpl, lowBinSize, highBinSize>::setup(void)
 {
-    if (par().nLow % lowBinSize != 0)
+    if constexpr (lowBinSize == 0)
+    {
+        if (par().nLow > 0)
+        {
+            HADRONS_ERROR(Argument, "nLow = " + std::to_string(par().nLow)
+                                    + " but this high-only loader has no "
+                                    "low-mode block (low bin size 0)");
+        }
+    }
+    else if (par().nLow % lowBinSize != 0)
     {
         HADRONS_ERROR(Size, "nLow (" + std::to_string(par().nLow)
                             + ") is not a multiple of the low-mode bin size ("
@@ -172,22 +192,26 @@ void TLoadCombinedA2AVecsV<FImpl, lowBinSize, highBinSize>::execute(void)
     auto &out = envGet(std::vector<FermionField>, getName());
     unsigned int offset = 0;
 
-    if (par().nLow > 0)
+    // Discarded for lowBinSize = 0, so iVector<SiteSpinor, 0> is never built.
+    if constexpr (lowBinSize > 0)
     {
-        int Nb = par().nLow / lowBinSize;
-        // One bin resident, not Nb -- see the staging note in the class comment.
-        std::vector<Lattice<LowBinnedSpinor>> bvec(1, envGetGrid(Lattice<LowBinnedSpinor>));
-
-        LOG(Message) << "Loading " << par().nLow << " low-mode A2A vectors from "
-                     << Nb << " files of " << lowBinSize << " binned vectors" << std::endl;
-        for (int i = 0; i < Nb; ++i)
+        if (par().nLow > 0)
         {
-            A2AVectorsIo::readElement(par().lowFilestem, bvec[0], i,
-                                      vm().getTrajectory());
-            A2Autils<FImpl>::template UnpackBinnedVectors<lowBinSize>(
-                out, offset + i*lowBinSize, bvec);
+            int Nb = par().nLow / lowBinSize;
+            // One bin resident, not Nb -- see the staging note in the class comment.
+            std::vector<Lattice<LowBinnedSpinor>> bvec(1, envGetGrid(Lattice<LowBinnedSpinor>));
+
+            LOG(Message) << "Loading " << par().nLow << " low-mode A2A vectors from "
+                         << Nb << " files of " << lowBinSize << " binned vectors" << std::endl;
+            for (int i = 0; i < Nb; ++i)
+            {
+                A2AVectorsIo::readElement(par().lowFilestem, bvec[0], i,
+                                          vm().getTrajectory());
+                A2Autils<FImpl>::template UnpackBinnedVectors<lowBinSize>(
+                    out, offset + i*lowBinSize, bvec);
+            }
+            offset += par().nLow;
         }
-        offset += par().nLow;
     }
 
     int  Nb   = par().highSize / highBinSize;

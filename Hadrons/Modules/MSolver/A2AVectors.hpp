@@ -62,7 +62,11 @@ class TA2AVectors : public Module<A2AVectorsPar>
 public:
     FERM_TYPE_ALIASES(FImpl,);
     SOLVER_TYPE_ALIASES(FImpl,);
-    typedef HADRONS_DEFAULT_SCHUR_A2A<FImpl> A2A;
+    // Low and high modes are built by separate classes (the low-mode one owns
+    // the red-black reconstruction scratch; the high-mode one is a solver call),
+    // so a module using both holds one of each.
+    typedef HADRONS_DEFAULT_SCHUR_A2A<FImpl> A2ALow;
+    typedef A2AHighModes<FImpl>              A2AHigh;
 public:
     // constructor
     TA2AVectors(const std::string name);
@@ -144,7 +148,8 @@ void TA2AVectors<FImpl, Pack>::setup(void)
     {
         envTmpLat(FermionField, "f5", Ls);
     }
-    envTmp(A2A, "a2a", 1, action, solver);
+    envTmp(A2ALow, "a2aLow", 1, action);
+    envTmp(A2AHigh, "a2aHigh", 1, action, solver);
 }
 
 // execution ///////////////////////////////////////////////////////////////////
@@ -159,7 +164,8 @@ void TA2AVectors<FImpl, Pack>::execute(void)
     auto        &w         = envGet(std::vector<FermionField>, getName() + "_w");
     int         Ls         = env().getObjectLs(par().action);
 
-    envGetTmp(A2A, a2a);
+    envGetTmp(A2ALow, a2aLow);
+    envGetTmp(A2AHigh, a2aHigh);
 
     if (Nl_ > 0)
     {
@@ -184,24 +190,24 @@ void TA2AVectors<FImpl, Pack>::execute(void)
         LOG(Message) << "V vector i = " << il << " (low mode)" << std::endl;
         if (Ls == 1)
         {
-            a2a.makeLowModeV(v[il], epack.evec[il], epack.eval[il]);
+            a2aLow.makeLowModeV(v[il], epack.evec[il], epack.eval[il]);
         }
         else
         {
             envGetTmp(FermionField, f5);
-            a2a.makeLowModeV5D(v[il], f5, epack.evec[il], epack.eval[il]);
+            a2aLow.makeLowModeV5D(v[il], f5, epack.evec[il], epack.eval[il]);
         }
         stopTimer("V low mode");
         startTimer("W low mode");
         LOG(Message) << "W vector i = " << il << " (low mode)" << std::endl;
         if (Ls == 1)
         {
-            a2a.makeLowModeW(w[il], epack.evec[il], epack.eval[il]);
+            a2aLow.makeLowModeW(w[il], epack.evec[il], epack.eval[il]);
         }
         else
         {
             envGetTmp(FermionField, f5);
-            a2a.makeLowModeW5D(w[il], f5, epack.evec[il], epack.eval[il]);
+            a2aLow.makeLowModeW5D(w[il], f5, epack.evec[il], epack.eval[il]);
         }
         stopTimer("W low mode");
     }
@@ -215,12 +221,12 @@ void TA2AVectors<FImpl, Pack>::execute(void)
                      << "stochastic mode)" << std::endl;
         if (Ls == 1)
         {
-            a2a.makeHighModeV(v[Nl_ + ih], noise.getFerm(ih));
+            a2aHigh.makeHighModeV(v[Nl_ + ih], noise.getFerm(ih));
         }
         else
         {
             envGetTmp(FermionField, f5);
-            a2a.makeHighModeV5D(v[Nl_ + ih], f5, noise.getFerm(ih));
+            a2aHigh.makeHighModeV5D(v[Nl_ + ih], f5, noise.getFerm(ih));
         }
         stopTimer("V high mode");
         startTimer("W high mode");
@@ -229,12 +235,12 @@ void TA2AVectors<FImpl, Pack>::execute(void)
                      << "stochastic mode)" << std::endl;
         if (Ls == 1)
         {
-            a2a.makeHighModeW(w[Nl_ + ih], noise.getFerm(ih));
+            a2aHigh.makeHighModeW(w[Nl_ + ih], noise.getFerm(ih));
         }
         else
         {
             envGetTmp(FermionField, f5);
-            a2a.makeHighModeW5D(w[Nl_ + ih], f5, noise.getFerm(ih));
+            a2aHigh.makeHighModeW5D(w[Nl_ + ih], f5, noise.getFerm(ih));
         }
         stopTimer("W high mode");
     }

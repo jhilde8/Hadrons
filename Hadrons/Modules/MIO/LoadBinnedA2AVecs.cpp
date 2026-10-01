@@ -31,6 +31,13 @@ using namespace Grid;
 using namespace Hadrons;
 using namespace MIO;
 
+template class Grid::Hadrons::MIO::TLoadBinnedA2AVecs<FIMPL, 1>;
+template class Grid::Hadrons::MIO::TLoadBinnedA2AVecs<FIMPL, 2>;
+template class Grid::Hadrons::MIO::TLoadBinnedA2AVecs<FIMPL, 4>;
+template class Grid::Hadrons::MIO::TLoadBinnedA2AVecs<FIMPL, 8>;
+template class Grid::Hadrons::MIO::TLoadBinnedA2AVecs<FIMPL, 12>;
+template class Grid::Hadrons::MIO::TLoadBinnedA2AVecs<FIMPL, 16>;
+template class Grid::Hadrons::MIO::TLoadBinnedA2AVecs<FIMPL, 32>;
 template class Grid::Hadrons::MIO::TLoadBinnedA2AVecs<FIMPL, 48>;
 template class Grid::Hadrons::MIO::TLoadBinnedA2AVecs<FIMPL, 64>;
 template class Grid::Hadrons::MIO::TLoadBinnedA2AVecs<FIMPL, 96>;

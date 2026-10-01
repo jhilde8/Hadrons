@@ -58,7 +58,6 @@ public:
                                     std::string, eigenPack,
                                     std::string, action,
                                     std::string, output,
-                                    std::string, schurConvention,
                                     unsigned int, checkInterval);
 };
 
@@ -71,6 +70,12 @@ public:
     typedef CoarseFermionEigenPack<FImplPack, nBasis> EPack;
     typedef typename FImpl::SiteSpinor::vector_type   vector_type;
     typedef iVector<iVector<iVector<vector_type, Nc>, Ns>, binSize> SiteSpinorSet;
+    // Concrete class fixed at compile time by HADRONS_DEFAULT_SCHUR (one build
+    // per ensemble), so nothing here names a convention. Its op() is used
+    // directly for the in-program eigenvector check below, so the check
+    // validates evec_i against the operator used to build V/W, not a second,
+    // independently built one.
+    typedef HADRONS_DEFAULT_SCHUR_A2A<FImpl> A2A;
 public:
     // constructor
     TA2ALowModeCoarseBinned(const std::string name);
@@ -86,14 +91,6 @@ public:
 private:
     unsigned int Nl_{0};
     unsigned int Nb_{0};
-    // Chosen from par().schurConvention at runtime in setup() -- see
-    // MSolver::MixedPrecisionRBPrecCG's SOLVER_BODY macro and
-    // Hadrons::A2AVectorsSchurBase for why this has to be a pointer to the
-    // shared base class rather than a concrete stack object. Also used
-    // directly (via a2a_->op()) for the in-program eigenvector check below,
-    // so the check is guaranteed to validate evec_i against the exact same
-    // operator used to build V/W, not a second, independently-configured one.
-    std::unique_ptr<A2AVectorsSchurBase<FImpl>> a2a_;
 };
 
 MODULE_REGISTER_TMP(A2ALowModeCoarseBinned200Bin200,
@@ -144,28 +141,7 @@ void TA2ALowModeCoarseBinned<FImpl, FImplPack, nBasis, binSize>::setup(void)
         HADRONS_ERROR(Size, "eigenPack and action Ls mismatch");
     }
 
-    const std::string &schurConv = par().schurConvention;
-
-    if (schurConv == "DiagOne")
-    {
-        a2a_.reset(new A2AVectorsSchurDiagOne<FImpl>(action));
-    }
-    else if (schurConv == "DiagTwo")
-    {
-        a2a_.reset(new A2AVectorsSchurDiagTwo<FImpl>(action));
-    }
-    else if (schurConv.empty())
-    {
-        a2a_.reset(new HADRONS_DEFAULT_SCHUR_A2A<FImpl>(action));
-    }
-    else
-    {
-        HADRONS_ERROR(Argument, "unknown schurConvention '" + schurConv
-                      + "' (expected 'DiagOne', 'DiagTwo', or empty for the compiled-in default)");
-    }
-    LOG(Message) << "A2A vector construction using Schur convention '"
-                 << (schurConv.empty() ? "compiled-in default" : schurConv)
-                 << "'" << std::endl;
+    envTmp(A2A, "a2a", 1, action);
 
     if (par().checkInterval > 0)
     {
@@ -216,6 +192,7 @@ void TA2ALowModeCoarseBinned<FImpl, FImplPack, nBasis, binSize>::execute(void)
     auto        &action = envGet(FMat, par().action);
     int         Ls      = env().getObjectLs(par().action);
 
+    envGetTmp(A2A, a2a);
     envGetTmp(FermionFieldPack, evecF);
     envGetTmp(FermionField, evecD);
     envGetTmp(FermionField, vTmp);
@@ -294,7 +271,7 @@ void TA2ALowModeCoarseBinned<FImpl, FImplPack, nBasis, binSize>::execute(void)
                 startTimer("Eigenvector check");
 
                 const RealD                                          checkResidual = 1e-5;
-                PlainHermOp<FermionField>                            checkHermOp(a2a_->op());
+                PlainHermOp<FermionField>                            checkHermOp(a2a.op());
                 ImplicitlyRestartedLanczosHermOpTester<FermionField> checkTester(checkHermOp);
                 RealD                                                evalStored = epack.evalCoarse[il];
                 RealD                                                evalRecon  = evalStored;
@@ -316,7 +293,7 @@ void TA2ALowModeCoarseBinned<FImpl, FImplPack, nBasis, binSize>::execute(void)
             LOG(Message) << "V vector i = " << il << " (low mode)" << std::endl;
             if (Ls == 1)
             {
-                a2a_->makeLowModeV(vTmp, evecD, epack.evalCoarse[il]);
+                a2a.makeLowModeV(vTmp, evecD, epack.evalCoarse[il]);
                 if (doCheck)
                 {
                     startTimer("V reconstruction check");
@@ -327,7 +304,7 @@ void TA2ALowModeCoarseBinned<FImpl, FImplPack, nBasis, binSize>::execute(void)
             else
             {
                 envGetTmp(FermionField, f5);
-                a2a_->makeLowModeV5D(vTmp, f5, evecD, epack.evalCoarse[il]);
+                a2a.makeLowModeV5D(vTmp, f5, evecD, epack.evalCoarse[il]);
                 if (doCheck)
                 {
                     startTimer("V reconstruction check");
@@ -342,7 +319,7 @@ void TA2ALowModeCoarseBinned<FImpl, FImplPack, nBasis, binSize>::execute(void)
             LOG(Message) << "W vector i = " << il << " (low mode)" << std::endl;
             if (Ls == 1)
             {
-                a2a_->makeLowModeW(wTmp, evecD, epack.evalCoarse[il]);
+                a2a.makeLowModeW(wTmp, evecD, epack.evalCoarse[il]);
                 if (doCheck)
                 {
                     startTimer("W reconstruction check");
@@ -353,7 +330,7 @@ void TA2ALowModeCoarseBinned<FImpl, FImplPack, nBasis, binSize>::execute(void)
             else
             {
                 envGetTmp(FermionField, f5);
-                a2a_->makeLowModeW5D(wTmp, f5, evecD, epack.evalCoarse[il]);
+                a2a.makeLowModeW5D(wTmp, f5, evecD, epack.evalCoarse[il]);
                 if (doCheck)
                 {
                     startTimer("W reconstruction check");
@@ -365,7 +342,7 @@ void TA2ALowModeCoarseBinned<FImpl, FImplPack, nBasis, binSize>::execute(void)
                     // f5's DminusDag content is no longer needed after
                     // makeLowModeW5D returned (wTmp already holds the real
                     // production output), so it's safe to overwrite.
-                    a2a_->makeLowModeW(f5, evecD, epack.evalCoarse[il]);
+                    a2a.makeLowModeW(f5, evecD, epack.evalCoarse[il]);
                     checkReconstruction(f5, true, "W", il);
                     stopTimer("W reconstruction check");
                 }

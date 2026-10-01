@@ -301,7 +301,7 @@ void        makeFileDir(const std::string filename, GridBase *g = nullptr);
 
 // default Schur convention
 #ifndef HADRONS_DEFAULT_SCHUR 
-#define HADRONS_DEFAULT_SCHUR DiagTwo
+#define HADRONS_DEFAULT_SCHUR DiagOne
 #endif
 #define _HADRONS_SCHUR_OP_(conv) Schur##conv##Operator
 #define HADRONS_SCHUR_OP(conv) _HADRONS_SCHUR_OP_(conv)
@@ -315,7 +315,7 @@ void        makeFileDir(const std::string filename, GridBase *g = nullptr);
 #define _HADRONS_NON_HERMITIAN_SCHUR_SOLVE_(conv) NonHermitianSchurRedBlack##conv##Solve
 #define HADRONS_NON_HERMITIAN_SCHUR_SOLVE(conv) _HADRONS_NON_HERMITIAN_SCHUR_SOLVE_(conv)
 #define HADRONS_DEFAULT_NON_HERMITIAN_SCHUR_SOLVE HADRONS_NON_HERMITIAN_SCHUR_SOLVE(HADRONS_DEFAULT_SCHUR)
-#define _HADRONS_SCHUR_A2A_(conv) A2AVectorsSchur##conv
+#define _HADRONS_SCHUR_A2A_(conv) A2ALowModesSchur##conv
 #define HADRONS_SCHUR_A2A(conv) _HADRONS_SCHUR_A2A_(conv)
 #define HADRONS_DEFAULT_SCHUR_A2A HADRONS_SCHUR_A2A(HADRONS_DEFAULT_SCHUR)
 
