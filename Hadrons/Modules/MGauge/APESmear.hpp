@@ -125,8 +125,7 @@ void TAPESmear<GImpl>::execute(void)
     // Perform N APE smearing steps
     for(int i = 0; i < par().N; i++)
     {
-		//APE.smearAlt(Utmp, Usmeared, par().orthog_axis); // compute sums of staples and store in Utmp
-		APE.smear(Utmp, Usmeared);		
+		APE.smearAlt(Utmp, Usmeared, par().orthog_axis); // compute sums of staples and store in Utmp
 
 		// Conventional factors to ensure alpha is the relative weight
 		Usmeared = (1.0 - par().alpha) * Usmeared;
