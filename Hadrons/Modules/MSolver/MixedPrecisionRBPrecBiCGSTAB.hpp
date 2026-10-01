@@ -60,8 +60,13 @@ public:
     FERM_TYPE_ALIASES(FImplInner, Inner);
     FERM_TYPE_ALIASES(FImplOuter, Outer);
     SOLVER_TYPE_ALIASES(FImplOuter,);
-    typedef HADRONS_DEFAULT_NON_HERMITIAN_SCHUR_OP<FMatInner, FermionFieldInner> SchurFMatInner;
-    typedef HADRONS_DEFAULT_NON_HERMITIAN_SCHUR_OP<FMatOuter, FermionFieldOuter> SchurFMatOuter;
+    // Pinned to DiagTwo rather than following HADRONS_DEFAULT_SCHUR: Grid
+    // provides NonHermitianSchurRedBlackDiagMooeeSolve and ...DiagTwoSolve but
+    // no DiagOne counterpart, so a DiagOne build has no red-black solve to pair
+    // with a DiagOne operator here. Operator and solve must agree, so both are
+    // named explicitly below.
+    typedef HADRONS_NON_HERMITIAN_SCHUR_OP(DiagTwo)<FMatInner, FermionFieldInner> SchurFMatInner;
+    typedef HADRONS_NON_HERMITIAN_SCHUR_OP(DiagTwo)<FMatOuter, FermionFieldOuter> SchurFMatOuter;
 private:
     template <typename Field>
     class OperatorFunctionWrapper: public OperatorFunction<Field>
@@ -175,7 +180,7 @@ MixedPrecisionBiCGSTAB<FermionFieldOuter, FermionFieldInner>                    
          simat, somat);                                                                               \
 mpcg.useGuesser(iguesser);                                                                            \
 OperatorFunctionWrapper<FermionFieldOuter> wmpcg(mpcg);                                               \
-HADRONS_DEFAULT_NON_HERMITIAN_SCHUR_SOLVE<FermionFieldOuter> schurSolver(wmpcg);                      \
+HADRONS_NON_HERMITIAN_SCHUR_SOLVE(DiagTwo)<FermionFieldOuter> schurSolver(wmpcg);                     \
 schurSolver.subtractGuess(subGuess);                                                                  \
 schurSolver(omat, source, sol, oguesser);
 
