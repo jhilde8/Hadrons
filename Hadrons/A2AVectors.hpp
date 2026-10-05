@@ -53,6 +53,21 @@ public:
     void makeHighModeV(FermionField &vout, const FermionField &noise);
     void makeHighModeV5D(FermionField &vout_4d, FermionField &vout_5d,
                          const FermionField &noise_5d);
+    //////////////////////////////////////////////////////////////////////////
+    // Batched forms: one solver call for the whole batch. A solver whose
+    // OperatorFunction implements a vector overload then sees every source at
+    // once, and the vector SchurRedBlackBase::operator() invokes its guesser
+    // once per batch rather than once per source. A solver without that
+    // overload still solves the batch one source at a time through
+    // OperatorFunction's base-class loop, so these are correct either way.
+    // vout_5d is caller-owned scratch, as in the single-source form; the
+    // imported 5D sources are local to the call.
+    //////////////////////////////////////////////////////////////////////////
+    void makeHighModeV(std::vector<FermionField> &vout,
+                       const std::vector<FermionField> &noise);
+    void makeHighModeV5D(std::vector<FermionField> &vout_4d,
+                         std::vector<FermionField> &vout_5d,
+                         const std::vector<FermionField> &noise);
     void makeHighModeW(FermionField &wout, const FermionField &noise);
     void makeHighModeW5D(FermionField &vout_5d, FermionField &wout_5d,
                          const FermionField &noise_5d);
@@ -261,6 +276,51 @@ void A2AHighModes<FImpl>::makeHighModeV5D(FermionField &vout_4d,
     }
     makeHighModeV(vout_5d, tmp5_);
     action_.ExportPhysicalFermionSolution(vout_5d, vout_4d);
+}
+
+template <typename FImpl>
+void A2AHighModes<FImpl>::makeHighModeV(std::vector<FermionField> &vout,
+                                        const std::vector<FermionField> &noise)
+{
+    if (vout.size() != noise.size())
+    {
+        HADRONS_ERROR(Size, "solution/noise batch size mismatch ("
+                      + std::to_string(vout.size()) + " vs "
+                      + std::to_string(noise.size()) + ")");
+    }
+    solver_(vout, noise);
+}
+
+template <typename FImpl>
+void A2AHighModes<FImpl>::makeHighModeV5D(std::vector<FermionField> &vout_4d,
+                                          std::vector<FermionField> &vout_5d,
+                                          const std::vector<FermionField> &noise)
+{
+    unsigned int nBatch = noise.size();
+
+    if ((vout_4d.size() != nBatch) || (vout_5d.size() != nBatch))
+    {
+        HADRONS_ERROR(Size, "solution/noise batch size mismatch");
+    }
+
+    std::vector<FermionField> src5(nBatch, fGrid_);
+
+    for (unsigned int j = 0; j < nBatch; ++j)
+    {
+        if (noise[j].Grid()->Dimensions() == fGrid_->Dimensions() - 1)
+        {
+            action_.ImportPhysicalFermionSource(noise[j], src5[j]);
+        }
+        else
+        {
+            src5[j] = noise[j];
+        }
+    }
+    makeHighModeV(vout_5d, src5);
+    for (unsigned int j = 0; j < nBatch; ++j)
+    {
+        action_.ExportPhysicalFermionSolution(vout_5d[j], vout_4d[j]);
+    }
 }
 
 template <typename FImpl>
