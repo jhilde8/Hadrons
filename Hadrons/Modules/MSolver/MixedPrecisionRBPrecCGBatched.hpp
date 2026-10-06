@@ -64,6 +64,8 @@ public:
     SOLVER_TYPE_ALIASES(FImplOuter,);
     typedef HADRONS_DEFAULT_SCHUR_OP<FMatInner, FermionFieldInner> SchurFMatInner;
     typedef HADRONS_DEFAULT_SCHUR_OP<FMatOuter, FermionFieldOuter> SchurFMatOuter;
+    typedef MixedPrecisionConjugateGradientBatched<FermionFieldOuter,
+                                                   FermionFieldInner> MPCG;
 private:
     template <typename Field>
     class OperatorFunctionWrapper: public OperatorFunction<Field>
@@ -162,23 +164,17 @@ DependencyMap TMixedPrecisionRBPrecCGBatched<FImplInner, FImplOuter>::getObjectD
 }
 
 // setup ///////////////////////////////////////////////////////////////////////
-// C++11 does not support template lambdas so it is easier
-// to make a macro with the solver body
+// C++11 does not support template lambdas so it is easier to make a macro
+// with the solver body. The Schur operators and the solver itself are built
+// once in setup() and fetched here: MixedPrecisionConjugateGradientBatched's
+// constructor clones the inner operator onto the split-grid partitions
+// (--batched-solver-split), which replicates the gauge field and must not run
+// per solve. Only the wrapper and the red-black solve are per call, and both
+// hold nothing but references.
 #define SOLVER_BODY                                                                                   \
-typedef typename FermionFieldInner::vector_type VTypeInner;                                           \
-ZeroGuesser<FermionFieldInner> iguesserDefault;                                                       \
 ZeroGuesser<FermionFieldOuter> oguesserDefault;                                                       \
-LinearFunction<FermionFieldInner> &iguesser = (iguesserPt == nullptr) ? iguesserDefault : *iguesserPt;\
 LinearFunction<FermionFieldOuter> &oguesser = (oguesserPt == nullptr) ? oguesserDefault : *oguesserPt;\
-SchurFMatInner simat(imat);                                                                           \
-SchurFMatOuter somat(omat);                                                                           \
-MixedPrecisionConjugateGradientBatched<FermionFieldOuter, FermionFieldInner>                          \
-    mpcg(par().residual, par().maxInnerIteration,                                                     \
-         par().maxOuterIteration,                                                                     \
-         par().maxPatchupIteration,                                                                   \
-         getGrid<FermionFieldInner>(true, Ls),                                                        \
-         simat, somat, par().updateResidual);                                                         \
-mpcg.useGuesser(iguesser);                                                                            \
+MPCG &mpcg = envGet(MPCG, getName() + "_mpcg");                                                       \
 OperatorFunctionWrapper<FermionFieldOuter> wmpcg(mpcg);                                               \
 HADRONS_DEFAULT_SCHUR_SOLVE<FermionFieldOuter> schurSolver(wmpcg);                                    \
 schurSolver.subtractGuess(subGuess);                                                                  \
@@ -197,39 +193,61 @@ void TMixedPrecisionRBPrecCGBatched<FImplInner, FImplOuter>::setup(void)
     auto                              Ls          = env().getObjectLs(par().innerAction);
     auto                              &imat       = envGet(FMatInner, par().innerAction);
     auto                              &omat       = envGet(FMatOuter, par().outerAction);
-    LinearFunction<FermionFieldInner> *iguesserPt = nullptr; 
     LinearFunction<FermionFieldOuter> *oguesserPt = nullptr;
 
-    if (!par().innerGuesser.empty())
-    {
-        iguesserPt = &envGet(LinearFunction<FermionFieldInner>, par().innerGuesser);
-    }
     if (!par().outerGuesser.empty())
     {
         oguesserPt = &envGet(LinearFunction<FermionFieldOuter>, par().outerGuesser);
     }
-    auto makeSolver = [&imat, &omat, iguesserPt, oguesserPt, Ls, this](bool subGuess)
+
+    // Cache storage, not standard: nothing lists these as an input, so the
+    // garbage schedule would free them as soon as this module's step ends,
+    // while the solver objects below keep referencing them for the rest of the
+    // program. Cache objects are never collected and are still sized by the
+    // memory profiler.
+    envCache(SchurFMatInner, getName() + "_simat", Ls, imat);
+    envCache(SchurFMatOuter, getName() + "_somat", Ls, omat);
+
+    auto &simat = envGet(SchurFMatInner, getName() + "_simat");
+    auto &somat = envGet(SchurFMatOuter, getName() + "_somat");
+
+    envCache(MPCG, getName() + "_mpcg", Ls,
+             par().residual, par().maxInnerIteration, par().maxOuterIteration,
+             par().maxPatchupIteration, getGrid<FermionFieldInner>(true, Ls),
+             simat, somat, par().updateResidual);
+
+    auto &mpcg = envGet(MPCG, getName() + "_mpcg");
+
+    // Attached only when one is configured. A stack ZeroGuesser would dangle
+    // now that mpcg outlives this call, and leaving the guesser null is
+    // equivalent: the solver zeroes sol_f before the guesser call either way.
+    if (!par().innerGuesser.empty())
     {
-        return [&imat, &omat, iguesserPt, oguesserPt, subGuess, Ls, this]
-            (FermionFieldOuter &sol, const FermionFieldOuter &source) 
+        mpcg.useGuesser(envGet(LinearFunction<FermionFieldInner>, par().innerGuesser));
+    }
+    auto makeSolver = [&omat, oguesserPt, this](bool subGuess)
+    {
+        return [&omat, oguesserPt, subGuess, this]
+            (FermionFieldOuter &sol, const FermionFieldOuter &source)
         {
             SOLVER_BODY;
         };
     };
-    auto makeVecSolver = [&imat, &omat, iguesserPt, oguesserPt, Ls, this](bool subGuess)
+    auto makeVecSolver = [&omat, oguesserPt, this](bool subGuess)
     {
-        return [&imat, &omat, iguesserPt, oguesserPt, subGuess, Ls, this]
-            (std::vector<FermionFieldOuter> &sol, const std::vector<FermionFieldOuter> &source) 
+        return [&omat, oguesserPt, subGuess, this]
+            (std::vector<FermionFieldOuter> &sol, const std::vector<FermionFieldOuter> &source)
         {
             SOLVER_BODY;
         };
     };
+    bool hasOuterGuesser = (oguesserPt != nullptr);
     auto solver    = makeSolver(false);
     auto vecSolver = makeVecSolver(false);
-    envCreate(Solver, getName(), Ls, solver, vecSolver, omat);
+    envCreate(Solver, getName(), Ls, solver, vecSolver, omat, hasOuterGuesser);
     auto solver_subtract    = makeSolver(true);
     auto vecSolver_subtract = makeVecSolver(true);
-    envCreate(Solver, getName() + "_subtract", Ls, solver_subtract, vecSolver_subtract, omat);
+    envCreate(Solver, getName() + "_subtract", Ls, solver_subtract, vecSolver_subtract, omat, hasOuterGuesser);
 }
 
 #undef SOLVER_BODY
