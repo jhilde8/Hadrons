@@ -52,7 +52,8 @@ public:
                                     double      , residual,
                                     std::string , innerGuesser,
                                     std::string , outerGuesser,
-                                    bool        , updateResidual);
+                                    bool        , updateResidual,
+                                    bool        , ifCGD);
 };
 
 template <typename FImplInner, typename FImplOuter>
@@ -214,7 +215,7 @@ void TMixedPrecisionRBPrecCGBatched<FImplInner, FImplOuter>::setup(void)
     envCache(MPCG, getName() + "_mpcg", Ls,
              par().residual, par().maxInnerIteration, par().maxOuterIteration,
              par().maxPatchupIteration, getGrid<FermionFieldInner>(true, Ls),
-             simat, somat, par().updateResidual);
+             simat, somat, par().updateResidual, par().ifCGD);
 
     auto &mpcg = envGet(MPCG, getName() + "_mpcg");
 
