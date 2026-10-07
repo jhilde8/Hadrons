@@ -42,5 +42,5 @@ template class Grid::Hadrons::MUtilities::TA2ACoarseGrid<FIMPL, 196>;
 template class Grid::Hadrons::MUtilities::TA2ACoarseGrid<FIMPL, 197>;
 template class Grid::Hadrons::MUtilities::TA2ACoarseGrid<FIMPL, 216>;
 template class Grid::Hadrons::MUtilities::TA2ACoarseGrid<FIMPL, 256>;
-template class Grid::Hadrons::MUtilities::TA2ACoarseGrid<FIMPL, 272>;
-template class Grid::Hadrons::MUtilities::TA2ACoarseGrid<FIMPL, 376>;
+template class Grid::Hadrons::MUtilities::TA2ACoarseGrid<FIMPL, 221>;
+template class Grid::Hadrons::MUtilities::TA2ACoarseGrid<FIMPL, 304>;

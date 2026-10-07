@@ -84,8 +84,8 @@ MODULE_REGISTER_TMP(A2ACoarseGrid196, ARG(TA2ACoarseGrid<FIMPL, 196>), MUtilitie
 MODULE_REGISTER_TMP(A2ACoarseGrid197, ARG(TA2ACoarseGrid<FIMPL, 197>), MUtilities);
 MODULE_REGISTER_TMP(A2ACoarseGrid216, ARG(TA2ACoarseGrid<FIMPL, 216>), MUtilities);
 MODULE_REGISTER_TMP(A2ACoarseGrid256, ARG(TA2ACoarseGrid<FIMPL, 256>), MUtilities);
-MODULE_REGISTER_TMP(A2ACoarseGrid272, ARG(TA2ACoarseGrid<FIMPL, 272>), MUtilities);
-MODULE_REGISTER_TMP(A2ACoarseGrid376, ARG(TA2ACoarseGrid<FIMPL, 376>), MUtilities);
+MODULE_REGISTER_TMP(A2ACoarseGrid221, ARG(TA2ACoarseGrid<FIMPL, 221>), MUtilities);
+MODULE_REGISTER_TMP(A2ACoarseGrid304, ARG(TA2ACoarseGrid<FIMPL, 304>), MUtilities);
 
 /******************************************************************************
  *                       TA2ACoarseGrid implementation                        *
