@@ -84,6 +84,8 @@ MODULE_REGISTER_TMP(A2ACoarseGrid196, ARG(TA2ACoarseGrid<FIMPL, 196>), MUtilitie
 MODULE_REGISTER_TMP(A2ACoarseGrid197, ARG(TA2ACoarseGrid<FIMPL, 197>), MUtilities);
 MODULE_REGISTER_TMP(A2ACoarseGrid216, ARG(TA2ACoarseGrid<FIMPL, 216>), MUtilities);
 MODULE_REGISTER_TMP(A2ACoarseGrid256, ARG(TA2ACoarseGrid<FIMPL, 256>), MUtilities);
+MODULE_REGISTER_TMP(A2ACoarseGrid272, ARG(TA2ACoarseGrid<FIMPL, 272>), MUtilities);
+MODULE_REGISTER_TMP(A2ACoarseGrid376, ARG(TA2ACoarseGrid<FIMPL, 376>), MUtilities);
 
 /******************************************************************************
  *                       TA2ACoarseGrid implementation                        *
@@ -148,14 +150,17 @@ void TA2ACoarseGrid<FImpl, binSize>::execute(void)
     });
   }
 
-  if ( coarse.size() % binSize != 0 ) {
-    std::cout << "Irrelevant binsize " << binSize <<
-      " vs vector size " << coarse.size() << std::endl;
-    std::cout << "Sparsen A2AVector NOT saved" << std::endl;
-  }
   // I/O if necessary
   if (!par().output.empty())
   {
+    // The write packs binSize fields into one SiteSpinorSet, so a bin that does
+    // not divide the array reads past the end of coarse on the last chunk.
+    if ( coarse.size() % binSize != 0 )
+    {
+      HADRONS_ERROR(Size, "bin size " + std::to_string(binSize)
+                          + " does not divide the " + std::to_string(coarse.size())
+                          + " mode vector");
+    }
     std::vector<Lattice<SiteSpinorSet> > bvec(0,envGetGrid(Lattice<SiteSpinorSet>));
     for( int i = 0 ; i < coarse.size() ; i += binSize ) {
       Lattice<SiteSpinorSet> tmp(cgrid);
