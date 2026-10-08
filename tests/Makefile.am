@@ -27,7 +27,8 @@ EXTRA_PROGRAMS = \
   Test_mf_gpu               \
   Test_mf_compare           \
   Test_smear_compare        \
-  Test_writer_spread
+  Test_writer_spread        \
+  Test_a2a_io_width
 
 CLEANFILES = $(EXTRA_PROGRAMS)
 
@@ -110,3 +111,6 @@ Test_smear_compare_LDADD=-lHadrons -lGrid
 
 Test_writer_spread_SOURCES=Test_writer_spread.cpp
 Test_writer_spread_LDADD=-lHadrons -lGrid
+
+Test_a2a_io_width_SOURCES=Test_a2a_io_width.cpp
+Test_a2a_io_width_LDADD=-lHadrons -lGrid
