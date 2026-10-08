@@ -4,19 +4,38 @@
  * A2AVectorsIo write/read bandwidth versus SciDAC record width, to settle the
  * on-disk format for the A2A vectors once binning is retired.
  *
- * One mode per run, all three record widths inside it, so a single job yields
- * the comparison under one set of filesystem conditions:
+ * One mode per run, all four record types inside it, so a single job yields the
+ * comparison under one set of filesystem conditions:
  *
  *   fermion   FIMPL::FermionField                    192 B/site
+ *   bin1      Lattice<iVector<SiteSpinor,1>>         192 B/site
  *   prop      FIMPL::PropagatorField                2304 B/site
  *   bin12     Lattice<iVector<SiteSpinor,12>>       2304 B/site
  *
  * bin12 is byte-for-byte the current production format, prop is the same width
  * through a Grid-native type, and fermion is the width-1 candidate. --nvec
  * counts fermion-equivalent vectors and is divided by 12 for the wide types, so
- * all three move the SAME total bytes: the comparison is record width, not
- * volume. Each type gets its own stem (<stem>_fermion, <stem>_prop,
- * <stem>_bin12) and its own subdirectory, so nothing collides.
+ * every type moves the SAME total bytes: the comparison is record width, not
+ * volume. Each type gets its own stem (<stem>_fermion, <stem>_bin1, ...) and
+ * its own subdirectory, so nothing collides.
+ *
+ * The two pairs exist because byte width is not the only variable. prop and
+ * bin12 are the same size per site but a different tensor nest, so BinaryIO's
+ * scalar-object gather, checksum and byte-order passes walk them differently;
+ * fermion and bin1 are the same pair at width 1. A gap inside a pair is layout
+ * or filesystem drift, never width, which is what makes them the control on a
+ * gap between pairs. Measured 2026-10-08, write at 4 nodes / 32 ranks on the
+ * 64I volume (77.3 GB per type): fermion 3276 MB/s, bin12 2331, prop 2025 --
+ * so the narrow record was faster, and two types of equal width differed by
+ * 15%.
+ *
+ * That 15% was taken with one record for each wide type, which is also the one
+ * configuration where the first-record cost cannot be separated out: the four
+ * BinaryIO host buffers are allocated and first-touched on record 0 and then
+ * come back from Grid's allocator cache, so with nrec = 1 that cost sits
+ * entirely inside the only sample. The summary therefore reports record 0
+ * separately from the mean of the rest. Give the wide types at least three or
+ * four records (--nvec 36 or 48) before reading anything into a gap.
  *
  * Everything goes through A2AVectorsIo::writeElement / readElement, which is
  * one file per record at <stem>_<type>.<traj>/elem<N>.bin -- the layout the
@@ -62,9 +81,16 @@
  *        --mode read --nvec 24 --stem $SCRATCH/iotest/v --verify
  *   mpirun -n 1 ./Test_a2a_io_width --grid 8.8.8.16 --mpi 1.1.1.1 \
  *        --mode write --nvec 12 --record bin12 --stem ./iotest/v
+ *
+ * A 32.32.32.32 volume on 4.4.2.4 reproduces the per-rank geometry of the 64I
+ * volume on 8.8.8.8 exactly -- 8192 sites/rank, an 8-site contiguous extent,
+ * 1024 extents/rank -- at 1/32 of the ranks, so the extent-aggregation question
+ * can be answered at 16 nodes. Absolute bandwidth, per-file open cost and the
+ * ROMIO aggregator topology do not carry over from that.
  */
 
 #include <iomanip>
+#include <sstream>
 #include <Hadrons/Global.hpp>
 #include <Hadrons/A2AVectors.hpp>
 
@@ -84,6 +110,9 @@ struct IoResult
     double       total{0.};
     double       min{0.};
     double       max{0.};
+    // Record 0 carries the allocation and first-touch of BinaryIO's host
+    // buffers, which later records get back from Grid's allocator cache.
+    double       first{0.};
     // Negative when no verification was requested or possible.
     double       maxDiff{-1.};
 };
@@ -131,6 +160,7 @@ IoResult runIo(const std::string label, const std::string stem,
             r.total += t;
             tMin     = std::min(tMin, t);
             tMax     = std::max(tMax, t);
+            if (i == 0) { r.first = t; }
         }
     }
     else
@@ -148,6 +178,7 @@ IoResult runIo(const std::string label, const std::string stem,
             r.total += t;
             tMin     = std::min(tMin, t);
             tMax     = std::max(tMax, t);
+            if (i == 0) { r.first = t; }
             if (verify)
             {
                 random(rng, ref);
@@ -201,12 +232,25 @@ void summary(const std::string mode, const std::vector<IoResult> &res)
                      << std::setw(11) << ((r.nRec > 0) ? r.total/r.nRec : 0.)
                      << std::endl;
     }
-    LOG(Message) << "per record min/max:" << std::endl;
+    LOG(Message) << "per record, record 0 separated (it carries the buffer "
+                 << "allocation and first touch):" << std::endl;
     for (auto &r: res)
     {
+        std::stringstream rest;
+
+        rest << std::fixed << std::setprecision(3);
+        if (r.nRec > 1)
+        {
+            rest << (r.total - r.first)/(r.nRec - 1) << " s";
+        }
+        else
+        {
+            rest << "n/a (single record, raise --nvec)";
+        }
         LOG(Message) << "  " << std::left << std::setw(10) << r.label
                      << std::right << std::fixed << std::setprecision(3)
-                     << " min " << r.min << " s, max " << r.max << " s"
+                     << " first " << r.first << " s, rest mean " << rest.str()
+                     << ", min " << r.min << " s, max " << r.max << " s"
                      << std::endl;
     }
     for (auto &r: res)
@@ -261,8 +305,9 @@ int main(int argc, char *argv[])
     const bool doWrite = (mode == "write");
     const bool doRead  = (mode == "read");
     const bool doFerm  = (record == "all") || (record == "fermion");
+    const bool doBin1  = (record == "all") || (record == "bin1");
     const bool doProp  = (record == "all") || (record == "prop");
-    const bool doBin   = (record == "all") || (record == "bin12");
+    const bool doBin12 = (record == "all") || (record == "bin12");
 
     if (!doWrite && !doRead)
     {
@@ -273,10 +318,10 @@ int main(int argc, char *argv[])
         Grid_finalize();
         return EXIT_FAILURE;
     }
-    if (!doFerm && !doProp && !doBin)
+    if (!doFerm && !doBin1 && !doProp && !doBin12)
     {
-        LOG(Error) << "--record must be all, fermion, prop or bin12 (got '"
-                   << record << "')" << std::endl;
+        LOG(Error) << "--record must be all, fermion, bin1, prop or bin12 "
+                   << "(got '" << record << "')" << std::endl;
         Grid_finalize();
         return EXIT_FAILURE;
     }
@@ -286,7 +331,7 @@ int main(int argc, char *argv[])
         Grid_finalize();
         return EXIT_FAILURE;
     }
-    if ((doProp || doBin) && (nVec % 12 != 0))
+    if ((doProp || doBin12) && (nVec % 12 != 0))
     {
         LOG(Error) << "--nvec must be a multiple of 12 so that every record "
                    << "type moves the same total bytes (got " << nVec << ")"
@@ -320,17 +365,24 @@ int main(int argc, char *argv[])
             "fermion", stem + "_fermion", nVec, traj, doWrite, verify, grid,
             seed));
     }
+    if (doBin1)
+    {
+        typedef Lattice<iVector<FIMPL::SiteSpinor, 1>> Bin1Field;
+
+        res.push_back(runIo<Bin1Field>(
+            "bin1", stem + "_bin1", nVec, traj, doWrite, verify, grid, seed));
+    }
     if (doProp)
     {
         res.push_back(runIo<FIMPL::PropagatorField>(
             "prop", stem + "_prop", nVec/12, traj, doWrite, verify, grid,
             seed));
     }
-    if (doBin)
+    if (doBin12)
     {
-        typedef Lattice<iVector<FIMPL::SiteSpinor, 12>> BinnedField;
+        typedef Lattice<iVector<FIMPL::SiteSpinor, 12>> Bin12Field;
 
-        res.push_back(runIo<BinnedField>(
+        res.push_back(runIo<Bin12Field>(
             "bin12", stem + "_bin12", nVec/12, traj, doWrite, verify, grid,
             seed));
     }
