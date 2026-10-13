@@ -31,16 +31,4 @@ using namespace Grid;
 using namespace Hadrons;
 using namespace MUtilities;
 
-template class Grid::Hadrons::MUtilities::TA2ACoarseGrid<FIMPL, 48>;
-template class Grid::Hadrons::MUtilities::TA2ACoarseGrid<FIMPL, 64>;
-template class Grid::Hadrons::MUtilities::TA2ACoarseGrid<FIMPL, 96>;
-template class Grid::Hadrons::MUtilities::TA2ACoarseGrid<FIMPL, 144>;
-template class Grid::Hadrons::MUtilities::TA2ACoarseGrid<FIMPL, 149>;
-template class Grid::Hadrons::MUtilities::TA2ACoarseGrid<FIMPL, 173>;
-template class Grid::Hadrons::MUtilities::TA2ACoarseGrid<FIMPL, 192>;
-template class Grid::Hadrons::MUtilities::TA2ACoarseGrid<FIMPL, 196>;
-template class Grid::Hadrons::MUtilities::TA2ACoarseGrid<FIMPL, 197>;
-template class Grid::Hadrons::MUtilities::TA2ACoarseGrid<FIMPL, 216>;
-template class Grid::Hadrons::MUtilities::TA2ACoarseGrid<FIMPL, 256>;
-template class Grid::Hadrons::MUtilities::TA2ACoarseGrid<FIMPL, 221>;
-template class Grid::Hadrons::MUtilities::TA2ACoarseGrid<FIMPL, 304>;
+template class Grid::Hadrons::MUtilities::TA2ACoarseGrid<FIMPL>;

@@ -50,13 +50,11 @@ public:
 				    std::string, output);
 };
 
-template <typename FImpl, int binSize>
+template <typename FImpl>
 class TA2ACoarseGrid: public Module<A2ACoarseGridPar>
 {
 public:
     FERM_TYPE_ALIASES(FImpl,);
-  typedef typename FImpl::SiteSpinor::vector_type vector_type;
-  typedef iVector<iVector<iVector<vector_type, Nc>, Ns>, binSize > SiteSpinorSet;
 public:
     // constructor
     TA2ACoarseGrid(const std::string name);
@@ -67,46 +65,32 @@ public:
     virtual std::vector<std::string> getOutput(void);
     // setup
     virtual void setup(void);
-  template <typename FermionFieldSet>
-  void pokewrite(const std::vector<FermionField> &vec, std::vector<FermionFieldSet> &bvec);
     // execution
     virtual void execute(void);
 };
 
-MODULE_REGISTER_TMP(A2ACoarseGrid48, ARG(TA2ACoarseGrid<FIMPL, 48>), MUtilities);
-MODULE_REGISTER_TMP(A2ACoarseGrid64, ARG(TA2ACoarseGrid<FIMPL, 64>), MUtilities);
-MODULE_REGISTER_TMP(A2ACoarseGrid96, ARG(TA2ACoarseGrid<FIMPL, 96>), MUtilities);
-MODULE_REGISTER_TMP(A2ACoarseGrid144, ARG(TA2ACoarseGrid<FIMPL, 144>), MUtilities);
-MODULE_REGISTER_TMP(A2ACoarseGrid149, ARG(TA2ACoarseGrid<FIMPL, 149>), MUtilities);
-MODULE_REGISTER_TMP(A2ACoarseGrid173, ARG(TA2ACoarseGrid<FIMPL, 173>), MUtilities);
-MODULE_REGISTER_TMP(A2ACoarseGrid192, ARG(TA2ACoarseGrid<FIMPL, 192>), MUtilities);
-MODULE_REGISTER_TMP(A2ACoarseGrid196, ARG(TA2ACoarseGrid<FIMPL, 196>), MUtilities);
-MODULE_REGISTER_TMP(A2ACoarseGrid197, ARG(TA2ACoarseGrid<FIMPL, 197>), MUtilities);
-MODULE_REGISTER_TMP(A2ACoarseGrid216, ARG(TA2ACoarseGrid<FIMPL, 216>), MUtilities);
-MODULE_REGISTER_TMP(A2ACoarseGrid256, ARG(TA2ACoarseGrid<FIMPL, 256>), MUtilities);
-MODULE_REGISTER_TMP(A2ACoarseGrid221, ARG(TA2ACoarseGrid<FIMPL, 221>), MUtilities);
-MODULE_REGISTER_TMP(A2ACoarseGrid304, ARG(TA2ACoarseGrid<FIMPL, 304>), MUtilities);
+MODULE_REGISTER_TMP(A2ACoarseGrid, TA2ACoarseGrid<FIMPL>, MUtilities);
 
 /******************************************************************************
  *                       TA2ACoarseGrid implementation                        *
  ******************************************************************************/
 // constructor /////////////////////////////////////////////////////////////////
-template <typename FImpl, int binSize>
-TA2ACoarseGrid<FImpl, binSize>::TA2ACoarseGrid(const std::string name)
+template <typename FImpl>
+TA2ACoarseGrid<FImpl>::TA2ACoarseGrid(const std::string name)
 : Module<A2ACoarseGridPar>(name)
 {}
 
 // dependencies/products ///////////////////////////////////////////////////////
-template <typename FImpl, int binSize>
-std::vector<std::string> TA2ACoarseGrid<FImpl, binSize>::getInput(void)
+template <typename FImpl>
+std::vector<std::string> TA2ACoarseGrid<FImpl>::getInput(void)
 {
   std::vector<std::string> in = {par().fine};
     
   return in;
 }
 
-template <typename FImpl, int binSize>
-std::vector<std::string> TA2ACoarseGrid<FImpl, binSize>::getOutput(void)
+template <typename FImpl>
+std::vector<std::string> TA2ACoarseGrid<FImpl>::getOutput(void)
 {
   std::vector<std::string> out = {getName()};
   
@@ -114,8 +98,8 @@ std::vector<std::string> TA2ACoarseGrid<FImpl, binSize>::getOutput(void)
 }
 
 // setup ///////////////////////////////////////////////////////////////////////
-template <typename FImpl, int binSize>
-void TA2ACoarseGrid<FImpl, binSize>::setup(void)
+template <typename FImpl>
+void TA2ACoarseGrid<FImpl>::setup(void)
 {
   for( int mu = 0 ; mu < 4 ; ++mu )
     assert( par().blockSize[mu] > par().offsets[mu]);
@@ -125,8 +109,8 @@ void TA2ACoarseGrid<FImpl, binSize>::setup(void)
 }
 
 // execution ///////////////////////////////////////////////////////////////////
-template <typename FImpl, int binSize>
-void TA2ACoarseGrid<FImpl, binSize>::execute(void)
+template <typename FImpl>
+void TA2ACoarseGrid<FImpl>::execute(void)
 {
   typedef typename FImpl::SiteSpinor vobj;
   typedef typename vobj::scalar_type scalar_type;
@@ -153,23 +137,7 @@ void TA2ACoarseGrid<FImpl, binSize>::execute(void)
   // I/O if necessary
   if (!par().output.empty())
   {
-    // The write packs binSize fields into one SiteSpinorSet, so a bin that does
-    // not divide the array reads past the end of coarse on the last chunk.
-    if ( coarse.size() % binSize != 0 )
-    {
-      HADRONS_ERROR(Size, "bin size " + std::to_string(binSize)
-                          + " does not divide the " + std::to_string(coarse.size())
-                          + " mode vector");
-    }
-    std::vector<Lattice<SiteSpinorSet> > bvec(0,envGetGrid(Lattice<SiteSpinorSet>));
-    for( int i = 0 ; i < coarse.size() ; i += binSize ) {
-      Lattice<SiteSpinorSet> tmp(cgrid);
-      for ( int j = 0 ; j < binSize ; ++j ) {
-	pokeLorentz(tmp,coarse[i+j],j);
-      }
-      bvec.push_back(tmp);
-    }
-    A2AVectorsIo::write(par().output, bvec, false, vm().getTrajectory());
+    A2AVectorsIo::write(par().output, coarse, true, vm().getTrajectory());
   }
 }
 
