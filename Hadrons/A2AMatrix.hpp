@@ -371,6 +371,41 @@ public:
         return 8.*n;
     }
 
+    // accTrDense(acc, a, ta, space): acc += tr(a) for a single meson field with
+    // dense W rows and expanded columns, taken at timeslice ta.
+    //
+    // In the expanded picture tr(A) = sum_I A(I,I), and A(I,.) vanishes unless
+    // I is low or its dilution timeslice is ta -- so the diagonal collapses to
+    // one pass over the dense range, reading the column each dense row expands
+    // to. Both axes are the SAME mode space here: a trace only means anything
+    // for a field whose two legs are one flavour, and the shape check is what
+    // rejects a mixed field such as mf_sl.
+    template <typename C, typename Mat>
+    static inline void accTrDense(C &acc, const Mat &a, const std::size_t ta,
+                                  const A2AModeSpace &space)
+    {
+        const std::size_t nd = space.denseSize();
+        const std::size_t ne = space.expandedSize();
+
+        if (((std::size_t)a.rows() != nd) or ((std::size_t)a.cols() != ne))
+        {
+            HADRONS_ERROR(Size, "dense trace operand does not match the mode "
+                "space (got " + std::to_string(a.rows()) + "x"
+                + std::to_string(a.cols()) + ", expected " + std::to_string(nd)
+                + "x" + std::to_string(ne) + ")");
+        }
+
+        C tmp = 0.;
+
+        // A couple of thousand terms: a threaded accumulation would spend more
+        // in its critical section than the loop costs.
+        for (std::size_t i = 0; i < nd; ++i)
+        {
+            tmp += a(i, space.expand(i, ta));
+        }
+        acc += tmp;
+    }
+
     // mul(res, a, b): res = a*b
 #ifdef USE_MKL
     template <template <class, int...> class Mat, int... Opts>

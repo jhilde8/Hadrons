@@ -6,6 +6,7 @@ bin_PROGRAMS = \
   HadronsXmlValidate         \
   HadronsContractor          \
   ContractorDense            \
+  BubbleContractorDense      \
   K2pipiContractor
 
 EXTRA_PROGRAMS = \
@@ -39,6 +40,9 @@ HadronsContractor_LDADD   = -lHadrons -lGrid
 
 ContractorDense_SOURCES = ContractorDense.cpp
 ContractorDense_LDADD   = -lHadrons -lGrid
+
+BubbleContractorDense_SOURCES = BubbleContractorDense.cpp
+BubbleContractorDense_LDADD   = -lHadrons -lGrid
 
 FlexibleContractor_SOURCES = FlexibleContractor.cpp
 FlexibleContractor_LDADD   = -lHadrons -lGrid
