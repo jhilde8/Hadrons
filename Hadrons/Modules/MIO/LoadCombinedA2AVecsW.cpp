@@ -29,8 +29,5 @@ using namespace Grid;
 using namespace Hadrons;
 using namespace MIO;
 
-template class Grid::Hadrons::MIO::TLoadCombinedA2AVecsW<FIMPL, 0>;
-template class Grid::Hadrons::MIO::TLoadCombinedA2AVecsW<FIMPL, 200>;
-template class Grid::Hadrons::MIO::TLoadCombinedA2AVecsW<FIMPL, 100>;
-template class Grid::Hadrons::MIO::TLoadCombinedA2AVecsW<ZFIMPL, 200>;
-template class Grid::Hadrons::MIO::TLoadCombinedA2AVecsW<ZFIMPL, 100>;
+template class Grid::Hadrons::MIO::TLoadCombinedA2AVecsW<FIMPL>;
+template class Grid::Hadrons::MIO::TLoadCombinedA2AVecsW<ZFIMPL>;

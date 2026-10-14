@@ -1,5 +1,5 @@
 /*
- * A2ALowModeBinned.hpp, part of Hadrons (https://github.com/aportelli/Hadrons)
+ * A2ALowModes.hpp, part of Hadrons (https://github.com/aportelli/Hadrons)
  *
  * Copyright (C) 2015 - 2026
  *
@@ -25,8 +25,8 @@
  * directory.
  */
 /*  END LEGAL */
-#ifndef Hadrons_MUtilities_A2ALowModeBinned_hpp_
-#define Hadrons_MUtilities_A2ALowModeBinned_hpp_
+#ifndef Hadrons_MUtilities_A2ALowModes_hpp_
+#define Hadrons_MUtilities_A2ALowModes_hpp_
 #include <Hadrons/Global.hpp>
 #include <Hadrons/Module.hpp>
 #include <Hadrons/ModuleFactory.hpp>
@@ -37,29 +37,32 @@ BEGIN_HADRONS_NAMESPACE
 /******************************************************************************
  *                  Create low-mode all-to-all V & W vectors                  *
  ******************************************************************************/
+/*
+ * Each low mode's V and W are written as soon as they are built, one fermion
+ * field per file at <output>_v.<traj>/elem<i>.bin and <output>_w.<traj>/
+ * elem<i>.bin, i the eigenpack index. An empty output computes without
+ * writing.
+ */
 BEGIN_MODULE_NAMESPACE(MUtilities)
-class A2ALowModeBinnedPar: Serializable
+class A2ALowModesPar: Serializable
 {
 public:
-  GRID_SERIALIZABLE_CLASS_MEMBERS(A2ALowModeBinnedPar,
+  GRID_SERIALIZABLE_CLASS_MEMBERS(A2ALowModesPar,
                                   std::string, action,
                                   std::string, eigenPack,
-                                  std::string, output,
-                                  bool,        multiFile);
+                                  std::string, output);
 };
-template <typename FImpl, typename Pack, int binSize>
-class TA2ALowModeBinned : public Module<A2ALowModeBinnedPar>
+template <typename FImpl, typename Pack>
+class TA2ALowModes : public Module<A2ALowModesPar>
 {
 public:
     FERM_TYPE_ALIASES(FImpl,);
     typedef HADRONS_DEFAULT_SCHUR_A2A<FImpl> A2A;
-    typedef typename FImpl::SiteSpinor::vector_type vector_type;
-    typedef iVector<iVector<iVector<vector_type, Nc>, Ns>, binSize> SiteSpinorSet;
 public:
     // constructor
-    TA2ALowModeBinned(const std::string name);
+    TA2ALowModes(const std::string name);
     // destructor
-    virtual ~TA2ALowModeBinned(void) {};
+    virtual ~TA2ALowModes(void) {};
     // dependency relation
     virtual std::vector<std::string> getInput(void);
     virtual std::vector<std::string> getOutput(void);
@@ -70,25 +73,21 @@ public:
 private:
     unsigned int Nl_{0};
 };
-MODULE_REGISTER_TMP(A2ALowModeBinned100,
-    ARG(TA2ALowModeBinned<FIMPL, BaseFermionEigenPack<FIMPL>, 100>), MUtilities);
-MODULE_REGISTER_TMP(A2ALowModeBinned200,
-    ARG(TA2ALowModeBinned<FIMPL, BaseFermionEigenPack<FIMPL>, 200>), MUtilities);
-MODULE_REGISTER_TMP(ZA2ALowModeBinned100,
-    ARG(TA2ALowModeBinned<ZFIMPL, BaseFermionEigenPack<ZFIMPL>, 100>), MUtilities);
-MODULE_REGISTER_TMP(ZA2ALowModeBinned200,
-    ARG(TA2ALowModeBinned<ZFIMPL, BaseFermionEigenPack<ZFIMPL>, 200>), MUtilities);
+MODULE_REGISTER_TMP(A2ALowModes,
+    ARG(TA2ALowModes<FIMPL, BaseFermionEigenPack<FIMPL>>), MUtilities);
+MODULE_REGISTER_TMP(ZA2ALowModes,
+    ARG(TA2ALowModes<ZFIMPL, BaseFermionEigenPack<ZFIMPL>>), MUtilities);
 /******************************************************************************
- *                    TA2ALowModeBinned implementation                        *
+ *                       TA2ALowModes implementation                          *
  ******************************************************************************/
 // constructor /////////////////////////////////////////////////////////////////
-template <typename FImpl, typename Pack, int binSize>
-TA2ALowModeBinned<FImpl, Pack, binSize>::TA2ALowModeBinned(const std::string name)
-: Module<A2ALowModeBinnedPar>(name)
+template <typename FImpl, typename Pack>
+TA2ALowModes<FImpl, Pack>::TA2ALowModes(const std::string name)
+: Module<A2ALowModesPar>(name)
 {}
 // dependencies/products ///////////////////////////////////////////////////////
-template <typename FImpl, typename Pack, int binSize>
-std::vector<std::string> TA2ALowModeBinned<FImpl, Pack, binSize>::getInput(void)
+template <typename FImpl, typename Pack>
+std::vector<std::string> TA2ALowModes<FImpl, Pack>::getInput(void)
 {
     assert(!par().eigenPack.empty());
     std::vector<std::string> in = {par().action, par().eigenPack};
@@ -96,16 +95,16 @@ std::vector<std::string> TA2ALowModeBinned<FImpl, Pack, binSize>::getInput(void)
     return in;
 }
 
-template <typename FImpl, typename Pack, int binSize>
-std::vector<std::string> TA2ALowModeBinned<FImpl, Pack, binSize>::getOutput(void)
+template <typename FImpl, typename Pack>
+std::vector<std::string> TA2ALowModes<FImpl, Pack>::getOutput(void)
 {
     std::vector<std::string> out = {};
 
     return out;
 }
 // setup ///////////////////////////////////////////////////////////////////////
-template <typename FImpl, typename Pack, int binSize>
-void TA2ALowModeBinned<FImpl, Pack, binSize>::setup(void)
+template <typename FImpl, typename Pack>
+void TA2ALowModes<FImpl, Pack>::setup(void)
 {
     assert(!par().eigenPack.empty());
     auto &action = envGet(FMat, par().action);
@@ -113,11 +112,8 @@ void TA2ALowModeBinned<FImpl, Pack, binSize>::setup(void)
     int  Ls      = env().getObjectLs(par().action);
 
     Nl_ = epack.evec.size();
-    assert(Nl_ % binSize == 0);
     envTmpLat(FermionField, "v");
     envTmpLat(FermionField, "w");
-    envTmpLat(Lattice<SiteSpinorSet>, "vBin");
-    envTmpLat(Lattice<SiteSpinorSet>, "wBin");
     if (Ls > 1)
     {
         envTmpLat(FermionField, "f5", Ls);
@@ -125,29 +121,17 @@ void TA2ALowModeBinned<FImpl, Pack, binSize>::setup(void)
     envTmp(A2A, "a2a", 1, action);
 }
 // execution ///////////////////////////////////////////////////////////////////
-template <typename FImpl, typename Pack, int binSize>
-void TA2ALowModeBinned<FImpl, Pack, binSize>::execute(void)
+template <typename FImpl, typename Pack>
+void TA2ALowModes<FImpl, Pack>::execute(void)
 {
     int Ls = env().getObjectLs(par().action);
     envGetTmp(FermionField, v);
     envGetTmp(FermionField, w);
-    envGetTmp(Lattice<SiteSpinorSet>, vBin);
-    envGetTmp(Lattice<SiteSpinorSet>, wBin);
     envGetTmp(A2A, a2a);
-    ScidacWriter vWriter(vBin.Grid()->IsBoss());
-    ScidacWriter wWriter(wBin.Grid()->IsBoss());
 
     LOG(Message) << "Getting low-mode part of all-to-all vectors "
                  << " from '" << par().eigenPack << "' ("
                  << Nl_ << " eigenPack modes)" << std::endl;
-
-    if ((!par().output.empty()) && (!par().multiFile))
-    {
-        A2AVectorsIo::openWriter(vWriter, par().output + "_v", vBin.Grid(),
-                                 vm().getTrajectory());
-        A2AVectorsIo::openWriter(wWriter, par().output + "_w", wBin.Grid(),
-                                 vm().getTrajectory());
-    }
 
     // Low modes
     for (unsigned int il = 0; il < Nl_; il++)
@@ -178,46 +162,21 @@ void TA2ALowModeBinned<FImpl, Pack, binSize>::execute(void)
         }
         stopTimer("W low mode");
 
-        pokeLorentz(vBin, v, il % binSize);
-        pokeLorentz(wBin, w, il % binSize);
-
-        if (((il + 1) % binSize == 0) && (!par().output.empty()))
+        if (!par().output.empty())
         {
-            unsigned int ib = il / binSize;
-
             startTimer("V I/O");
-            if (par().multiFile)
-            {
-                A2AVectorsIo::writeElement(par().output + "_v", vBin, ib,
-                                           vm().getTrajectory());
-            }
-            else
-            {
-                A2AVectorsIo::writeRecord(vWriter, vBin, ib);
-            }
+            A2AVectorsIo::writeElement(par().output + "_v", v, il,
+                                       vm().getTrajectory());
             stopTimer("V I/O");
             startTimer("W I/O");
-            if (par().multiFile)
-            {
-                A2AVectorsIo::writeElement(par().output + "_w", wBin, ib,
-                                           vm().getTrajectory());
-            }
-            else
-            {
-                A2AVectorsIo::writeRecord(wWriter, wBin, ib);
-            }
+            A2AVectorsIo::writeElement(par().output + "_w", w, il,
+                                       vm().getTrajectory());
             stopTimer("W I/O");
         }
-    }
-
-    if ((!par().output.empty()) && (!par().multiFile))
-    {
-        vWriter.close();
-        wWriter.close();
     }
 }
 
 END_MODULE_NAMESPACE
 
 END_HADRONS_NAMESPACE
-#endif // Hadrons_MUtilities_A2ALowModeBinned_hpp_
+#endif // Hadrons_MUtilities_A2ALowModes_hpp_

@@ -39,7 +39,7 @@ BEGIN_HADRONS_NAMESPACE
  *  convention: V is whatever the injected solver returns and W is the raw    *
  *  noise, so nothing here builds or touches a Schur operator. Kept separate  *
  *  from the low-mode classes below so that a high-mode-only module (e.g.     *
- *  MSolver::A2AHighModeVBinned) does not allocate their four red-black 5D    *
+ *  MSolver::A2AHighModeV) does not allocate their four red-black 5D          *
  *  scratch fields, which only the low-mode reconstruction needs.             *
  ******************************************************************************/
 template <typename FImpl>
@@ -120,11 +120,6 @@ public:
                       const FermionField &evec, const Real &eval);
     void makeLowModeW5D(FermionField &wout_4d, FermionField &wout_5d,
                         const FermionField &evec, const Real &eval);
-    // Exposes the Schur operator used internally by makeLowModeW/op_, so
-    // callers (e.g. A2ALowModeCoarseBinned's in-program eigenvector check) can
-    // validate evec_i against the exact same operator this class uses to build
-    // V/W rather than building a second one themselves.
-    SchurOperatorBase<FermionField>& op(void);
 private:
     using A2ALowModesSchurBase<FImpl>::action_;
     using A2ALowModesSchurBase<FImpl>::fGrid_;
@@ -153,8 +148,6 @@ public:
                       const FermionField &evec, const Real &eval);
     void makeLowModeW5D(FermionField &wout_4d, FermionField &wout_5d,
                         const FermionField &evec, const Real &eval);
-    // See the note on A2ALowModesSchurDiagTwo::op().
-    SchurOperatorBase<FermionField>& op(void);
 private:
     using A2ALowModesSchurBase<FImpl>::action_;
     using A2ALowModesSchurBase<FImpl>::fGrid_;
@@ -185,7 +178,7 @@ public:
                       const bool multiFile, const int trajectory = -1);
     // Write a single element under an explicit, caller-supplied index, without
     // ever holding a full std::vector<Field> resident -- used by modules that
-    // stream their output bin by bin. Always writes one file per element
+    // stream their output one vector at a time. Always writes one file per element
     // (i.e. the multiFile=true layout of write() above). The single-growing-
     // file (multiFile=false) counterpart is openWriter/writeRecord below: the
     // caller holds the ScidacWriter open across calls and streams records
@@ -371,6 +364,8 @@ A2ALowModesSchurDiagTwo<FImpl>::A2ALowModesSchurDiagTwo(FMat &action)
 , op_(action)
 {}
 
+// Equals SchurRedBlackDiagTwoSolve::RedBlackSolution with src_e = 0 and
+// sol_o = evec/eval.
 template <typename FImpl>
 void A2ALowModesSchurDiagTwo<FImpl>::makeLowModeV(FermionField &vout, const FermionField &evec, const Real &eval)
 {
@@ -452,12 +447,6 @@ void A2ALowModesSchurDiagTwo<FImpl>::makeLowModeW5D(FermionField &wout_4d,
     action_.ExportPhysicalFermionSource(wout_5d, wout_4d);
 }
 
-template <typename FImpl>
-SchurOperatorBase<typename FImpl::FermionField>& A2ALowModesSchurDiagTwo<FImpl>::op(void)
-{
-    return op_;
-}
-
 /******************************************************************************
  *               A2ALowModesSchurDiagOne template implementation               *
  ******************************************************************************/
@@ -467,6 +456,8 @@ A2ALowModesSchurDiagOne<FImpl>::A2ALowModesSchurDiagOne(FMat &action)
 , op_(action)
 {}
 
+// Equals SchurRedBlackDiagOneSolve::RedBlackSolution with src_e = 0 and
+// sol_o = evec/eval.
 template <typename FImpl>
 void A2ALowModesSchurDiagOne<FImpl>::makeLowModeV(FermionField &vout, const FermionField &evec, const Real &eval)
 {
@@ -544,12 +535,6 @@ void A2ALowModesSchurDiagOne<FImpl>::makeLowModeW5D(FermionField &wout_4d,
     makeLowModeW(tmp5_, evec, eval);
     action_.DminusDag(tmp5_, wout_5d);
     action_.ExportPhysicalFermionSource(wout_5d, wout_4d);
-}
-
-template <typename FImpl>
-SchurOperatorBase<typename FImpl::FermionField>& A2ALowModesSchurDiagOne<FImpl>::op(void)
-{
-    return op_;
 }
 
 /******************************************************************************

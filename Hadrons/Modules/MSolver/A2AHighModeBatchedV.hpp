@@ -1,5 +1,5 @@
 /*
- * A2AHighModeBatchedVBinned.hpp, part of Hadrons (https://github.com/aportelli/Hadrons)
+ * A2AHighModeBatchedV.hpp, part of Hadrons (https://github.com/aportelli/Hadrons)
  *
  * Copyright (C) 2015 - 2026
  *
@@ -25,8 +25,8 @@
  * directory.
  */
 /*  END LEGAL */
-#ifndef Hadrons_MSolver_A2AHighModeBatchedVBinned_hpp_
-#define Hadrons_MSolver_A2AHighModeBatchedVBinned_hpp_
+#ifndef Hadrons_MSolver_A2AHighModeBatchedV_hpp_
+#define Hadrons_MSolver_A2AHighModeBatchedV_hpp_
 #include <Hadrons/Global.hpp>
 #include <Hadrons/Module.hpp>
 #include <Hadrons/ModuleFactory.hpp>
@@ -39,12 +39,12 @@ BEGIN_HADRONS_NAMESPACE
  *            Create high-mode all-to-all V vectors, batched solves           *
  ******************************************************************************/
 /*
- * Batched counterpart of MSolver::A2AHighModeVBinned. Identical output; the
- * only difference is that batchSize sources are handed to the solver in one
- * call rather than one at a time, through Solver's vector entry point.
+ * Batched counterpart of MSolver::A2AHighModeV. Identical output; the only
+ * difference is that batchSize sources are handed to the solver in one call
+ * rather than one at a time, through Solver's vector entry point.
  *
  *   batchSize  sources per solver call; 0 and 1 both mean no batching. Must
- *              divide binSize, so a batch never straddles a bin boundary.
+ *              divide the number of vectors computed by this run.
  *
  * What the batch buys depends entirely on the solver it is pointed at. The
  * vector SchurRedBlackBase::operator() builds every red-black source first,
@@ -55,51 +55,50 @@ BEGIN_HADRONS_NAMESPACE
  * deflated together and then solved one source at a time by
  * OperatorFunction's base-class loop. That combination is the point of this
  * module: batched deflation with provably unchanged solves, so output must be
- * bit-identical to A2AHighModeVBinned at any batchSize.
+ * bit-identical to A2AHighModeV at any batchSize.
  *
- * Bin range: a hit of fermSize noise vectors is written as fermSize/binSize
- * bins. initBin and nBin select the bins [initBin, initBin + nBin) computed by
- * this run, so one hit can be split across several jobs (e.g. to fit a
- * walltime cap) or resumed after a failure from the first incomplete bin.
+ * Each V vector is written as soon as its batch is solved, one fermion field
+ * per file at <output>.<traj>/elem<i>.bin, i the noise vector index. An empty
+ * output computes without writing.
  *
- *   initBin  first bin to compute (default 0)
- *   nBin     number of bins to compute; 0 (the default) means all bins from
- *            initBin to the end of the hit
+ * Vector range: initVec and nVec select the noise vectors
+ * [initVec, initVec + nVec) computed by this run, so one hit can be split
+ * across several jobs (e.g. to fit a walltime cap) or resumed after a failure
+ * from the first missing element.
  *
- * Bin indices are absolute: bin b is always written as element b, whichever
- * run computes it. Any range other than the full hit requires multiFile=true,
- * since a single-file run over a partial range would leave a truncated file.
- * Nothing is skipped automatically: which bins a run computes is exactly what
- * the XML says.
+ *   initVec  first noise vector to compute (default 0)
+ *   nVec     number of noise vectors to compute; 0 (the default) means all
+ *            vectors from initVec to the end of the hit
+ *
+ * Indices are absolute: vector i is always written as element i, whichever
+ * run computes it. Nothing is skipped automatically: which vectors a run
+ * computes is exactly what the XML says.
  */
 BEGIN_MODULE_NAMESPACE(MSolver)
-class A2AHighModeBatchedVBinnedPar: Serializable
+class A2AHighModeBatchedVPar: Serializable
 {
 public:
-  GRID_SERIALIZABLE_CLASS_MEMBERS(A2AHighModeBatchedVBinnedPar,
+  GRID_SERIALIZABLE_CLASS_MEMBERS(A2AHighModeBatchedVPar,
                                   std::string,  noise,
                                   std::string,  action,
                                   std::string,  solver,
                                   std::string,  output,
-                                  bool,         multiFile,
-                                  unsigned int, initBin,
-                                  unsigned int, nBin,
+                                  unsigned int, initVec,
+                                  unsigned int, nVec,
                                   unsigned int, batchSize);
 };
-template <typename FImpl, int binSize>
-class TA2AHighModeBatchedVBinned : public Module<A2AHighModeBatchedVBinnedPar>
+template <typename FImpl>
+class TA2AHighModeBatchedV : public Module<A2AHighModeBatchedVPar>
 {
 public:
     FERM_TYPE_ALIASES(FImpl,);
     SOLVER_TYPE_ALIASES(FImpl,);
     typedef A2AHighModes<FImpl> A2A;
-    typedef typename FImpl::SiteSpinor::vector_type vector_type;
-    typedef iVector<iVector<iVector<vector_type, Nc>, Ns>, binSize> SiteSpinorSet;
 public:
     // constructor
-    TA2AHighModeBatchedVBinned(const std::string name);
+    TA2AHighModeBatchedV(const std::string name);
     // destructor
-    virtual ~TA2AHighModeBatchedVBinned(void) {};
+    virtual ~TA2AHighModeBatchedV(void) {};
     // dependency relation
     virtual std::vector<std::string> getInput(void);
     virtual std::vector<std::string> getOutput(void);
@@ -108,37 +107,28 @@ public:
     // execution
     virtual void execute(void);
 private:
-    struct BinRange
+    struct VecRange
     {
         unsigned int first;
         unsigned int count;
     };
-    // bins computed by this run, validated against the noise size
-    BinRange binRange(unsigned int fermSize);
-    // sources per solver call, validated against binSize
-    unsigned int batchSize(void);
+    // noise vectors computed by this run, validated against the noise size
+    VecRange vecRange(unsigned int fermSize);
+    // sources per solver call, validated against the vector range
+    unsigned int batchSize(const VecRange &range);
 };
-MODULE_REGISTER_TMP(A2AHighModeBatchedVBinned12,
-    ARG(TA2AHighModeBatchedVBinned<FIMPL, 12>), MSolver);
-MODULE_REGISTER_TMP(A2AHighModeBatchedVBinned16,
-    ARG(TA2AHighModeBatchedVBinned<FIMPL, 16>), MSolver);
-MODULE_REGISTER_TMP(A2AHighModeBatchedVBinned96,
-    ARG(TA2AHighModeBatchedVBinned<FIMPL, 96>), MSolver);
-MODULE_REGISTER_TMP(A2AHighModeBatchedVBinned128,
-    ARG(TA2AHighModeBatchedVBinned<FIMPL, 128>), MSolver);
-MODULE_REGISTER_TMP(A2AHighModeBatchedVBinned192,
-    ARG(TA2AHighModeBatchedVBinned<FIMPL, 192>), MSolver);
+MODULE_REGISTER_TMP(A2AHighModeBatchedV, ARG(TA2AHighModeBatchedV<FIMPL>), MSolver);
 /******************************************************************************
- *                 TA2AHighModeBatchedVBinned implementation                  *
+ *                    TA2AHighModeBatchedV implementation                     *
  ******************************************************************************/
 // constructor /////////////////////////////////////////////////////////////////
-template <typename FImpl, int binSize>
-TA2AHighModeBatchedVBinned<FImpl, binSize>::TA2AHighModeBatchedVBinned(const std::string name)
-: Module<A2AHighModeBatchedVBinnedPar>(name)
+template <typename FImpl>
+TA2AHighModeBatchedV<FImpl>::TA2AHighModeBatchedV(const std::string name)
+: Module<A2AHighModeBatchedVPar>(name)
 {}
 // dependencies/products ///////////////////////////////////////////////////////
-template <typename FImpl, int binSize>
-std::vector<std::string> TA2AHighModeBatchedVBinned<FImpl, binSize>::getInput(void)
+template <typename FImpl>
+std::vector<std::string> TA2AHighModeBatchedV<FImpl>::getInput(void)
 {
     // MSolver::MixedPrecisionRBPrecCG always creates both a plain and a
     // "_subtract" solver object regardless of whether an outer guesser was
@@ -151,61 +141,55 @@ std::vector<std::string> TA2AHighModeBatchedVBinned<FImpl, binSize>::getInput(vo
     return in;
 }
 
-template <typename FImpl, int binSize>
-std::vector<std::string> TA2AHighModeBatchedVBinned<FImpl, binSize>::getOutput(void)
+template <typename FImpl>
+std::vector<std::string> TA2AHighModeBatchedV<FImpl>::getOutput(void)
 {
     std::vector<std::string> out = {};
     return out;
 }
-// bin range ///////////////////////////////////////////////////////////////////
-template <typename FImpl, int binSize>
-typename TA2AHighModeBatchedVBinned<FImpl, binSize>::BinRange
-TA2AHighModeBatchedVBinned<FImpl, binSize>::binRange(unsigned int fermSize)
+// vector range ////////////////////////////////////////////////////////////////
+template <typename FImpl>
+typename TA2AHighModeBatchedV<FImpl>::VecRange
+TA2AHighModeBatchedV<FImpl>::vecRange(unsigned int fermSize)
 {
-    unsigned int nTotal = fermSize/binSize;
-    BinRange     range;
+    VecRange range;
 
-    range.first = par().initBin;
-    if (range.first >= nTotal)
+    range.first = par().initVec;
+    if (range.first >= fermSize)
     {
-        HADRONS_ERROR(Argument, "initBin = " + std::to_string(range.first)
-                      + " is outside the " + std::to_string(nTotal)
-                      + " bins of noise '" + par().noise + "'");
+        HADRONS_ERROR(Argument, "initVec = " + std::to_string(range.first)
+                      + " is outside the " + std::to_string(fermSize)
+                      + " vectors of noise '" + par().noise + "'");
     }
-    range.count = (par().nBin == 0) ? nTotal - range.first : par().nBin;
-    if (range.first + range.count > nTotal)
+    range.count = (par().nVec == 0) ? fermSize - range.first : par().nVec;
+    if (range.first + range.count > fermSize)
     {
-        HADRONS_ERROR(Argument, "bins [" + std::to_string(range.first) + ", "
+        HADRONS_ERROR(Argument, "vectors [" + std::to_string(range.first) + ", "
                       + std::to_string(range.first + range.count)
-                      + ") exceed the " + std::to_string(nTotal)
-                      + " bins of noise '" + par().noise + "'");
-    }
-    if ((range.count < nTotal) && !par().multiFile)
-    {
-        HADRONS_ERROR(Argument, "a partial bin range (initBin/nBin) requires "
-                      "multiFile = true");
+                      + ") exceed the " + std::to_string(fermSize)
+                      + " vectors of noise '" + par().noise + "'");
     }
 
     return range;
 }
 // batch size //////////////////////////////////////////////////////////////////
-template <typename FImpl, int binSize>
-unsigned int TA2AHighModeBatchedVBinned<FImpl, binSize>::batchSize(void)
+template <typename FImpl>
+unsigned int TA2AHighModeBatchedV<FImpl>::batchSize(const VecRange &range)
 {
     unsigned int nBatch = (par().batchSize == 0) ? 1 : par().batchSize;
 
-    if (binSize % nBatch != 0)
+    if (range.count % nBatch != 0)
     {
         HADRONS_ERROR(Argument, "batchSize = " + std::to_string(nBatch)
-                      + " does not divide the bin size "
-                      + std::to_string(binSize));
+                      + " does not divide the " + std::to_string(range.count)
+                      + " vectors computed by this run");
     }
 
     return nBatch;
 }
 // setup ///////////////////////////////////////////////////////////////////////
-template <typename FImpl, int binSize>
-void TA2AHighModeBatchedVBinned<FImpl, binSize>::setup(void)
+template <typename FImpl>
+void TA2AHighModeBatchedV<FImpl>::setup(void)
 {
     auto &noise          = envGet(SpinColorDiagonalNoise<FImpl>, par().noise);
     auto &action         = envGet(FMat, par().action);
@@ -219,14 +203,11 @@ void TA2AHighModeBatchedVBinned<FImpl, binSize>::setup(void)
     // checkerboard-consistency assert in Lattice_ET.h.
     auto         &solver = solverSubtract.hasGuesser() ? solverSubtract : solverPlain;
     int          Ls      = env().getObjectLs(par().action);
-    unsigned int nBatch  = batchSize();
-    assert(noise.fermSize() % binSize == 0);
-    binRange(noise.fermSize());
+    unsigned int nBatch  = batchSize(vecRange(noise.fermSize()));
     envTmp(std::vector<FermionField>, "noiseBatch", 1, nBatch,
            envGetGrid(FermionField));
     envTmp(std::vector<FermionField>, "vBatch", 1, nBatch,
            envGetGrid(FermionField));
-    envTmpLat(Lattice<SiteSpinorSet>, "vBin");
     if (Ls > 1)
     {
         envTmp(std::vector<FermionField>, "f5Batch", Ls, nBatch,
@@ -235,34 +216,25 @@ void TA2AHighModeBatchedVBinned<FImpl, binSize>::setup(void)
     envTmp(A2A, "a2a", 1, action, solver);
 }
 // execution ///////////////////////////////////////////////////////////////////
-template <typename FImpl, int binSize>
-void TA2AHighModeBatchedVBinned<FImpl, binSize>::execute(void)
+template <typename FImpl>
+void TA2AHighModeBatchedV<FImpl>::execute(void)
 {
     auto         &noise  = envGet(SpinColorDiagonalNoise<FImpl>, par().noise);
     int          Ls      = env().getObjectLs(par().action);
-    BinRange     range   = binRange(noise.fermSize());
-    unsigned int nBatch  = batchSize();
-    unsigned int ihBegin = binSize*range.first;
-    unsigned int ihEnd   = binSize*(range.first + range.count);
+    VecRange     range   = vecRange(noise.fermSize());
+    unsigned int nBatch  = batchSize(range);
+    unsigned int ihBegin = range.first;
+    unsigned int ihEnd   = range.first + range.count;
     envGetTmp(std::vector<FermionField>, noiseBatch);
     envGetTmp(std::vector<FermionField>, vBatch);
-    envGetTmp(Lattice<SiteSpinorSet>, vBin);
     envGetTmp(A2A, a2a);
-    ScidacWriter vWriter(vBin.Grid()->IsBoss());
     LOG(Message) << "Computing high-mode part of all-to-all V vectors "
                  << "using noise '" << par().noise << "' ("
                  << noise.fermSize() << " noise vectors)" << std::endl;
-    LOG(Message) << "Bins [" << range.first << ", "
-                 << range.first + range.count << ") of "
-                 << noise.fermSize()/binSize << " (noise vectors ["
-                 << ihBegin << ", " << ihEnd << "))" << std::endl;
+    LOG(Message) << "Noise vectors [" << ihBegin << ", " << ihEnd << ")"
+                 << std::endl;
     LOG(Message) << "Solving " << nBatch << " source(s) per solver call"
                  << std::endl;
-    if ((!par().output.empty()) && (!par().multiFile))
-    {
-        A2AVectorsIo::openWriter(vWriter, par().output, vBin.Grid(),
-                                 vm().getTrajectory());
-    }
     // High modes
     for (unsigned int ihBase = ihBegin; ihBase < ihEnd; ihBase += nBatch)
     {
@@ -287,34 +259,20 @@ void TA2AHighModeBatchedVBinned<FImpl, binSize>::execute(void)
             a2a.makeHighModeV5D(vBatch, f5Batch, noiseBatch);
         }
         stopTimer("V high mode");
-        for (unsigned int j = 0; j < nBatch; ++j)
+        if (!par().output.empty())
         {
-            pokeLorentz(vBin, vBatch[j], (ihBase + j) % binSize);
-        }
-
-        if (((ihBase + nBatch) % binSize == 0) && (!par().output.empty()))
-        {
-            unsigned int ib = (ihBase + nBatch - 1)/binSize;
             startTimer("V I/O");
-            if (par().multiFile)
+            for (unsigned int j = 0; j < nBatch; ++j)
             {
-                A2AVectorsIo::writeElement(par().output, vBin, ib,
+                A2AVectorsIo::writeElement(par().output, vBatch[j], ihBase + j,
                                            vm().getTrajectory());
-            }
-            else
-            {
-                A2AVectorsIo::writeRecord(vWriter, vBin, ib);
             }
             stopTimer("V I/O");
         }
-    }
-    if ((!par().output.empty()) && (!par().multiFile))
-    {
-        vWriter.close();
     }
 }
 
 END_MODULE_NAMESPACE
 
 END_HADRONS_NAMESPACE
-#endif // Hadrons_MSolver_A2AHighModeBatchedVBinned_hpp_
+#endif // Hadrons_MSolver_A2AHighModeBatchedV_hpp_

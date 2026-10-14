@@ -1,5 +1,5 @@
 /*
- * A2ALowModeBinned.cpp, part of Hadrons (https://github.com/aportelli/Hadrons)
+ * A2AHighModeBatchedV.cpp, part of Hadrons (https://github.com/aportelli/Hadrons)
  *
  * Copyright (C) 2015 - 2026
  *
@@ -22,17 +22,8 @@
  * directory.
  */
 /*  END LEGAL */
-#include <Hadrons/Modules/MUtilities/A2ALowModeBinned.hpp>
-
+#include <Hadrons/Modules/MSolver/A2AHighModeBatchedV.hpp>
 using namespace Grid;
 using namespace Hadrons;
-using namespace MUtilities;
-
-template class HADRONS_NAMESPACE::MUtilities::TA2ALowModeBinned<
-    FIMPL, BaseFermionEigenPack<FIMPL>, 100>;
-template class HADRONS_NAMESPACE::MUtilities::TA2ALowModeBinned<
-    FIMPL, BaseFermionEigenPack<FIMPL>, 200>;
-template class HADRONS_NAMESPACE::MUtilities::TA2ALowModeBinned<
-    ZFIMPL, BaseFermionEigenPack<ZFIMPL>, 100>;
-template class HADRONS_NAMESPACE::MUtilities::TA2ALowModeBinned<
-    ZFIMPL, BaseFermionEigenPack<ZFIMPL>, 200>;
+using namespace MSolver;
+template class HADRONS_NAMESPACE::MSolver::TA2AHighModeBatchedV<FIMPL>;

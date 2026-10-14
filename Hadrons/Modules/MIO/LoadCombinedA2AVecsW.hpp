@@ -31,14 +31,14 @@
 #include <Hadrons/ModuleFactory.hpp>
 #include <Hadrons/A2AVectors.hpp>
 #include <Hadrons/DilutedNoise.hpp>
-#include <Grid/qcd/utils/A2Autils.h>
 
 BEGIN_HADRONS_NAMESPACE
 
 /******************************************************************************
  *  Assemble a full A2A W vector array in the dense/combined high-mode       *
- *  representation: an optional block of low modes (nLow > 0) read binned    *
- *  from disk, followed by Nsc = 12 dense fermion fields per hit expanded    *
+ *  representation: an optional block of low modes (nLow > 0) read from     *
+ *  disk, one fermion field per file, <lowFilestem>.<traj>/elem<i>.bin,       *
+ *  followed by Nsc = 12 dense fermion fields per hit expanded               *
  *  from the raw noise (one field per spin-color index, all timeslice        *
  *  sources superimposed), instead of Nsc*nt time-diluted fields per hit.    *
  *  Since the meson-field GEMM is batched over timeslices and never sums     *
@@ -54,10 +54,8 @@ BEGIN_HADRONS_NAMESPACE
  *  convention for all contractor-side index math.                            *
  *                                                                            *
  *  No 1/nHit normalization is applied here: by convention the hit-average   *
- *  factor lives entirely on the V side (see MIO::LoadBinnedA2AVecsV), and   *
- *  W stays the raw unit-modulus noise. The fully expanded fallback for      *
- *  this module is MIO::LoadBinnedA2AVecsW; the file-based V/W loader is     *
- *  MIO::LoadCombinedA2AVecsV.                                                 *
+ *  factor lives entirely on the V side (see MIO::LoadCombinedA2AVecsV), and *
+ *  W stays the raw unit-modulus noise.                                       *
  ******************************************************************************/
 BEGIN_MODULE_NAMESPACE(MIO)
 
@@ -70,12 +68,11 @@ public:
                                     std::string,  noise);
 };
 
-template <typename FImpl, int lowBinSize>
+template <typename FImpl>
 class TLoadCombinedA2AVecsW: public Module<LoadCombinedA2AVecsWPar>
 {
 public:
     FERM_TYPE_ALIASES(FImpl,);
-    typedef iVector<typename FImpl::SiteSpinor, lowBinSize> LowBinnedSpinor;
 public:
     // constructor
     TLoadCombinedA2AVecsW(const std::string name);
@@ -90,32 +87,29 @@ public:
     virtual void execute(void);
 };
 
-MODULE_REGISTER_TMP(LoadCombinedA2AVecsW, ARG(TLoadCombinedA2AVecsW<FIMPL, 0>), MIO);
-MODULE_REGISTER_TMP(LoadCombinedA2AVecsW200,ARG(TLoadCombinedA2AVecsW<FIMPL, 200>), MIO);
-MODULE_REGISTER_TMP(LoadCombinedA2AVecsW100, ARG(TLoadCombinedA2AVecsW<FIMPL, 100>), MIO);
-MODULE_REGISTER_TMP(LoadZCombinedA2AVecsW200, ARG(TLoadCombinedA2AVecsW<ZFIMPL, 200>), MIO);
-MODULE_REGISTER_TMP(LoadZCombinedA2AVecsW100, ARG(TLoadCombinedA2AVecsW<ZFIMPL, 100>), MIO);
+MODULE_REGISTER_TMP(LoadCombinedA2AVecsW,  ARG(TLoadCombinedA2AVecsW<FIMPL>),  MIO);
+MODULE_REGISTER_TMP(LoadZCombinedA2AVecsW, ARG(TLoadCombinedA2AVecsW<ZFIMPL>), MIO);
 
 /******************************************************************************
  *                    TLoadCombinedA2AVecsW implementation                       *
  ******************************************************************************/
 // constructor /////////////////////////////////////////////////////////////////
-template <typename FImpl, int lowBinSize>
-TLoadCombinedA2AVecsW<FImpl, lowBinSize>::TLoadCombinedA2AVecsW(const std::string name)
+template <typename FImpl>
+TLoadCombinedA2AVecsW<FImpl>::TLoadCombinedA2AVecsW(const std::string name)
 : Module<LoadCombinedA2AVecsWPar>(name)
 {}
 
 // dependencies/products ///////////////////////////////////////////////////////
-template <typename FImpl, int lowBinSize>
-std::vector<std::string> TLoadCombinedA2AVecsW<FImpl, lowBinSize>::getInput(void)
+template <typename FImpl>
+std::vector<std::string> TLoadCombinedA2AVecsW<FImpl>::getInput(void)
 {
     std::vector<std::string> in = {par().noise};
 
     return in;
 }
 
-template <typename FImpl, int lowBinSize>
-std::vector<std::string> TLoadCombinedA2AVecsW<FImpl, lowBinSize>::getOutput(void)
+template <typename FImpl>
+std::vector<std::string> TLoadCombinedA2AVecsW<FImpl>::getOutput(void)
 {
     std::vector<std::string> out = {getName()};
 
@@ -123,26 +117,11 @@ std::vector<std::string> TLoadCombinedA2AVecsW<FImpl, lowBinSize>::getOutput(voi
 }
 
 // setup ///////////////////////////////////////////////////////////////////////
-template <typename FImpl, int lowBinSize>
-void TLoadCombinedA2AVecsW<FImpl, lowBinSize>::setup(void)
+template <typename FImpl>
+void TLoadCombinedA2AVecsW<FImpl>::setup(void)
 {
     auto &noise = envGet(SpinColorDiagonalNoise<FImpl>, par().noise);
 
-    if constexpr (lowBinSize == 0)
-    {
-        if (par().nLow > 0)
-        {
-            HADRONS_ERROR(Argument, "nLow = " + std::to_string(par().nLow)
-                                    + " but this high-only loader has no "
-                                    "low-mode block (low bin size 0)");
-        }
-    }
-    else if (par().nLow % lowBinSize != 0)
-    {
-        HADRONS_ERROR(Size, "nLow (" + std::to_string(par().nLow)
-                            + ") is not a multiple of the low-mode bin size ("
-                            + std::to_string(lowBinSize) + ")");
-    }
     if ((par().nLow > 0) && par().lowFilestem.empty())
     {
         HADRONS_ERROR(Argument, "nLow > 0 but lowFilestem is empty");
@@ -162,38 +141,24 @@ void TLoadCombinedA2AVecsW<FImpl, lowBinSize>::setup(void)
 }
 
 // execution ///////////////////////////////////////////////////////////////////
-template <typename FImpl, int lowBinSize>
-void TLoadCombinedA2AVecsW<FImpl, lowBinSize>::execute(void)
+template <typename FImpl>
+void TLoadCombinedA2AVecsW<FImpl>::execute(void)
 {
     auto         &noise = envGet(SpinColorDiagonalNoise<FImpl>, par().noise);
     auto         &out   = envGet(std::vector<FermionField>, getName());
     const int    nsc    = Ns*FImpl::Dimension;
     unsigned int offset = 0;
 
-    // Discarded for lowBinSize = 0, so iVector<SiteSpinor, 0> is never built.
-    if constexpr (lowBinSize > 0)
+    if (par().nLow > 0)
     {
-        if (par().nLow > 0)
+        LOG(Message) << "Loading " << par().nLow << " low-mode A2A vectors from '"
+                     << par().lowFilestem << "'" << std::endl;
+        for (unsigned int i = 0; i < par().nLow; ++i)
         {
-            int Nb = par().nLow / lowBinSize;
-            // One bin resident, not Nb. setup() has already allocated the whole
-            // output array, and A2AVectorsIo::read opens, reads and closes one file
-            // per element anyway, so unpacking each bin as it lands is the same IO
-            // for a factor lowBinSize less staging. Slots and order are unchanged:
-            // the bin index moves from UnpackBinnedVectors' own loop into offset.
-            std::vector<Lattice<LowBinnedSpinor>> bvec(1, envGetGrid(Lattice<LowBinnedSpinor>));
-
-            LOG(Message) << "Loading " << par().nLow << " low-mode A2A vectors from "
-                         << Nb << " files of " << lowBinSize << " binned vectors" << std::endl;
-            for (int i = 0; i < Nb; ++i)
-            {
-                A2AVectorsIo::readElement(par().lowFilestem, bvec[0], i,
-                                          vm().getTrajectory());
-                A2Autils<FImpl>::template UnpackBinnedVectors<lowBinSize>(
-                    out, offset + i*lowBinSize, bvec);
-            }
-            offset += par().nLow;
+            A2AVectorsIo::readElement(par().lowFilestem, out[offset + i], i,
+                                      vm().getTrajectory());
         }
+        offset += par().nLow;
     }
 
     LOG(Message) << "Expanding noise '" << par().noise << "' into "
