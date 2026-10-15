@@ -120,6 +120,7 @@ void TA2ACoarseGrid<FImpl>::execute(void)
   auto &coarse = envGet(std::vector<FermionField>, getName());
 
   GridBase *cgrid = coarse[0].Grid();
+  startTimer("Sparsen");
   for ( int i = 0 ; i < fine.size() ; ++i ) {
     thread_for(idx,cgrid->lSites(),{
       Coordinate Site(4); Coordinate CoarseSite(4);
@@ -133,11 +134,14 @@ void TA2ACoarseGrid<FImpl>::execute(void)
       pokeLocalSite(scvec, coarse[i],CoarseSite);
     });
   }
+  stopTimer("Sparsen");
 
   // I/O if necessary
   if (!par().output.empty())
   {
+    startTimer("IO");
     A2AVectorsIo::write(par().output, coarse, true, vm().getTrajectory());
+    stopTimer("IO");
   }
 }
 
