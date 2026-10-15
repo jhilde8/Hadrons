@@ -37,27 +37,54 @@ BEGIN_HADRONS_NAMESPACE
  *                 Coarse deflation guesser, BLAS coefficients                *
  ******************************************************************************/
 /*
- * Same guess as MGuesser::CoarseDeflation, with the coarse-space projection
- * done by GEMM instead of a loop of inner products. MGuesser::CoarseDeflation
- * accumulates sum_i evec_i (evec_i, src)/eval_i as nev separate innerProduct
- * calls per source, and every innerProduct ends in its own global reduction, so
- * a solve costs nev reductions whether or not the sources are batched.
- * Grid's MultiRHSDeflation instead forms the whole coefficient matrix
- * C = E^dag R with one GEMM, reduces it with a single GlobalSumVector over all
- * nev x nrhs entries, scales by 1/eval on the host, and reconstructs
- * G = E C with a second GEMM. One reduction per call replaces nev per source,
- * which is where the time goes (measured: axpy is ~80% of the guesser).
+ * Same guess as MGuesser::CoarseDeflation, with all three stages done by GEMM
+ * over the whole batch of sources instead of per source.
  *
- * Block projection and promotion are left as they are, on the fine subspace,
- * because they are a small part of the cost. Moving them to
- * Grid's MultiRHSBlockProject is the remaining step and belongs in this module:
- * it would also let the Lattice eigenpack be released once the BLAS buffers are
- * packed, since nothing here would reference it any more.
+ * Coefficients. MGuesser::CoarseDeflation accumulates
+ * sum_i evec_i (evec_i, src)/eval_i as nev separate innerProduct calls per
+ * source, and every innerProduct ends in its own global reduction, so a solve
+ * costs nev reductions whether or not the sources are batched. Grid's
+ * MultiRHSDeflation instead forms the whole coefficient matrix C = E^dag R with
+ * one GEMM, reduces it with a single GlobalSumVector over all nev x nrhs
+ * entries, scales by 1/eval on the host, and reconstructs G = E C with a second
+ * GEMM. One reduction per call replaces nev per source.
  *
- * Cost of the coefficient path is one extra copy of the coarse eigenbasis, as
- * pinned device memory (BLAS_E, nev x coarse_vol x nbasis complex). With a
- * blockSize that does not block Ls the coarse grid keeps the full fifth
- * dimension, so this is not a small buffer -- size it before running.
+ * Projection and promotion. batchBlockProject and batchBlockPromote loop over
+ * basis vectors and sources, so they stream the fine subspace once per source.
+ * Grid's MultiRHSBlockProject repacks the subspace once, at construction, into
+ * a block-major device buffer (BLAS_V), and then projects or promotes the whole
+ * batch with one batched GEMM over coarse sites: the basis is streamed once per
+ * batch rather than once per source. Measured before this change, at 64 nodes
+ * with 16 sources and the coefficients already on GEMM: projection 2.38 s,
+ * coefficients 0.13 s, promotion 2.23 s per batch.
+ *
+ * Nothing here references the Lattice eigenpack after construction, so it could
+ * be released once the buffers are packed. It is kept alive on purpose:
+ * getObjectDependencies() ties its lifetime to this guesser's. Production jobs
+ * use one instance of this guesser for every deflation in the job: built in
+ * single precision, it is the exact solves' inner guess directly and, through
+ * MGuesser::DeflationSrcCast, the outer guess of both the sloppy and the exact
+ * solves. The pack's lifetime simply follows that one shared guesser, and at
+ * 64 nodes the host can afford it (the fine subspace is ~60 GB per node).
+ * Revisit only if host memory becomes the constraint.
+ *
+ * Cost is two extra copies of the eigenbasis, both resident device memory that
+ * Hadrons' memory profiler does not see (deviceVector is not part of the
+ * evictable cache, so it counts against the hard budget left over by
+ * --device-mem):
+ *
+ *   BLAS_E   coarse basis, nev x coarse_vol x nbasis complex
+ *   BLAS_V   fine basis,   nbasis x fine_vol x 12 complex -- the whole fine
+ *            subspace again, ~7.5 GiB per GCD for 200 single-precision vectors
+ *            at 64 nodes
+ *
+ * plus per-call scratch of one fine field per source (BLAS_F). With a blockSize
+ * that does not block Ls the coarse grid keeps the full fifth dimension, so
+ * BLAS_E is not a small buffer either -- size both before running. The
+ * constructor logs the BLAS_V footprint.
+ *
+ * The first GEMM in a process loads rocBLAS's kernels (~70 s cold at 256
+ * ranks); with projection on GEMM that cost lands on the first projection.
  *
  * Numerically this is NOT bit-compatible with MGuesser::CoarseDeflation: a GEMM
  * and a loop of axpy sum in different orders. Compare final residuals and
@@ -103,10 +130,10 @@ MODULE_REGISTER_TMP(CoarseDeflationBLAS200F, ARG(TCoarseDeflationBLAS<CoarseFerm
 template<class FineField, class CoarseField>
 class LocalCoherenceDeflatedGuesserBLAS: public LinearFunction<FineField> {
 private:
-    const std::vector<FineField>   &subspace_;
-    const unsigned int             epackSize_;
-    GridBase                       *coarseGrid_;
-    MultiRHSDeflation<CoarseField> deflate_;
+    const unsigned int               epackSize_;
+    GridBase                         *coarseGrid_;
+    MultiRHSBlockProject<FineField>  blockProj_;
+    MultiRHSDeflation<CoarseField>   deflate_;
 
 public:
     using LinearFunction<FineField>::operator();
@@ -118,31 +145,36 @@ public:
     {}
 
     //////////////////////////////////////////////////////////////////////////
-    // The coarse eigenbasis is packed into BLAS_E here, once. The eigenpack
-    // has been read by the time a guesser is constructed: the virtual machine
-    // runs one module at a time, setup then execute, so the pack's loader has
-    // already executed. Only subspace_ is kept by reference afterwards, for the
-    // block projection; no reference to the coarse eigenvectors survives.
+    // Both bases are packed here, once: the coarse eigenvectors into BLAS_E and
+    // the fine subspace into BLAS_V. The eigenpack has been read by the time a
+    // guesser is constructed: the virtual machine runs one module at a time,
+    // setup then execute, so the pack's loader has already executed. No
+    // reference to either basis survives construction.
     //
     // Allocate + ImportEigenVector rather than ImportEigenBasis: the latter
     // logs one line per eigenvector through a bare std::cout, with no rank
     // filtering, which at production mode counts is hundreds of thousands of
     // lines.
+    //
+    // ImportBasis requires exactly nbasis vectors, so the subspace size is the
+    // nbasis the projector is allocated with; blockProject then checks it
+    // against the coarse field's word count.
     //////////////////////////////////////////////////////////////////////////
     LocalCoherenceDeflatedGuesserBLAS(const std::vector<FineField> &subspace,
                                       const std::vector<CoarseField> &evec_coarse,
                                       const std::vector<RealD> &eval,
                                       unsigned int epackSize)
-    : subspace_(subspace), epackSize_(epackSize)
+    : epackSize_(epackSize)
     {
         assert(evec_coarse.size() == eval.size());
         assert(epackSize_ <= evec_coarse.size());
 
         coarseGrid_ = evec_coarse[0].Grid();
 
-        auto &evec = const_cast<std::vector<CoarseField>&>(evec_coarse);
-        auto &ev   = const_cast<std::vector<RealD>&>(eval);
-        double t   = -usecond();
+        auto &evec  = const_cast<std::vector<CoarseField>&>(evec_coarse);
+        auto &ev    = const_cast<std::vector<RealD>&>(eval);
+        auto &basis = const_cast<std::vector<FineField>&>(subspace);
+        double t    = -usecond();
 
         deflate_.Allocate(epackSize_, coarseGrid_);
         for (unsigned int i = 0; i < epackSize_; ++i)
@@ -152,6 +184,15 @@ public:
         t += usecond();
         LOG(Message) << "LocalCoherenceDeflatedGuesserBLAS: packed " << epackSize_
                      << " coarse eigenvectors in " << t/1.0e6 << " s" << std::endl;
+
+        t = -usecond();
+        blockProj_.Allocate(basis.size(), basis[0].Grid(), coarseGrid_);
+        blockProj_.ImportBasis(basis);
+        t += usecond();
+        LOG(Message) << "LocalCoherenceDeflatedGuesserBLAS: packed " << basis.size()
+                     << " fine basis vectors in " << t/1.0e6 << " s, "
+                     << blockProj_.DeviceBytes()/1024./1024./1024.
+                     << " GiB resident device memory per rank" << std::endl;
     }
 
     virtual void operator()(const FineField &src,FineField &guess) {
@@ -180,8 +221,10 @@ public:
             guess_coarse.emplace_back(coarseGrid_);
         }
 
+        // blockProject takes the sources by non-const reference but only opens
+        // them for AcceleratorRead.
         time_project -= usecond();
-        batchBlockProject(src_coarse,src,subspace_);
+        blockProj_.blockProject(const_cast<std::vector<FineField>&>(src),src_coarse);
         time_project += usecond();
 
         // DeflateSources overwrites every site of each guess, so guess_coarse
@@ -190,8 +233,9 @@ public:
         deflate_.DeflateSources(src_coarse,guess_coarse);
         time_coeff += usecond();
 
+        // Overwrites every site of each guess, as batchBlockPromote did.
         time_promote -= usecond();
-        batchBlockPromote(guess_coarse,guess,subspace_);
+        blockProj_.blockPromote(guess,guess_coarse);
         time_promote += usecond();
 
         // The BLAS path moves raw device memory and never sets a checkerboard
