@@ -22,12 +22,15 @@
  * 16, so the last batch of each block has idle partitions, and the second
  * extension exercises the per-block offsets.
  *
- * Timing (--timing). Arm k reads --high-ext entry k alone, the full-grid arm
- * first, so no arm reads a file another arm has just pulled into the server
- * caches. No low modes and no comparison. Needs one extension per arm; the
- * default is all eight sloppy light hits, so up to seven layouts. Read the
- * per-module timers: "read", "read wait" and "unsplit" on the split arms,
- * "read" on the full-grid arm.
+ * Timing (--timing). The full-grid arm reads --high-ext entry 0, then one
+ * check arm per layout reads the same entry and is compared against it, so
+ * the expensive full-grid read is shared with the correctness check. The
+ * check arms read warm files, so their timings mean nothing. The timed split
+ * arms come last, layout k on entry k + 1 alone, so none reads a file another
+ * arm has just pulled into the server caches. No low modes. Needs one
+ * extension per layout plus one; the default is all eight sloppy light hits,
+ * so up to seven layouts. Read the per-module timers: "read", "read wait"
+ * and "unsplit" on the v_split_* arms, "read" on v_full.
  *
  * Layouts are dot separated, several comma separated. Each must divide --mpi
  * dimension by dimension.
@@ -88,6 +91,17 @@ static void addSplitLoad(Application &application, const std::string &name,
     par.ioSplit        = ioSplit;
 
     application.createModule<MIO::LoadSplitCombinedA2AVecsV>(name, par);
+}
+
+static void addCompare(Application &application, const std::string &name,
+                       const std::string &left, const std::string &right)
+{
+    MUtilities::CompareA2AVecsPar par;
+
+    par.left  = left;
+    par.right = right;
+
+    application.createModule<MUtilities::CompareA2AVecs>(name, par);
 }
 
 // "2.2.2.4" -> "2 2 2 4", the form strToVec reads.
@@ -168,6 +182,12 @@ int main(int argc, char *argv[])
     if (timing)
     {
         addFullLoad(application, "v_full", spec, 0, {ext[0]});
+        for (auto &l : layouts)
+        {
+            addSplitLoad(application, "v_check_" + l, spec, 0, {ext[0]},
+                         layoutToPar(l));
+            addCompare(application, "cmp_" + l, "v_full", "v_check_" + l);
+        }
         for (unsigned int k = 0; k < layouts.size(); ++k)
         {
             addSplitLoad(application, "v_split_" + layouts[k], spec, 0,
@@ -181,11 +201,7 @@ int main(int argc, char *argv[])
         {
             addSplitLoad(application, "v_split_" + l, spec, nLow, ext,
                          layoutToPar(l));
-
-            MUtilities::CompareA2AVecsPar cmp;
-            cmp.left  = "v_full";
-            cmp.right = "v_split_" + l;
-            application.createModule<MUtilities::CompareA2AVecs>("cmp_" + l, cmp);
+            addCompare(application, "cmp_" + l, "v_full", "v_split_" + l);
         }
     }
 
