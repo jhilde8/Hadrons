@@ -27,7 +27,8 @@ EXTRA_PROGRAMS = \
   Test_mf_gpu               \
   Test_mf_compare           \
   Test_smear_compare        \
-  Test_writer_spread
+  Test_writer_spread        \
+  Test_split_load
 
 CLEANFILES = $(EXTRA_PROGRAMS)
 
@@ -110,3 +111,6 @@ Test_smear_compare_LDADD=-lHadrons -lGrid
 
 Test_writer_spread_SOURCES=Test_writer_spread.cpp
 Test_writer_spread_LDADD=-lHadrons -lGrid
+
+Test_split_load_SOURCES=Test_split_load.cpp
+Test_split_load_LDADD=-lHadrons -lGrid
