@@ -36,8 +36,8 @@ BEGIN_HADRONS_NAMESPACE
  *  Exact elementwise comparison of two A2A vector arrays, for regression    *
  *  tests of paths that should move bytes without arithmetic (e.g. the       *
  *  split-grid loader against the full-grid one). Logs how many vectors      *
- *  differ, the largest norm2(left[i] - right[i]) with its index and         *
- *  norm2(left[i]) for scale, and throws if any difference is nonzero --     *
+ *  differ and the max (with its index), min and mean of                     *
+ *  norm2(left[i] - right[i]), and throws if any difference is nonzero --    *
  *  there is no tolerance, since a byte-moving path has no roundoff.         *
  ******************************************************************************/
 BEGIN_MODULE_NAMESPACE(MUtilities)
@@ -119,14 +119,13 @@ void TCompareA2AVecs<FImpl>::execute(void)
                       + std::to_string(right.size()));
     }
 
-    unsigned int nDiffer = 0, nZero = 0, worst = 0;
-    RealD        maxDiff = 0., minNorm = 0., maxNorm = 0.;
+    unsigned int nDiffer = 0, worst = 0;
+    RealD        maxDiff = 0., minDiff = 0., sumDiff = 0.;
 
     for (unsigned int i = 0; i < left.size(); ++i)
     {
         diff = left[i] - right[i];
         RealD d = norm2(diff);
-        RealD n = norm2(left[i]);
         if (d != 0.)
         {
             ++nDiffer;
@@ -136,20 +135,14 @@ void TCompareA2AVecs<FImpl>::execute(void)
             maxDiff = d;
             worst   = i;
         }
-        if (n == 0.)
-        {
-            ++nZero;
-        }
-        minNorm = (i == 0) ? n : std::min(minNorm, n);
-        maxNorm = std::max(maxNorm, n);
+        minDiff  = (i == 0) ? d : std::min(minDiff, d);
+        sumDiff += d;
     }
-    // Zero-norm inputs would make an all-zero difference trivial, hence nZero.
     LOG(Message) << "'" << par().left << "' vs '" << par().right << "': "
                  << nDiffer << " of " << left.size() << " vectors differ" << std::endl;
-    LOG(Message) << "max norm2(diff) = " << maxDiff << " at index " << worst
-                 << ", norm2(left) = " << norm2(left[worst]) << std::endl;
-    LOG(Message) << "norm2(left) in [" << minNorm << ", " << maxNorm << "], "
-                 << nZero << " zero-norm vectors" << std::endl;
+    LOG(Message) << "norm2(diff): max " << maxDiff << " (index " << worst
+                 << "), min " << minDiff << ", mean " << sumDiff/left.size()
+                 << std::endl;
     if (nDiffer > 0)
     {
         HADRONS_ERROR(Implementation, "A2A vector arrays differ");
