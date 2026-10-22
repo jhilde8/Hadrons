@@ -119,29 +119,39 @@ void TCompareA2AVecs<FImpl>::execute(void)
                       + std::to_string(right.size()));
     }
 
-    unsigned int nDiffer = 0, worst = 0;
-    RealD        maxDiff = 0.;
+    unsigned int nDiffer = 0, nZero = 0, worst = 0;
+    RealD        maxDiff = 0., minNorm = 0., maxNorm = 0.;
 
     for (unsigned int i = 0; i < left.size(); ++i)
     {
         diff = left[i] - right[i];
         RealD d = norm2(diff);
+        RealD n = norm2(left[i]);
         if (d != 0.)
         {
             ++nDiffer;
-            if (d > maxDiff)
-            {
-                maxDiff = d;
-                worst   = i;
-            }
         }
+        if (d > maxDiff)
+        {
+            maxDiff = d;
+            worst   = i;
+        }
+        if (n == 0.)
+        {
+            ++nZero;
+        }
+        minNorm = (i == 0) ? n : std::min(minNorm, n);
+        maxNorm = std::max(maxNorm, n);
     }
+    // Zero-norm inputs would make an all-zero difference trivial, hence nZero.
     LOG(Message) << "'" << par().left << "' vs '" << par().right << "': "
                  << nDiffer << " of " << left.size() << " vectors differ" << std::endl;
+    LOG(Message) << "max norm2(diff) = " << maxDiff << " at index " << worst
+                 << ", norm2(left) = " << norm2(left[worst]) << std::endl;
+    LOG(Message) << "norm2(left) in [" << minNorm << ", " << maxNorm << "], "
+                 << nZero << " zero-norm vectors" << std::endl;
     if (nDiffer > 0)
     {
-        LOG(Message) << "max norm2(diff) = " << maxDiff << " at index " << worst
-                     << ", norm2(left) = " << norm2(left[worst]) << std::endl;
         HADRONS_ERROR(Implementation, "A2A vector arrays differ");
     }
 }
