@@ -36,7 +36,17 @@ See the full license in the file "LICENSE" in the top level distribution directo
 BEGIN_HADRONS_NAMESPACE
 
 /******************************************************************************
- *                    Module to load all-to-all vectors                       *
+ *  Sparsen an A2A vector array onto the coarse grid of blockSize, keeping   *
+ *  the site at offsets in each block, and optionally write it to output     *
+ *  (<output>.<traj>/elem<i>.bin).                                           *
+ *                                                                            *
+ *  ioSplit (e.g. "2 2 2 1"; empty or absent = off) writes on split-grid     *
+ *  partitions of the coarse grid with that processor layout. A sparsened    *
+ *  field is too small to write efficiently from the full grid -- ~25 KB per *
+ *  rank on 64I at 512 nodes against the ~4 MB a Lustre write needs -- so    *
+ *  Grid_split gathers a batch of fields, one per partition, and each        *
+ *  partition writes its own file at once: 12.6 MB per rank on 1-node        *
+ *  partitions. Timer "IO" is the whole write.                               *
  ******************************************************************************/
 BEGIN_MODULE_NAMESPACE(MUtilities)
 
@@ -47,7 +57,8 @@ public:
 				    std::string,  fine,
 				    std::vector<int>, blockSize,
 				    std::vector<int>, offsets,
-				    std::string, output);
+				    std::string, output,
+				    std::string, ioSplit);
 };
 
 template <typename FImpl>
@@ -139,8 +150,20 @@ void TA2ACoarseGrid<FImpl>::execute(void)
   // I/O if necessary
   if (!par().output.empty())
   {
+    auto cgridIo = envGetCoarseGrid(FermionField, par().blockSize);
+
+    std::unique_ptr<GridCartesian> splitGrid;
+    if (!par().ioSplit.empty())
+    {
+      splitGrid.reset(new GridCartesian(cgridIo->FullDimensions(), cgridIo->_simd_layout,
+                                        strToVec<int>(par().ioSplit), *cgridIo));
+      LOG(Message) << "Split write: "
+                   << cgridIo->ProcessorCount()/splitGrid->ProcessorCount()
+                   << " partitions of layout " << par().ioSplit << std::endl;
+    }
     startTimer("IO");
-    A2AVectorsIo::write(par().output, coarse, true, vm().getTrajectory());
+    A2AVectorsIo::writeBlock(par().output, coarse, 0, coarse.size(),
+                             vm().getTrajectory(), splitGrid.get());
     stopTimer("IO");
   }
 }

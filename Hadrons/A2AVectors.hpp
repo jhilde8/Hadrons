@@ -187,6 +187,11 @@ public:
     static void writeElement(const std::string fileStem, Field &elem,
                              const unsigned int index, const int trajectory = -1);
     template <typename Field>
+    static void writeBlock(const std::string fileStem, std::vector<Field> &vec,
+                           const unsigned int offset, const unsigned int size,
+                           const int trajectory = -1,
+                           GridBase *splitGrid = nullptr);
+    template <typename Field>
     static void read(std::vector<Field> &vec, const std::string fileStem,
                      const bool multiFile, const int trajectory = -1);
     // Streaming access to the single-file (multiFile=false) layout, one
@@ -596,6 +601,42 @@ void A2AVectorsIo::writeElement(const std::string fileStem, Field &elem,
     binWriter.open(filename);
     writeRecord(binWriter, elem, index);
     binWriter.close();
+}
+
+template <typename Field>
+void A2AVectorsIo::writeBlock(const std::string fileStem, std::vector<Field> &vec,
+                              const unsigned int offset, const unsigned int size,
+                              const int trajectory, GridBase *splitGrid)
+{
+    if (splitGrid == nullptr)
+    {
+        for (unsigned int i = 0; i < size; ++i)
+        {
+            writeElement(fileStem, vec[offset + i], i, trajectory);
+        }
+        return;
+    }
+
+    GridBase                   *grid = vec[offset].Grid();
+    unsigned int               nPart = grid->ProcessorCount()/splitGrid->ProcessorCount();
+    unsigned int               part  = GridSplitVectorIndex(grid, splitGrid);
+    Field                      split(splitGrid);
+    std::vector<const Field *> batch(nPart);
+
+    makeFileDir(elementFilename(fileStem, trajectory, 0), grid);
+    for (unsigned int b = 0; b < size; b += nPart)
+    {
+        for (unsigned int p = 0; p < nPart; ++p)
+        {
+            batch[p] = &vec[offset + std::min(b + p, size - 1)];
+        }
+        Grid_split(batch, split);
+        if (b + part < size)
+        {
+            writeElement(fileStem, split, b + part, trajectory);
+        }
+        grid->Barrier();
+    }
 }
 
 template <typename Field>

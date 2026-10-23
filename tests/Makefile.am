@@ -28,7 +28,8 @@ EXTRA_PROGRAMS = \
   Test_mf_compare           \
   Test_smear_compare        \
   Test_writer_spread        \
-  Test_split_load
+  Test_split_load           \
+  Test_split_write
 
 CLEANFILES = $(EXTRA_PROGRAMS)
 
@@ -114,3 +115,6 @@ Test_writer_spread_LDADD=-lHadrons -lGrid
 
 Test_split_load_SOURCES=Test_split_load.cpp
 Test_split_load_LDADD=-lHadrons -lGrid
+
+Test_split_write_SOURCES=Test_split_write.cpp
+Test_split_write_LDADD=-lHadrons -lGrid
