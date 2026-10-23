@@ -49,6 +49,20 @@ BEGIN_HADRONS_NAMESPACE
  *  highStem = ".../vw/" and highExtensions = {"l0_v", "l1_v", ...} -- so    *
  *  the common directory only has to be written once rather than once per   *
  *  hit.                                                                      *
+ *                                                                            *
+ *  ioSplit (e.g. "2 1 2 2"; empty or absent = off) reads on split-grid      *
+ *  partitions of that processor layout. A per-file read is bound by a fixed *
+ *  cost rather than by the reader's size, so reading many files at once     *
+ *  raises the aggregate rate. Each partition reads a different file into    *
+ *  one split-grid field, one file per partition per batch, and Grid_unsplit *
+ *  moves the batch into its full-grid slots -- each byte read crosses the   *
+ *  network once more, in whole full-grid local blocks. On 64I at 512 nodes, *
+ *  1-node partitions read 22x faster than the full grid, the unsplit under  *
+ *  2% of it. Off, every file is read on the full grid as before.            *
+ *                                                                            *
+ *  Timer "read" is the whole load. Split, each batch waits at a barrier for *
+ *  its slowest partition, so "read" sums the slowest reads plus the         *
+ *  unsplits; Grid_unsplit's own --log Performance line is the unsplit alone.*
  ******************************************************************************/
 BEGIN_MODULE_NAMESPACE(MIO)
 
@@ -67,7 +81,8 @@ public:
                                     std::string,               highStem,
                                     std::vector<std::string>, highExtensions,
                                     unsigned int,              highSize,
-                                    unsigned int,              nHit);
+                                    unsigned int,              nHit,
+                                    std::string,               ioSplit);
 };
 
 template <typename FImpl>
@@ -137,18 +152,29 @@ void TLoadCombinedA2AVecsV<FImpl>::setup(void)
 template <typename FImpl>
 void TLoadCombinedA2AVecsV<FImpl>::execute(void)
 {
-    auto &out = envGet(std::vector<FermionField>, getName());
+    auto         &out  = envGet(std::vector<FermionField>, getName());
+    auto         grid  = envGetGrid(FermionField);
+    int          traj  = vm().getTrajectory();
     unsigned int offset = 0;
+
+    std::unique_ptr<GridCartesian> splitGrid;
+    if (!par().ioSplit.empty())
+    {
+        splitGrid.reset(new GridCartesian(grid->FullDimensions(), grid->_simd_layout,
+                                          strToVec<int>(par().ioSplit), *grid));
+        LOG(Message) << "Split read: "
+                     << grid->ProcessorCount()/splitGrid->ProcessorCount()
+                     << " partitions of layout " << par().ioSplit << std::endl;
+    }
 
     if (par().nLow > 0)
     {
         LOG(Message) << "Loading " << par().nLow << " low-mode A2A vectors from '"
                      << par().lowFilestem << "'" << std::endl;
-        for (unsigned int i = 0; i < par().nLow; ++i)
-        {
-            A2AVectorsIo::readElement(par().lowFilestem, out[offset + i], i,
-                                      vm().getTrajectory());
-        }
+        startTimer("read");
+        A2AVectorsIo::readBlock(par().lowFilestem, out, offset, par().nLow, traj,
+                                splitGrid.get());
+        stopTimer("read");
         offset += par().nLow;
     }
 
@@ -160,11 +186,10 @@ void TLoadCombinedA2AVecsV<FImpl>::execute(void)
 
         LOG(Message) << "Loading " << par().highSize << " high-mode A2A vectors from '"
                      << filestem << "'" << std::endl;
-        for (unsigned int i = 0; i < par().highSize; ++i)
-        {
-            A2AVectorsIo::readElement(filestem, out[offset + i], i,
-                                      vm().getTrajectory());
-        }
+        startTimer("read");
+        A2AVectorsIo::readBlock(filestem, out, offset, par().highSize, traj,
+                                splitGrid.get());
+        stopTimer("read");
         if (norm != 1.0)
         {
             LOG(Message) << "Applying 1/nHit = " << norm

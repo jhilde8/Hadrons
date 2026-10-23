@@ -211,6 +211,11 @@ public:
     static void readElement(const std::string fileStem, Field &field,
                             const unsigned int index,
                             const int trajectory = -1);
+    template <typename Field>
+    static void readBlock(const std::string fileStem, std::vector<Field> &vec,
+                          const unsigned int offset, const unsigned int size,
+                          const int trajectory = -1,
+                          GridBase *splitGrid = nullptr);
 private:
     static inline std::string vecFilename(const std::string stem, const int traj, 
                                           const bool multiFile)
@@ -691,6 +696,41 @@ void A2AVectorsIo::readElement(const std::string fileStem, Field &field,
     reader.open(filename);
     readRecord(reader, field, index);
     reader.close();
+}
+
+template <typename Field>
+void A2AVectorsIo::readBlock(const std::string fileStem, std::vector<Field> &vec,
+                             const unsigned int offset, const unsigned int size,
+                             const int trajectory, GridBase *splitGrid)
+{
+    if (splitGrid == nullptr)
+    {
+        for (unsigned int i = 0; i < size; ++i)
+        {
+            readElement(fileStem, vec[offset + i], i, trajectory);
+        }
+        return;
+    }
+
+    GridBase           *grid  = vec[offset].Grid();
+    unsigned int       nPart  = grid->ProcessorCount()/splitGrid->ProcessorCount();
+    unsigned int       part   = GridSplitVectorIndex(grid, splitGrid);
+    Field              split(splitGrid);
+    std::vector<Field> batch(nPart, grid);
+
+    for (unsigned int b = 0; b < size; b += nPart)
+    {
+        if (b + part < size)
+        {
+            readElement(fileStem, split, b + part, trajectory);
+        }
+        grid->Barrier();
+        Grid_unsplit(batch, split);
+        for (unsigned int p = 0; p < nPart && b + p < size; ++p)
+        {
+            std::swap(vec[offset + b + p], batch[p]);
+        }
+    }
 }
 
 END_HADRONS_NAMESPACE

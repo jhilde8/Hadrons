@@ -7,9 +7,9 @@
 /*
  * Test_split_load.cpp
  *
- * Hadrons application: MIO::LoadSplitCombinedA2AVecsV against the full-grid
- * MIO::LoadCombinedA2AVecsV on the 64I light V vectors already on disk, one
- * arm per --io-split layout. The file stems are the production ones from
+ * Hadrons application: MIO::LoadCombinedA2AVecsV with ioSplit against the
+ * same module without it (the full-grid read) on the 64I light V vectors
+ * already on disk, one arm per --io-split layout. The file stems are the production ones from
  * PyXmlGen/config.py (low_filestem("l", "v"), high_stem("l")); edit them here
  * if the tree moves.
  *
@@ -80,7 +80,7 @@ static void addSplitLoad(Application &application, const std::string &name,
                          const std::vector<std::string> &ext,
                          const std::string &ioSplit)
 {
-    MIO::LoadSplitCombinedA2AVecsVPar par;
+    MIO::LoadCombinedA2AVecsVPar par;
 
     par.lowFilestem    = LOW_STEM;
     par.nLow           = nLow;
@@ -90,7 +90,7 @@ static void addSplitLoad(Application &application, const std::string &name,
     par.nHit           = spec.nHit;
     par.ioSplit        = ioSplit;
 
-    application.createModule<MIO::LoadSplitCombinedA2AVecsV>(name, par);
+    application.createModule<MIO::LoadCombinedA2AVecsV>(name, par);
 }
 
 static void addCompare(Application &application, const std::string &name,

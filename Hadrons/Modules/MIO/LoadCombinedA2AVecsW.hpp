@@ -56,6 +56,10 @@ BEGIN_HADRONS_NAMESPACE
  *  No 1/nHit normalization is applied here: by convention the hit-average   *
  *  factor lives entirely on the V side (see MIO::LoadCombinedA2AVecsV), and *
  *  W stays the raw unit-modulus noise.                                       *
+ *                                                                            *
+ *  ioSplit (empty or absent = off) reads the low modes on split-grid        *
+ *  partitions of that processor layout, as MIO::LoadCombinedA2AVecsV does;  *
+ *  timer "read" is the whole low-mode load.                                 *
  ******************************************************************************/
 BEGIN_MODULE_NAMESPACE(MIO)
 
@@ -65,7 +69,8 @@ public:
     GRID_SERIALIZABLE_CLASS_MEMBERS(LoadCombinedA2AVecsWPar,
                                     std::string,  lowFilestem,
                                     unsigned int, nLow,
-                                    std::string,  noise);
+                                    std::string,  noise,
+                                    std::string,  ioSplit);
 };
 
 template <typename FImpl>
@@ -151,13 +156,23 @@ void TLoadCombinedA2AVecsW<FImpl>::execute(void)
 
     if (par().nLow > 0)
     {
+        auto grid = envGetGrid(FermionField);
+
+        std::unique_ptr<GridCartesian> splitGrid;
+        if (!par().ioSplit.empty())
+        {
+            splitGrid.reset(new GridCartesian(grid->FullDimensions(), grid->_simd_layout,
+                                              strToVec<int>(par().ioSplit), *grid));
+            LOG(Message) << "Split read: "
+                         << grid->ProcessorCount()/splitGrid->ProcessorCount()
+                         << " partitions of layout " << par().ioSplit << std::endl;
+        }
         LOG(Message) << "Loading " << par().nLow << " low-mode A2A vectors from '"
                      << par().lowFilestem << "'" << std::endl;
-        for (unsigned int i = 0; i < par().nLow; ++i)
-        {
-            A2AVectorsIo::readElement(par().lowFilestem, out[offset + i], i,
-                                      vm().getTrajectory());
-        }
+        startTimer("read");
+        A2AVectorsIo::readBlock(par().lowFilestem, out, offset, par().nLow,
+                                vm().getTrajectory(), splitGrid.get());
+        stopTimer("read");
         offset += par().nLow;
     }
 
