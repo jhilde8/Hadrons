@@ -29,7 +29,8 @@ EXTRA_PROGRAMS = \
   Test_smear_compare        \
   Test_writer_spread        \
   Test_split_load           \
-  Test_split_write
+  Test_split_write          \
+  Test_a2a_checksum_scan
 
 CLEANFILES = $(EXTRA_PROGRAMS)
 
@@ -118,3 +119,6 @@ Test_split_load_LDADD=-lHadrons -lGrid
 
 Test_split_write_SOURCES=Test_split_write.cpp
 Test_split_write_LDADD=-lHadrons -lGrid
+
+Test_a2a_checksum_scan_SOURCES=Test_a2a_checksum_scan.cpp
+Test_a2a_checksum_scan_LDADD=-lHadrons -lGrid
