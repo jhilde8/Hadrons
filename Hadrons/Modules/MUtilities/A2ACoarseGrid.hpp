@@ -40,6 +40,12 @@ BEGIN_HADRONS_NAMESPACE
  *  the site at offsets in each block, and optionally write it to output     *
  *  (<output>.<traj>/elem<i>.bin).                                           *
  *                                                                            *
+ *  modeOffset and modeSize select fine[modeOffset, modeOffset + modeSize)   *
+ *  (modeSize 0 = to the end), so one block of a combined array -- the low  *
+ *  modes, or one hit -- is sparsened and written as its own stem. Every     *
+ *  coarse field is multiplied by scale (required; 1 = unchanged), e.g. nHit *
+ *  to write a V block raw after the loader applied 1/nHit.                  *
+ *                                                                            *
  *  ioSplit (e.g. "2 2 2 1"; empty or absent = off) writes on split-grid     *
  *  partitions of the coarse grid with that processor layout. A sparsened    *
  *  field is too small to write efficiently from the full grid -- ~25 KB per *
@@ -55,6 +61,9 @@ class A2ACoarseGridPar: Serializable
 public:
     GRID_SERIALIZABLE_CLASS_MEMBERS(A2ACoarseGridPar,
 				    std::string,  fine,
+				    unsigned int, modeOffset,
+				    unsigned int, modeSize,
+				    double, scale,
 				    std::vector<int>, blockSize,
 				    std::vector<int>, offsets,
 				    std::string, output,
@@ -115,7 +124,15 @@ void TA2ACoarseGrid<FImpl>::setup(void)
   for( int mu = 0 ; mu < 4 ; ++mu )
     assert( par().blockSize[mu] > par().offsets[mu]);
   auto &fine   = envGet(std::vector<FermionField>, par().fine);
-  envCreate(std::vector<FermionField>, getName(), 1, fine.size(),
+  unsigned int size = (par().modeSize == 0) ? fine.size() - par().modeOffset
+                                            : par().modeSize;
+  if (par().modeOffset + size > fine.size())
+  {
+    HADRONS_ERROR(Size, "modes [" + std::to_string(par().modeOffset) + ", "
+                  + std::to_string(par().modeOffset + size) + ") exceed '"
+                  + par().fine + "' (" + std::to_string(fine.size()) + ")");
+  }
+  envCreate(std::vector<FermionField>, getName(), 1, size,
               envGetCoarseGrid(FermionField,par().blockSize));
 }
 
@@ -131,8 +148,9 @@ void TA2ACoarseGrid<FImpl>::execute(void)
   auto &coarse = envGet(std::vector<FermionField>, getName());
 
   GridBase *cgrid = coarse[0].Grid();
+  unsigned int first = par().modeOffset;
   startTimer("Sparsen");
-  for ( int i = 0 ; i < fine.size() ; ++i ) {
+  for ( int i = 0 ; i < coarse.size() ; ++i ) {
     thread_for(idx,cgrid->lSites(),{
       Coordinate Site(4); Coordinate CoarseSite(4);
       cgrid->LocalIndexToLocalCoor(idx,CoarseSite);
@@ -141,9 +159,17 @@ void TA2ACoarseGrid<FImpl>::execute(void)
       Site[2] = CoarseSite[2] * par().blockSize[2] + par().offsets[2];
       Site[3] = CoarseSite[3] * par().blockSize[3] + par().offsets[3];
       SpinColourVector_s scvec;
-      peekLocalSite(scvec, fine[i], Site);
+      peekLocalSite(scvec, fine[first + i], Site);
       pokeLocalSite(scvec, coarse[i],CoarseSite);
     });
+  }
+  if (par().scale != 1.0)
+  {
+    LOG(Message) << "Scaling by " << par().scale << std::endl;
+    for (auto &c: coarse)
+    {
+      c = par().scale*c;
+    }
   }
   stopTimer("Sparsen");
 

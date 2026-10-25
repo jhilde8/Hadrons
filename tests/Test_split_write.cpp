@@ -53,8 +53,11 @@ static void addSparsen(Application &application, const std::string &name,
 {
     MUtilities::A2ACoarseGridPar par;
 
-    par.fine      = fine;
-    par.blockSize = BLOCK_SIZE;
+    par.fine       = fine;
+    par.modeOffset = 0;
+    par.modeSize   = 0;
+    par.scale      = 1.0;
+    par.blockSize  = BLOCK_SIZE;
     par.offsets   = OFFSETS;
     par.output    = output;
     par.ioSplit   = ioSplit;
