@@ -95,6 +95,15 @@ public:
     }
 };
 
+// A2AVectorsIo::elementFilename, which is private.
+static std::string elementFilename(const std::string &stem, const int traj,
+                                   const unsigned int index)
+{
+    std::string t = (traj < 0) ? "" : ("." + std::to_string(traj));
+
+    return stem + t + "/elem" + std::to_string(index) + ".bin";
+}
+
 static std::string statusString(const int status)
 {
     std::string s;
@@ -181,7 +190,7 @@ int main(int argc, char *argv[])
 
             if (i < size)
             {
-                std::string filename = A2AVectorsIo::elementFilename(stem, traj, i);
+                std::string filename = elementFilename(stem, traj, i);
                 int         s        = Missing;
                 RealD       r        = 0.;
 
@@ -213,7 +222,7 @@ int main(int argc, char *argv[])
 
             if (s != Good)
             {
-                LOG(Message) << "BAD " << A2AVectorsIo::elementFilename(stem, traj, i)
+                LOG(Message) << "BAD " << elementFilename(stem, traj, i)
                              << ":" << statusString(s) << " (norm rdiff "
                              << rdiff[i] << ")" << std::endl;
                 nBad++;
