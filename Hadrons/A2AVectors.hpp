@@ -31,6 +31,7 @@
 #include <Hadrons/Global.hpp>
 #include <Hadrons/Environment.hpp>
 #include <Hadrons/Solver.hpp>
+#include <fcntl.h>
 
 BEGIN_HADRONS_NAMESPACE
 
@@ -596,11 +597,24 @@ void A2AVectorsIo::writeElement(const std::string fileStem, Field &elem,
     GridBase     *grid = elem.Grid();
     ScidacWriter binWriter(grid->IsBoss());
     std::string  filename = elementFilename(fileStem, trajectory, index);
+    std::string  tmp      = filename + ".tmp";
 
     makeFileDir(filename, grid);
-    binWriter.open(filename);
+    binWriter.open(tmp);
     writeRecord(binWriter, elem, index);
     binWriter.close();
+    int fd = ::open(tmp.c_str(), O_WRONLY);
+    if (fd < 0 || ::fsync(fd) != 0)
+    {
+        HADRONS_ERROR(Io, "cannot sync '" + tmp + "'");
+    }
+    ::close(fd);
+    grid->Barrier();
+    if (grid->IsBoss() && std::rename(tmp.c_str(), filename.c_str()) != 0)
+    {
+        HADRONS_ERROR(Io, "cannot rename '" + tmp + "' to '" + filename + "'");
+    }
+    grid->Barrier();
 }
 
 template <typename Field>
