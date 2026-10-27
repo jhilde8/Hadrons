@@ -191,7 +191,8 @@ public:
     static void writeBlock(const std::string fileStem, std::vector<Field> &vec,
                            const unsigned int offset, const unsigned int size,
                            const int trajectory = -1,
-                           GridBase *splitGrid = nullptr);
+                           GridBase *splitGrid = nullptr,
+                           const unsigned int firstIndex = 0);
     template <typename Field>
     static void read(std::vector<Field> &vec, const std::string fileStem,
                      const bool multiFile, const int trajectory = -1);
@@ -221,7 +222,8 @@ public:
     static void readBlock(const std::string fileStem, std::vector<Field> &vec,
                           const unsigned int offset, const unsigned int size,
                           const int trajectory = -1,
-                          GridBase *splitGrid = nullptr);
+                          GridBase *splitGrid = nullptr,
+                          const unsigned int firstIndex = 0);
 private:
     static inline std::string vecFilename(const std::string stem, const int traj, 
                                           const bool multiFile)
@@ -620,13 +622,14 @@ void A2AVectorsIo::writeElement(const std::string fileStem, Field &elem,
 template <typename Field>
 void A2AVectorsIo::writeBlock(const std::string fileStem, std::vector<Field> &vec,
                               const unsigned int offset, const unsigned int size,
-                              const int trajectory, GridBase *splitGrid)
+                              const int trajectory, GridBase *splitGrid,
+                              const unsigned int firstIndex)
 {
     if (splitGrid == nullptr)
     {
         for (unsigned int i = 0; i < size; ++i)
         {
-            writeElement(fileStem, vec[offset + i], i, trajectory);
+            writeElement(fileStem, vec[offset + i], firstIndex + i, trajectory);
         }
         return;
     }
@@ -647,7 +650,7 @@ void A2AVectorsIo::writeBlock(const std::string fileStem, std::vector<Field> &ve
         Grid_split(batch, split);
         if (b + part < size)
         {
-            writeElement(fileStem, split, b + part, trajectory);
+            writeElement(fileStem, split, firstIndex + b + part, trajectory);
         }
         grid->Barrier();
     }
@@ -756,13 +759,14 @@ void A2AVectorsIo::readElement(const std::string fileStem, Field &field,
 template <typename Field>
 void A2AVectorsIo::readBlock(const std::string fileStem, std::vector<Field> &vec,
                              const unsigned int offset, const unsigned int size,
-                             const int trajectory, GridBase *splitGrid)
+                             const int trajectory, GridBase *splitGrid,
+                             const unsigned int firstIndex)
 {
     if (splitGrid == nullptr)
     {
         for (unsigned int i = 0; i < size; ++i)
         {
-            readElement(fileStem, vec[offset + i], i, trajectory);
+            readElement(fileStem, vec[offset + i], firstIndex + i, trajectory);
         }
         return;
     }
@@ -777,7 +781,7 @@ void A2AVectorsIo::readBlock(const std::string fileStem, std::vector<Field> &vec
     {
         if (b + part < size)
         {
-            readElement(fileStem, split, b + part, trajectory);
+            readElement(fileStem, split, firstIndex + b + part, trajectory);
         }
         grid->Barrier();
         Grid_unsplit(batch, split);

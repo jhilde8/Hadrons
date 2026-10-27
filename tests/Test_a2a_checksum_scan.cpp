@@ -19,13 +19,13 @@
  * boss records its verdict and one GlobalSumVector per stem gathers them.
  *
  * --grid is the grid the files were written on (the coarse one for sparsened
- * vectors). Files are elem0 .. elem<size-1> of <stem>.<traj>/, the same
- * --size for every stem, so the low modes and the hits are separate runs. The
- * exit code is nonzero if any file is bad.
+ * vectors). Files are elem<first> .. elem<first+size-1> of <stem>.<traj>/
+ * (--first defaults to 0), the same range for every stem, so the low modes and
+ * the hits are separate runs. The exit code is nonzero if any file is bad.
  *
  * Usage:
  *   srun ... ./Test_a2a_checksum_scan --grid 64.64.64.128 --mpi 4.4.4.8 \
- *       --io-split 2.2.2.1 --traj 1540 --size 1536 \
+ *       --io-split 2.2.2.1 --traj 1540 --first 1024 --size 512 \
  *       --stems /path/vw/sloppy/s8_v,/path/vw/exact/s8_exact
  */
 
@@ -128,11 +128,13 @@ int main(int argc, char *argv[])
     // Parse CLI arguments.
     // ------------------------------------------------------------------
     int          traj = 0;
-    unsigned int size = 0;
+    unsigned int first = 0, size = 0;
     std::string  stemList, ioSplit;
 
     if (GridCmdOptionExists(argv, argv + argc, "--traj"))
         traj     = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--traj"));
+    if (GridCmdOptionExists(argv, argv + argc, "--first"))
+        first    = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--first"));
     if (GridCmdOptionExists(argv, argv + argc, "--size"))
         size     = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--size"));
     if (GridCmdOptionExists(argv, argv + argc, "--stems"))
@@ -174,8 +176,9 @@ int main(int argc, char *argv[])
     unsigned int nBadTotal = 0;
     Field        field(ioGrid);
 
-    LOG(Message) << "Scanning " << stems.size() << " stem(s) of " << size
-                 << " files on " << nPart << " partition(s)" << std::endl;
+    LOG(Message) << "Scanning " << stems.size() << " stem(s), files " << first
+                 << " - " << first + size - 1 << ", on " << nPart
+                 << " partition(s)" << std::endl;
 
     // ------------------------------------------------------------------
     // Scan.
@@ -190,7 +193,7 @@ int main(int argc, char *argv[])
 
             if (i < size)
             {
-                std::string filename = elementFilename(stem, traj, i);
+                std::string filename = elementFilename(stem, traj, first + i);
                 int         s        = Missing;
                 RealD       r        = 0.;
 
@@ -208,8 +211,8 @@ int main(int argc, char *argv[])
                     rdiff[i]  = r;
                 }
             }
-            LOG(Message) << stem << ": files " << b << " - "
-                         << std::min(b + nPart, size) - 1 << " read" << std::endl;
+            LOG(Message) << stem << ": files " << first + b << " - "
+                         << first + std::min(b + nPart, size) - 1 << " read" << std::endl;
         }
         grid->GlobalSumVector(status.data(), size);
         grid->GlobalSumVector(rdiff.data(), size);
@@ -222,7 +225,7 @@ int main(int argc, char *argv[])
 
             if (s != Good)
             {
-                LOG(Message) << "BAD " << elementFilename(stem, traj, i)
+                LOG(Message) << "BAD " << elementFilename(stem, traj, first + i)
                              << ":" << statusString(s) << " (norm rdiff "
                              << rdiff[i] << ")" << std::endl;
                 nBad++;

@@ -61,6 +61,14 @@ BEGIN_HADRONS_NAMESPACE
  * per file at <output>.<traj>/elem<i>.bin, i the noise vector index. An empty
  * output computes without writing.
  *
+ *   ioSplit  split-grid processor layout for writing a batch (e.g. "2 2 2 4";
+ *            empty or absent = one file at a time from the full grid). Each
+ *            partition writes one vector of the batch to its own file at once,
+ *            see A2AVectorsIo::writeBlock. An IO layout only: it is unrelated to
+ *            any split the solver uses internally (the srun's
+ *            --batched-solver-split), which this module never sees. Timer
+ *            "V I/O" is the whole write of each batch.
+ *
  * Vector range: initVec and nVec select the noise vectors
  * [initVec, initVec + nVec) computed by this run, so one hit can be split
  * across several jobs (e.g. to fit a walltime cap) or resumed after a failure
@@ -85,7 +93,8 @@ public:
                                   std::string,  output,
                                   unsigned int, initVec,
                                   unsigned int, nVec,
-                                  unsigned int, batchSize);
+                                  unsigned int, batchSize,
+                                  std::string,  ioSplit);
 };
 template <typename FImpl>
 class TA2AHighModeBatchedV : public Module<A2AHighModeBatchedVPar>
@@ -235,6 +244,16 @@ void TA2AHighModeBatchedV<FImpl>::execute(void)
                  << std::endl;
     LOG(Message) << "Solving " << nBatch << " source(s) per solver call"
                  << std::endl;
+    auto grid = envGetGrid(FermionField);
+    std::unique_ptr<GridCartesian> splitGrid;
+    if (!par().output.empty() && !par().ioSplit.empty())
+    {
+        splitGrid.reset(new GridCartesian(grid->FullDimensions(), grid->_simd_layout,
+                                          strToVec<int>(par().ioSplit), *grid));
+        LOG(Message) << "Split write: "
+                     << grid->ProcessorCount()/splitGrid->ProcessorCount()
+                     << " partitions of layout " << par().ioSplit << std::endl;
+    }
     // High modes
     for (unsigned int ihBase = ihBegin; ihBase < ihEnd; ihBase += nBatch)
     {
@@ -262,11 +281,8 @@ void TA2AHighModeBatchedV<FImpl>::execute(void)
         if (!par().output.empty())
         {
             startTimer("V I/O");
-            for (unsigned int j = 0; j < nBatch; ++j)
-            {
-                A2AVectorsIo::writeElement(par().output, vBatch[j], ihBase + j,
-                                           vm().getTrajectory());
-            }
+            A2AVectorsIo::writeBlock(par().output, vBatch, 0, nBatch,
+                                     vm().getTrajectory(), splitGrid.get(), ihBase);
             stopTimer("V I/O");
         }
     }
