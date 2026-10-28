@@ -684,7 +684,8 @@ void A2AVectorsIo::writeBlock(const std::string fileStem, std::vector<Field> &ve
         stopTimer(timers, "barrier");
     }
     grid->GlobalSumVector(t.data(), t.size());
-    logPartitions("Write " + fileStem, firstIndex, size, nPart, t, bytes);
+    logPartitions("Write " + fileStem.substr(fileStem.find_last_of('/') + 1),
+                  firstIndex, size, nPart, t, bytes);
 }
 
 template <typename Field>
@@ -841,7 +842,8 @@ void A2AVectorsIo::readBlock(const std::string fileStem, std::vector<Field> &vec
         stopTimer(timers, "unsplit");
     }
     grid->GlobalSumVector(t.data(), t.size());
-    logPartitions("Read " + fileStem, firstIndex, size, nPart, t, bytes);
+    logPartitions("Read " + fileStem.substr(fileStem.find_last_of('/') + 1),
+                  firstIndex, size, nPart, t, bytes);
 }
 
 inline void A2AVectorsIo::logPartitions(const std::string &what,
@@ -858,28 +860,39 @@ inline void A2AVectorsIo::logPartitions(const std::string &what,
 
     for (unsigned int k = 0; k < nBatch; ++k)
     {
-        unsigned int b    = k*nPart;
-        unsigned int n    = std::min(nPart, size - b);
-        unsigned int slow = 0;
-        double       tMin = t[b], tMax = t[b], tSum = 0., rSum = 0.;
+        unsigned int       b    = k*nPart;
+        unsigned int       n    = std::min(nPart, size - b);
+        unsigned int       fast = 0, slow = 0;
+        double             tSum = 0.;
+        std::ostringstream line;
 
         for (unsigned int p = 0; p < n; ++p)
         {
             tSum += t[b + p];
-            rSum += bytes/t[b + p]/MB;
-            tMin  = std::min(tMin, t[b + p]);
-            if (t[b + p] > tMax)
-            {
-                tMax = t[b + p];
-                slow = p;
-            }
+            if (t[b + p] < t[b + fast]) fast = p;
+            if (t[b + p] > t[b + slow]) slow = p;
         }
-        LOG(Message) << what << " elem" << firstIndex + b << "-" << firstIndex + b + n - 1
-                     << ": file min/mean/max " << tMin << "/" << tSum/n << "/" << tMax
-                     << " s, " << bytes/tMax/MB << "/" << rSum/n << "/" << bytes/tMin/MB
-                     << " MB/s, aggregate " << n*bytes/tMax/MB
-                     << " MB/s, slowest partition " << slow << " (elem"
-                     << firstIndex + b + slow << ")" << std::endl;
+
+        auto timing = [&](const double tp)
+        {
+            line << std::setprecision(3) << tp << " s "
+                 << std::setprecision(1) << bytes/tp/MB << " MB/s";
+        };
+        auto partition = [&](const std::string &label, const unsigned int p)
+        {
+            line << label << " p" << p << " (elem" << firstIndex + b + p << ") ";
+            timing(t[b + p]);
+        };
+
+        line << std::fixed << what << " elem" << firstIndex + b << "-"
+             << firstIndex + b + n - 1 << ": ";
+        partition("fastest", fast);
+        line << ", ";
+        partition("slowest", slow);
+        line << ", mean ";
+        timing(tSum/n);
+        line << ", aggregate " << n*bytes/t[b + slow]/MB << " MB/s";
+        LOG(Message) << line.str() << std::endl;
     }
 
     for (unsigned int k: {1u, 4u, 8u})

@@ -30,6 +30,7 @@ EXTRA_PROGRAMS = \
   Test_writer_spread        \
   Test_split_load           \
   Test_split_write          \
+  Test_low_modes_blas       \
   Test_a2a_checksum_scan
 
 CLEANFILES = $(EXTRA_PROGRAMS)
@@ -119,6 +120,9 @@ Test_split_load_LDADD=-lHadrons -lGrid
 
 Test_split_write_SOURCES=Test_split_write.cpp
 Test_split_write_LDADD=-lHadrons -lGrid
+
+Test_low_modes_blas_SOURCES=Test_low_modes_blas.cpp
+Test_low_modes_blas_LDADD=-lHadrons -lGrid
 
 Test_a2a_checksum_scan_SOURCES=Test_a2a_checksum_scan.cpp
 Test_a2a_checksum_scan_LDADD=-lHadrons -lGrid

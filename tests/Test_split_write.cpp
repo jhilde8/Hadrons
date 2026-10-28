@@ -15,9 +15,9 @@
  *            under the production blocking [4, 4, 4, 1], offsets 0, to
  *            <root>/full and <root>/split_<layout>.
  *   --low    MUtilities::A2ALowModesCoarse200 on the first --size coarse
- *            vectors of the 64I light eigenpack (EPACK_STEM, 200 fine), with
- *            the production light action on a unit gauge field: unphysical
- *            low modes, but the same ones in every arm. Writes
+ *            vectors of the 64I light eigenpack (EPACK_STEM, 200 fine) of
+ *            configuration --traj (required), with the production light
+ *            action on the same configuration (GAUGE_FILE). Writes
  *            <root>/full_v, <root>/full_w and <root>/split_<layout>_{v,w}.
  *            Each batch is one writeBlock call from mode il0, so every batch
  *            after the first exercises a nonzero firstIndex.
@@ -48,9 +48,10 @@
  *   srun ... ./Test_split_write --grid 16.16.16.128 --mpi 4.4.4.8 \
  *       --root /path/split_write --io-split 2.2.2.1,2.2.2.4 --read
  *   srun ... ./Test_split_write --grid 64.64.64.128 --mpi 4.4.4.8 \
- *       --root /path/split_low --io-split 2.1.2.2,2.2.2.4 --size 70 --low
+ *       --root /path/split_low --io-split 2.1.2.2,2.2.2.4 --size 70 --low --traj 1540
  *   srun ... ./Test_split_write --grid 64.64.64.128 --mpi 4.4.4.8 \
- *       --root /path/split_low --io-split 2.1.2.2,2.2.2.4 --size 70 --low --read
+ *       --root /path/split_low --io-split 2.1.2.2,2.2.2.4 --size 70 --low --traj 1540 \
+ *       --read
  */
 
 #include <Hadrons/Application.hpp>
@@ -63,16 +64,21 @@ using namespace Hadrons;
 static const std::vector<int> BLOCK_SIZE = {4, 4, 4, 1};
 static const std::vector<int> OFFSETS    = {0, 0, 0, 0};
 
-// PyXmlGen/config.py CG_EIGENPACK and the light CG_ACTIONS entry.
+// PyXmlGen/config.py CG_EIGENPACK, GAUGE_FILE and the light CG_ACTIONS entry.
+// Both are read at --traj.
 static const std::string EPACK_STEM =
     "/lustre/orion/phy157/proj-shared/phy157_dwf/jhilde/main_64I/converted/vec";
+static const std::string GAUGE_FILE =
+    "/lustre/orion/phy157/world-shared/jhilde/k2pipipbc/main_64I/configs/ckpoint_lat";
 
 static void addLowModeInputs(Application &application, const unsigned int size)
 {
+    MIO::LoadNerscPar           gauge;
     MIO::LoadCoarseEigenPackPar ep;
     MAction::MobiusDWFPar       act;
 
-    application.createModule<MGauge::Unit>("gauge");
+    gauge.file = GAUGE_FILE;
+    application.createModule<MIO::LoadNersc>("gauge", gauge);
 
     ep.filestem      = EPACK_STEM;
     ep.multiFile     = true;
@@ -197,6 +203,11 @@ int main(int argc, char *argv[])
     if (layouts.empty())
     {
         HADRONS_ERROR(Argument, "--io-split needs at least one layout");
+    }
+    if (low and !GridCmdOptionExists(argv, argv + argc, "--traj"))
+    {
+        HADRONS_ERROR(Argument, "--low needs --traj: the configuration of the eigenpack "
+                      "and gauge field, and of the stems the read run looks for");
     }
 
     // ------------------------------------------------------------------
