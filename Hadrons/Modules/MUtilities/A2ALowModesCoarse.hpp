@@ -41,13 +41,19 @@ BEGIN_HADRONS_NAMESPACE
  *  Stream low-mode A2A V & W vectors straight to disk directly from a       *
  *  compressed (LC) coarse eigenpack, one fermion field per file at          *
  *  <output>_v.<traj>/elem<i>.bin and <output>_w.<traj>/elem<i>.bin. Low     *
- *  modes are decompressed/promoted on the fly, one at a time, so the full   *
- *  Nl-sized V/W arrays are never resident -- only a single V and W field.   *
+ *  modes are decompressed/promoted on the fly, one batch at a time, so the  *
+ *  full Nl-sized V/W arrays are never resident -- only one batch of V and W.*
  *  Coarse-deflation companion to MUtilities::A2ALowModes, which does the    *
  *  same streaming from an uncompressed (exact) eigenpack. Lives in          *
  *  MUtilities rather than MSolver because no solve ever happens here: low   *
  *  modes are built algebraically from the eigenvectors, so unlike           *
  *  MSolver::A2AHighModeV there is no solver dependency at all.              *
+ *                                                                            *
+ *  ioSplit (e.g. "2 1 2 2"; empty = off) writes each batch on split-grid    *
+ *  partitions of that layout, one mode per partition, through               *
+ *  A2AVectorsIo::writeBlock. A batch is one mode per partition, so the      *
+ *  batch size is the partition count; without ioSplit it is one mode,       *
+ *  written from the full grid.                                               *
  ******************************************************************************/
 BEGIN_MODULE_NAMESPACE(MUtilities)
 
@@ -57,7 +63,8 @@ public:
     GRID_SERIALIZABLE_CLASS_MEMBERS(A2ALowModesCoarsePar,
                                     std::string, eigenPack,
                                     std::string, action,
-                                    std::string, output);
+                                    std::string, output,
+                                    std::string, ioSplit);
 };
 
 template <typename FImpl, typename FImplPack, int nBasis>
@@ -84,6 +91,7 @@ public:
     virtual void execute(void);
 private:
     unsigned int Nl_{0};
+    unsigned int nBatch_{1};
 };
 
 MODULE_REGISTER_TMP(A2ALowModesCoarse200,
@@ -132,7 +140,18 @@ void TA2ALowModesCoarse<FImpl, FImplPack, nBasis>::setup(void)
 
     envTmp(A2A, "a2a", 1, action);
 
-    Nl_ = epack.evecCoarse.size();
+    Nl_     = epack.evecCoarse.size();
+    nBatch_ = 1;
+    if (!par().ioSplit.empty())
+    {
+        int splitRanks = 1;
+
+        for (int d: strToVec<int>(par().ioSplit))
+        {
+            splitRanks *= d;
+        }
+        nBatch_ = envGetGrid(FermionField)->ProcessorCount()/splitRanks;
+    }
 
     if (Ls > 1)
     {
@@ -140,8 +159,8 @@ void TA2ALowModesCoarse<FImpl, FImplPack, nBasis>::setup(void)
     }
     envTmp(FermionFieldPack, "evecF", Ls, epack.evec[0].Grid());
     envTmp(FermionField, "evecD", Ls, action.FermionRedBlackGrid());
-    envTmp(FermionField, "vTmp", 1, envGetGrid(FermionField));
-    envTmp(FermionField, "wTmp", 1, envGetGrid(FermionField));
+    envTmp(std::vector<FermionField>, "vBatch", 1, nBatch_, envGetGrid(FermionField));
+    envTmp(std::vector<FermionField>, "wBatch", 1, nBatch_, envGetGrid(FermionField));
 }
 
 // execution ///////////////////////////////////////////////////////////////////
@@ -154,8 +173,8 @@ void TA2ALowModesCoarse<FImpl, FImplPack, nBasis>::execute(void)
     envGetTmp(A2A, a2a);
     envGetTmp(FermionFieldPack, evecF);
     envGetTmp(FermionField, evecD);
-    envGetTmp(FermionField, vTmp);
-    envGetTmp(FermionField, wTmp);
+    envGetTmp(std::vector<FermionField>, vBatch);
+    envGetTmp(std::vector<FermionField>, wBatch);
 
     // blockPromote() never sets its output's checkerboard; tag it Odd like epack.evec.
     evecF.Checkerboard() = epack.evec[0].Checkerboard();
@@ -164,43 +183,63 @@ void TA2ALowModesCoarse<FImpl, FImplPack, nBasis>::execute(void)
                  << "promoting on the fly from compressed coarse eigenpack '"
                  << par().eigenPack << "' (" << Nl_ << " low modes)" << std::endl;
 
-    for (unsigned int il = 0; il < Nl_; il++)
+    auto grid = envGetGrid(FermionField);
+    std::unique_ptr<GridCartesian> splitGrid;
+    if (!par().ioSplit.empty())
     {
-        startTimer("Promote");
-        blockPromote(epack.evecCoarse[il], evecF, epack.evec);
-        precisionChange(evecD, evecF);
-        stopTimer("Promote");
+        splitGrid.reset(new GridCartesian(grid->FullDimensions(), grid->_simd_layout,
+                                          strToVec<int>(par().ioSplit), *grid));
+        LOG(Message) << "Split write: " << nBatch_ << " partitions of layout "
+                     << par().ioSplit << std::endl;
+    }
 
-        startTimer("V low mode");
-        LOG(Message) << "V vector i = " << il << " (low mode)" << std::endl;
-        if (Ls == 1)
+    for (unsigned int il0 = 0; il0 < Nl_; il0 += nBatch_)
+    {
+        unsigned int n = std::min(nBatch_, Nl_ - il0);
+
+        for (unsigned int j = 0; j < n; j++)
         {
-            a2a.makeLowModeV(vTmp, evecD, epack.evalCoarse[il]);
+            unsigned int il = il0 + j;
+
+            startTimer("Promote");
+            blockPromote(epack.evecCoarse[il], evecF, epack.evec);
+            precisionChange(evecD, evecF);
+            stopTimer("Promote");
+
+            startTimer("V low mode");
+            LOG(Message) << "V vector i = " << il << " (low mode)" << std::endl;
+            if (Ls == 1)
+            {
+                a2a.makeLowModeV(vBatch[j], evecD, epack.evalCoarse[il]);
+            }
+            else
+            {
+                envGetTmp(FermionField, f5);
+                a2a.makeLowModeV5D(vBatch[j], f5, evecD, epack.evalCoarse[il]);
+            }
+            stopTimer("V low mode");
+
+            startTimer("W low mode");
+            LOG(Message) << "W vector i = " << il << " (low mode)" << std::endl;
+            if (Ls == 1)
+            {
+                a2a.makeLowModeW(wBatch[j], evecD, epack.evalCoarse[il]);
+            }
+            else
+            {
+                envGetTmp(FermionField, f5);
+                a2a.makeLowModeW5D(wBatch[j], f5, evecD, epack.evalCoarse[il]);
+            }
+            stopTimer("W low mode");
         }
-        else
-        {
-            envGetTmp(FermionField, f5);
-            a2a.makeLowModeV5D(vTmp, f5, evecD, epack.evalCoarse[il]);
-        }
-        stopTimer("V low mode");
+
         startTimer("V I/O");
-        A2AVectorsIo::writeElement(par().output + "_v", vTmp, il, vm().getTrajectory());
+        A2AVectorsIo::writeBlock(par().output + "_v", vBatch, 0, n,
+                                 vm().getTrajectory(), splitGrid.get(), il0, this);
         stopTimer("V I/O");
-
-        startTimer("W low mode");
-        LOG(Message) << "W vector i = " << il << " (low mode)" << std::endl;
-        if (Ls == 1)
-        {
-            a2a.makeLowModeW(wTmp, evecD, epack.evalCoarse[il]);
-        }
-        else
-        {
-            envGetTmp(FermionField, f5);
-            a2a.makeLowModeW5D(wTmp, f5, evecD, epack.evalCoarse[il]);
-        }
-        stopTimer("W low mode");
         startTimer("W I/O");
-        A2AVectorsIo::writeElement(par().output + "_w", wTmp, il, vm().getTrajectory());
+        A2AVectorsIo::writeBlock(par().output + "_w", wBatch, 0, n,
+                                 vm().getTrajectory(), splitGrid.get(), il0, this);
         stopTimer("W I/O");
     }
 }
