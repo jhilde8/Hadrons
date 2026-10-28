@@ -31,6 +31,7 @@
 #include <Hadrons/Global.hpp>
 #include <Hadrons/Environment.hpp>
 #include <Hadrons/Solver.hpp>
+#include <Hadrons/TimerArray.hpp>
 
 BEGIN_HADRONS_NAMESPACE
 
@@ -191,7 +192,8 @@ public:
                            const unsigned int offset, const unsigned int size,
                            const int trajectory = -1,
                            GridBase *splitGrid = nullptr,
-                           const unsigned int firstIndex = 0);
+                           const unsigned int firstIndex = 0,
+                           TimerArray *timers = nullptr);
     template <typename Field>
     static void read(std::vector<Field> &vec, const std::string fileStem,
                      const bool multiFile, const int trajectory = -1);
@@ -222,8 +224,23 @@ public:
                           const unsigned int offset, const unsigned int size,
                           const int trajectory = -1,
                           GridBase *splitGrid = nullptr,
-                          const unsigned int firstIndex = 0);
+                          const unsigned int firstIndex = 0,
+                          TimerArray *timers = nullptr);
 private:
+    static inline void startTimer(TimerArray *timers, const std::string &name)
+    {
+        if (timers) timers->startTimer(name);
+    }
+
+    static inline void stopTimer(TimerArray *timers, const std::string &name)
+    {
+        if (timers) timers->stopTimer(name);
+    }
+
+    static void logPartitions(const std::string &what, const unsigned int firstIndex,
+                              const unsigned int size, const unsigned int nPart,
+                              const std::vector<double> &t, const double bytes);
+
     static inline std::string vecFilename(const std::string stem, const int traj, 
                                           const bool multiFile)
     {
@@ -616,22 +633,28 @@ template <typename Field>
 void A2AVectorsIo::writeBlock(const std::string fileStem, std::vector<Field> &vec,
                               const unsigned int offset, const unsigned int size,
                               const int trajectory, GridBase *splitGrid,
-                              const unsigned int firstIndex)
+                              const unsigned int firstIndex, TimerArray *timers)
 {
     if (splitGrid == nullptr)
     {
         for (unsigned int i = 0; i < size; ++i)
         {
+            startTimer(timers, "file");
             writeElement(fileStem, vec[offset + i], firstIndex + i, trajectory);
+            stopTimer(timers, "file");
         }
         return;
     }
 
-    GridBase                   *grid = vec[offset].Grid();
-    unsigned int               nPart = grid->ProcessorCount()/splitGrid->ProcessorCount();
-    unsigned int               part  = GridSplitVectorIndex(grid, splitGrid);
+    GridBase                   *grid  = vec[offset].Grid();
+    unsigned int               nPart  = grid->ProcessorCount()/splitGrid->ProcessorCount();
+    unsigned int               part   = GridSplitVectorIndex(grid, splitGrid);
+    unsigned int               nBatch = (size + nPart - 1)/nPart;
+    double                     bytes  = static_cast<double>(grid->gSites())
+                                        *sizeof(typename Field::scalar_object);
     Field                      split(splitGrid);
     std::vector<const Field *> batch(nPart);
+    std::vector<double>        t(nBatch*nPart, 0.);
 
     makeFileDir(elementFilename(fileStem, trajectory, 0), grid);
     for (unsigned int b = 0; b < size; b += nPart)
@@ -640,13 +663,28 @@ void A2AVectorsIo::writeBlock(const std::string fileStem, std::vector<Field> &ve
         {
             batch[p] = &vec[offset + std::min(b + p, size - 1)];
         }
+        startTimer(timers, "split");
         Grid_split(batch, split);
+        stopTimer(timers, "split");
+        startTimer(timers, "file");
         if (b + part < size)
         {
+            double dt = -usecond();
+
             writeElement(fileStem, split, firstIndex + b + part, trajectory);
+            dt += usecond();
+            if (splitGrid->IsBoss())
+            {
+                t[b + part] = dt*1.0e-6;
+            }
         }
+        stopTimer(timers, "file");
+        startTimer(timers, "barrier");
         grid->Barrier();
+        stopTimer(timers, "barrier");
     }
+    grid->GlobalSumVector(t.data(), t.size());
+    logPartitions("Write " + fileStem, firstIndex, size, nPart, t, bytes);
 }
 
 template <typename Field>
@@ -753,36 +791,127 @@ template <typename Field>
 void A2AVectorsIo::readBlock(const std::string fileStem, std::vector<Field> &vec,
                              const unsigned int offset, const unsigned int size,
                              const int trajectory, GridBase *splitGrid,
-                             const unsigned int firstIndex)
+                             const unsigned int firstIndex, TimerArray *timers)
 {
     if (splitGrid == nullptr)
     {
         for (unsigned int i = 0; i < size; ++i)
         {
+            startTimer(timers, "file");
             readElement(fileStem, vec[offset + i], firstIndex + i, trajectory);
+            stopTimer(timers, "file");
         }
         return;
     }
 
-    GridBase           *grid  = vec[offset].Grid();
-    unsigned int       nPart  = grid->ProcessorCount()/splitGrid->ProcessorCount();
-    unsigned int       part   = GridSplitVectorIndex(grid, splitGrid);
-    Field              split(splitGrid);
-    std::vector<Field> batch(nPart, grid);
+    GridBase            *grid  = vec[offset].Grid();
+    unsigned int        nPart  = grid->ProcessorCount()/splitGrid->ProcessorCount();
+    unsigned int        part   = GridSplitVectorIndex(grid, splitGrid);
+    unsigned int        nBatch = (size + nPart - 1)/nPart;
+    double              bytes  = static_cast<double>(grid->gSites())
+                                 *sizeof(typename Field::scalar_object);
+    Field               split(splitGrid);
+    std::vector<Field>  batch(nPart, grid);
+    std::vector<double> t(nBatch*nPart, 0.);
 
     for (unsigned int b = 0; b < size; b += nPart)
     {
+        startTimer(timers, "file");
         if (b + part < size)
         {
+            double dt = -usecond();
+
             readElement(fileStem, split, firstIndex + b + part, trajectory);
+            dt += usecond();
+            if (splitGrid->IsBoss())
+            {
+                t[b + part] = dt*1.0e-6;
+            }
         }
+        stopTimer(timers, "file");
+        startTimer(timers, "barrier");
         grid->Barrier();
+        stopTimer(timers, "barrier");
+        startTimer(timers, "unsplit");
         Grid_unsplit(batch, split);
         for (unsigned int p = 0; p < nPart && b + p < size; ++p)
         {
             std::swap(vec[offset + b + p], batch[p]);
         }
+        stopTimer(timers, "unsplit");
     }
+    grid->GlobalSumVector(t.data(), t.size());
+    logPartitions("Read " + fileStem, firstIndex, size, nPart, t, bytes);
+}
+
+inline void A2AVectorsIo::logPartitions(const std::string &what,
+                                        const unsigned int firstIndex,
+                                        const unsigned int size,
+                                        const unsigned int nPart,
+                                        const std::vector<double> &t,
+                                        const double bytes)
+{
+    unsigned int              nBatch = (size + nPart - 1)/nPart;
+    double                    MB     = 1024.*1024.;
+    std::vector<unsigned int> ks;
+    std::string               cost;
+
+    for (unsigned int k = 0; k < nBatch; ++k)
+    {
+        unsigned int b    = k*nPart;
+        unsigned int n    = std::min(nPart, size - b);
+        unsigned int slow = 0;
+        double       tMin = t[b], tMax = t[b], tSum = 0., rSum = 0.;
+
+        for (unsigned int p = 0; p < n; ++p)
+        {
+            tSum += t[b + p];
+            rSum += bytes/t[b + p]/MB;
+            tMin  = std::min(tMin, t[b + p]);
+            if (t[b + p] > tMax)
+            {
+                tMax = t[b + p];
+                slow = p;
+            }
+        }
+        LOG(Message) << what << " elem" << firstIndex + b << "-" << firstIndex + b + n - 1
+                     << ": file min/mean/max " << tMin << "/" << tSum/n << "/" << tMax
+                     << " s, " << bytes/tMax/MB << "/" << rSum/n << "/" << bytes/tMin/MB
+                     << " MB/s, aggregate " << n*bytes/tMax/MB
+                     << " MB/s, slowest partition " << slow << " (elem"
+                     << firstIndex + b + slow << ")" << std::endl;
+    }
+
+    for (unsigned int k: {1u, 4u, 8u})
+    {
+        if (k < nBatch) ks.push_back(k);
+    }
+    ks.push_back(nBatch);
+    for (unsigned int k: ks)
+    {
+        double total = 0.;
+
+        for (unsigned int g = 0; g < nBatch; g += k)
+        {
+            double worst = 0.;
+
+            for (unsigned int p = 0; p < nPart; ++p)
+            {
+                double sum = 0.;
+
+                for (unsigned int j = g; j < std::min(g + k, nBatch); ++j)
+                {
+                    sum += t[j*nPart + p];
+                }
+                worst = std::max(worst, sum);
+            }
+            total += worst;
+        }
+        cost += " " + std::to_string(k) + ": " + std::to_string(total) + " s";
+    }
+    LOG(Message) << what << ": " << nBatch << " batches on " << nPart
+                 << " partitions, file time if synced every k batches:"
+                 << cost << std::endl;
 }
 
 END_HADRONS_NAMESPACE

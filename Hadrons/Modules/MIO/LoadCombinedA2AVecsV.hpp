@@ -173,7 +173,7 @@ void TLoadCombinedA2AVecsV<FImpl>::execute(void)
                      << par().lowFilestem << "'" << std::endl;
         startTimer("read");
         A2AVectorsIo::readBlock(par().lowFilestem, out, offset, par().nLow, traj,
-                                splitGrid.get());
+                                splitGrid.get(), 0, this);
         stopTimer("read");
         offset += par().nLow;
     }
@@ -188,7 +188,7 @@ void TLoadCombinedA2AVecsV<FImpl>::execute(void)
                      << filestem << "'" << std::endl;
         startTimer("read");
         A2AVectorsIo::readBlock(filestem, out, offset, par().highSize, traj,
-                                splitGrid.get());
+                                splitGrid.get(), 0, this);
         stopTimer("read");
         if (norm != 1.0)
         {

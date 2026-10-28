@@ -189,7 +189,7 @@ void TA2ACoarseGrid<FImpl>::execute(void)
     }
     startTimer("IO");
     A2AVectorsIo::writeBlock(par().output, coarse, 0, coarse.size(),
-                             vm().getTrajectory(), splitGrid.get());
+                             vm().getTrajectory(), splitGrid.get(), 0, this);
     stopTimer("IO");
   }
 }

@@ -171,7 +171,7 @@ void TLoadCombinedA2AVecsW<FImpl>::execute(void)
                      << par().lowFilestem << "'" << std::endl;
         startTimer("read");
         A2AVectorsIo::readBlock(par().lowFilestem, out, offset, par().nLow,
-                                vm().getTrajectory(), splitGrid.get());
+                                vm().getTrajectory(), splitGrid.get(), 0, this);
         stopTimer("read");
         offset += par().nLow;
     }

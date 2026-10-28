@@ -282,7 +282,8 @@ void TA2AHighModeBatchedV<FImpl>::execute(void)
         {
             startTimer("V I/O");
             A2AVectorsIo::writeBlock(par().output, vBatch, 0, nBatch,
-                                     vm().getTrajectory(), splitGrid.get(), ihBase);
+                                     vm().getTrajectory(), splitGrid.get(), ihBase,
+                                     this);
             stopTimer("V I/O");
         }
     }
