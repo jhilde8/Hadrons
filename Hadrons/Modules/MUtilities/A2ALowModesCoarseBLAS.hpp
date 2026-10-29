@@ -34,7 +34,6 @@
 #include <Hadrons/ModuleFactory.hpp>
 #include <Hadrons/EigenPack.hpp>
 #include <Hadrons/A2AVectors.hpp>
-#include <Hadrons/Modules/MUtilities/A2ALowModesCoarse.hpp>
 
 BEGIN_HADRONS_NAMESPACE
 
@@ -69,8 +68,18 @@ BEGIN_HADRONS_NAMESPACE
  ******************************************************************************/
 BEGIN_MODULE_NAMESPACE(MUtilities)
 
+class A2ALowModesCoarseBLASPar: Serializable
+{
+public:
+    GRID_SERIALIZABLE_CLASS_MEMBERS(A2ALowModesCoarseBLASPar,
+                                    std::string, eigenPack,
+                                    std::string, action,
+                                    std::string, output,
+                                    std::string, ioSplit);
+};
+
 template <typename FImpl, typename FImplPack, int nBasis>
-class TA2ALowModesCoarseBLAS : public Module<A2ALowModesCoarsePar>
+class TA2ALowModesCoarseBLAS : public Module<A2ALowModesCoarseBLASPar>
 {
 public:
     FERM_TYPE_ALIASES(FImpl,);
@@ -106,7 +115,7 @@ MODULE_REGISTER_TMP(ZA2ALowModesCoarseBLAS200,
 // constructor /////////////////////////////////////////////////////////////////
 template <typename FImpl, typename FImplPack, int nBasis>
 TA2ALowModesCoarseBLAS<FImpl, FImplPack, nBasis>::TA2ALowModesCoarseBLAS(const std::string name)
-: Module<A2ALowModesCoarsePar>(name)
+: Module<A2ALowModesCoarseBLASPar>(name)
 {}
 
 // dependencies/products ///////////////////////////////////////////////////////
