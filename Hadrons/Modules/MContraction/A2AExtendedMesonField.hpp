@@ -542,6 +542,7 @@ void TA2AExtendedMesonField<FImpl>::execute(void)
 	// gathered panel is laid out [gt][i][m][j], the same addresses, so it
 	// copies straight into the tensor's storage.
 	Eigen::Tensor<ComplexD, 4, Eigen::RowMajor> resPool[2][2];
+	Vector<HADRONS_A2AM_IO_TYPE>                ioBuf(ntFile*leftBlock*rightBlock);
 
 	for ( unsigned int j = 0; j < N_j; j += rightBlock ){
 	  int Njj = MIN(N_j-j,rightBlock);
@@ -585,11 +586,9 @@ void TA2AExtendedMesonField<FImpl>::execute(void)
 	    spatial_sum_.SumRing(emfBlock, &sumTimings, &sumBytes, tsIO);
 	    stopTimer("Sum");
 
-	    // Straight out of the result tensor: emfBlock is RowMajor
-	    // (ntOut, Nii, 1, Njj), so the Nii x Njj slab at fixed t is
-	    // contiguous and needs no staging. Without tsIO there is one file
-	    // with ntFile = nt = ntOut, and saveBlock's count of {nt, Nii, Njj}
-	    // spans the whole tensor from lt = 0.
+	    // emfBlock is RowMajor (ntOut, Nii, 1, Njj), so the ntFile x Nii x Njj
+	    // slab from lt is contiguous; it is cast to the I/O type into ioBuf.
+	    // Without tsIO there is one file with ntFile = nt = ntOut from lt = 0.
 	    startTimer("IO");
 	    double dt = -usecond();
 	    for (int lt = 0; lt < (tsIO ? ntOut : 1); ++lt)
@@ -598,9 +597,12 @@ void TA2AExtendedMesonField<FImpl>::execute(void)
 
 	      if (!ownerFn(fileIdx, gt)) continue;
 
+	      const ComplexD *src = &emfBlock(lt, 0, 0, 0);
+
+	      thread_for(k, ntFile*Nii*Njj, { ioBuf[k] = src[k]; });
 	      A2AMatrixIo<HADRONS_A2AM_IO_TYPE> io(filenameFn(ioname, gt), ioname,
 	                                           ntFile, N_i, N_j);
-	      io.saveBlock(&emfBlock(lt, 0, 0, 0), i, j, Nii, Njj, "", &ioTimings);
+	      io.saveBlock(ioBuf.data(), i, j, Nii, Njj, "", &ioTimings);
 	    }
 	    dt += usecond();
 	    writeTime += dt;

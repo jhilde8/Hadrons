@@ -188,7 +188,7 @@ namespace EigenPackIo
         T              split(splitGrid);
         std::vector<T> batch(nPart, grid);
 
-        t.assign(size, 0.);
+        t.assign(((size + nPart - 1)/nPart)*nPart, 0.);
         std::fill(eval.begin(), eval.end(), 0.);
         for (unsigned int b = 0; b < size; b += nPart)
         {
