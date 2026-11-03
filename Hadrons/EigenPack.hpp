@@ -30,6 +30,7 @@
 
 #include <Hadrons/Global.hpp>
 #include <Hadrons/LatticeUtilities.hpp>
+#include <Hadrons/TimerArray.hpp>
 #include <Grid/algorithms/deflation/Deflation.h>
 #include <Grid/algorithms/iterative/LocalCoherenceLanczos.h>
 
@@ -168,6 +169,66 @@ namespace EigenPackIo
                          GridBase *gridIo = nullptr)
     {
         readPack<T, TIo>(evec, eval, record, filename, 0, size, multiFile, gridIo);
+    }
+
+    // Split-grid read of a multi-file pack, one file per partition per batch,
+    // following A2AVectorsIo::readBlock. The vector and I/O types must agree.
+    // eval and the per-element read times t (seconds, for
+    // A2AVectorsIo::logPartitions) are summed from each partition's boss.
+    template <typename T>
+    static void readPackSplit(std::vector<T> &evec, std::vector<RealD> &eval,
+                              PackRecord &record, const std::string filename,
+                              GridBase *splitGrid, std::vector<double> &t,
+                              TimerArray *timers = nullptr)
+    {
+        GridBase       *grid = evec[0].Grid();
+        unsigned int   size  = evec.size();
+        unsigned int   nPart = grid->ProcessorCount()/splitGrid->ProcessorCount();
+        unsigned int   part  = GridSplitVectorIndex(grid, splitGrid);
+        T              split(splitGrid);
+        std::vector<T> batch(nPart, grid);
+
+        t.assign(size, 0.);
+        std::fill(eval.begin(), eval.end(), 0.);
+        for (unsigned int b = 0; b < size; b += nPart)
+        {
+            if (timers) timers->startTimer("file");
+            if (b + part < size)
+            {
+                unsigned int k  = b + part;
+                RealD        e  = 0.;
+                double       dt = -usecond();
+                ScidacReader binReader;
+
+                binReader.open(filename + "/v" + std::to_string(k) + ".bin");
+                readHeader(record, binReader);
+                readElement(split, e, k, binReader);
+                binReader.close();
+                dt += usecond();
+                if (splitGrid->IsBoss())
+                {
+                    eval[k] = e;
+                    t[k]    = dt*1.0e-6;
+                }
+            }
+            if (timers) timers->stopTimer("file");
+            if (timers) timers->startTimer("barrier");
+            grid->Barrier();
+            if (timers) timers->stopTimer("barrier");
+            if (timers) timers->startTimer("unsplit");
+            for (auto &f: batch)
+            {
+                f.Checkerboard() = split.Checkerboard();
+            }
+            Grid_unsplit(batch, split);
+            for (unsigned int p = 0; p < nPart && b + p < size; ++p)
+            {
+                std::swap(evec[b + p], batch[p]);
+            }
+            if (timers) timers->stopTimer("unsplit");
+        }
+        grid->GlobalSumVector(eval.data(), eval.size());
+        grid->GlobalSumVector(t.data(), t.size());
     }
 
     inline void writeHeader(ScidacWriter &binWriter, PackRecord &record)
@@ -434,6 +495,17 @@ public:
         EigenPackIo::readPack<CoarseF, CoarseFIo>(evecCoarse, evalCoarse, dummy, 
                               this->evecFilename(fileStem + "_coarse", traj, multiFile), 
                               evecCoarse.size(), multiFile, gridCoarseIo_);
+    }
+
+    void readCoarseSplit(const std::string fileStem, GridBase *splitGrid,
+                         std::vector<double> &t, const int traj = -1,
+                         TimerArray *timers = nullptr)
+    {
+        PackRecord dummy;
+
+        EigenPackIo::readPackSplit<CoarseF>(evecCoarse, evalCoarse, dummy,
+                              this->evecFilename(fileStem + "_coarse", traj, true),
+                              splitGrid, t, timers);
     }
 
     virtual void read(const std::string fileStem, const bool multiFile, const int traj = -1)

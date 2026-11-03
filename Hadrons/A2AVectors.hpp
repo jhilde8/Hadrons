@@ -226,6 +226,9 @@ public:
                           GridBase *splitGrid = nullptr,
                           const unsigned int firstIndex = 0,
                           TimerArray *timers = nullptr);
+    static void logPartitions(const std::string &what, const unsigned int firstIndex,
+                              const unsigned int size, const unsigned int nPart,
+                              const std::vector<double> &t, const double bytes);
 private:
     static inline void startTimer(TimerArray *timers, const std::string &name)
     {
@@ -236,10 +239,6 @@ private:
     {
         if (timers) timers->stopTimer(name);
     }
-
-    static void logPartitions(const std::string &what, const unsigned int firstIndex,
-                              const unsigned int size, const unsigned int nPart,
-                              const std::vector<double> &t, const double bytes);
 
     static inline std::string vecFilename(const std::string stem, const int traj, 
                                           const bool multiFile)

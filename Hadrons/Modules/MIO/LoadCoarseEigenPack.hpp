@@ -168,7 +168,12 @@ void TLoadCoarseEigenPack<Pack,GImpl>::execute(void)
     auto                 &epack = envGetDerived(BasePack, Pack, getName());
     Lattice<SiteComplex> dummy(cg);
 
-    epack.read(par().filestem, par().multiFile, vm().getTrajectory());
+    startTimer("Read fine");
+    epack.readFine(par().filestem, par().multiFile, vm().getTrajectory());
+    stopTimer("Read fine");
+    startTimer("Read coarse");
+    epack.readCoarse(par().filestem, par().multiFile, vm().getTrajectory());
+    stopTimer("Read coarse");
 
     if (!par().gaugeXform.empty())
     {
