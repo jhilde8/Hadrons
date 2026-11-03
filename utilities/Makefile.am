@@ -3,12 +3,12 @@ AM_CXXFLAGS += -I$(top_srcdir)
 
 bin_PROGRAMS = \
   HadronsXmlRun              \
-  HadronsXmlValidate         \
-  HadronsContractor          \
-  ContractorDense            \
-  K2pipiContractor
+  HadronsXmlValidate
 
 EXTRA_PROGRAMS = \
+  HadronsContractor          \
+  ContractorDense            \
+  K2pipiContractor           \
   BatchDeflationBenchmark    \
   HadronsContractorBenchmark \
   HadronsXmlRun              \
