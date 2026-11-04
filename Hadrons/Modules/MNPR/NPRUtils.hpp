@@ -129,7 +129,7 @@ SpinColourSpinColourMatrix NPRUtils<FImpl>::tensorProdSum_v3(PropagatorField &ts
     for(int ci=0; ci < Nc; ++ci){ 
     for(int cj=0; cj < Nc; ++cj){
         t_acc -= usecond();
-        accelerator_for(ss,grid->oSites(),Nsimd, {
+        accelerator_for(ss,grid->oSites(),(size_t)Nsimd, {
             typedef decltype(coalescedRead(vTComplex())) calcComplex;
             calcComplex aa;
             aa()()() = a_v(ss)()(si,sj)(ci,cj);
@@ -172,7 +172,7 @@ SpinColourSpinColourMatrix NPRUtils<FImpl>::tensorProdSum_v4(PropagatorField &ts
         autoView(a_v,a,AcceleratorRead);
         autoView(b_v,b,AcceleratorRead);
         t_acc -= usecond();
-        accelerator_for(ss,grid->oSites(),Nsimd, {
+        accelerator_for(ss,grid->oSites(),(size_t)Nsimd, {
             typedef decltype(coalescedRead(vTComplex())) calcComplex;
             calcComplex aa;
             auto bb = b_v(ss);
