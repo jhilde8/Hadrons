@@ -32,7 +32,8 @@ EXTRA_PROGRAMS = \
   Test_split_write          \
   Test_low_modes_blas       \
   Test_eigenpack_split_read \
-  Test_a2a_checksum_scan
+  Test_a2a_checksum_scan    \
+  Test_mf_cast_compare
 
 CLEANFILES = $(EXTRA_PROGRAMS)
 
@@ -130,3 +131,6 @@ Test_eigenpack_split_read_LDADD=-lHadrons -lGrid
 
 Test_a2a_checksum_scan_SOURCES=Test_a2a_checksum_scan.cpp
 Test_a2a_checksum_scan_LDADD=-lHadrons -lGrid
+
+Test_mf_cast_compare_SOURCES=Test_mf_cast_compare.cpp
+Test_mf_cast_compare_LDADD=-lHadrons -lGrid
