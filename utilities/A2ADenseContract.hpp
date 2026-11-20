@@ -277,6 +277,26 @@ inline void select(Out &out, const Matrix &in,
     }
 }
 
+// in reduced as select does, before it enters any product: an expanded axis
+// that meets one W time is gathered first, so no product carries columns a
+// later gather would drop. Returns in itself, uncopied, when nothing is
+// gathered. An open axis (one closed later at many times) takes openEdge.
+inline const Matrix &gathered(Matrix &out, const Matrix &in,
+                              const Connection &rowEdge, const std::size_t tRow,
+                              const Connection &colEdge, const std::size_t tCol,
+                              Matrix &tmp)
+{
+    if ((rowEdge.gather != Gather::right) and (colEdge.gather != Gather::left))
+    {
+        return in;
+    }
+    select(out, in, rowEdge, tRow, colEdge, tCol, tmp);
+
+    return out;
+}
+
+const Connection openEdge{Gather::none, 0, 0, 1, 0, 0};
+
 // acc += tr(a*b) over inner = a.col . b.row and closing = b.col . a.row.
 // aRowTime and aColTime are the slices behind a's row and col axes, which
 // differ when a is a running product; b is one field taken at tb.
@@ -492,61 +512,84 @@ inline bool checkProductMetadata(const std::string &filename, const MatrixPar &p
     return hasMetadata;
 }
 
-// Loads every slice of one field; par.file must already be trajectory
-// substituted.
-inline Field loadField(const MatrixPar &par, const unsigned int nt)
+// One field opened for slice-by-slice reading: shape, type and product
+// metadata are checked once by openSliceReader. Each read reopens its file
+// (the slice file with timeSliceIO), so no handle is held between reads.
+struct SliceReader
 {
-    Field       f;
-    SliceDims   dims{0, 0, 0};
-    std::size_t realBytes = 0;
+    MatrixPar    par;
+    unsigned int nt;
+    Axis         row, col;
+    bool         isProduct;
 
-    f.par = par;
-    f.slice.resize(nt);
-    if (par.timeSliceIO)
+    void read(Matrix &m, const unsigned int t) const
     {
-        for (unsigned int t = 0; t < nt; ++t)
+        const std::string fn   = par.timeSliceIO ? sliceFilename(par.file, t) : par.file;
+        H5NS::H5File      file(fn, H5F_ACC_RDONLY);
+        auto              data = file.openGroup(par.dataset).openDataSet(HADRONS_A2AM_NAME);
+        const SliceDims   d    = readDims(data, fn);
+        const hsize_t     nts  = par.timeSliceIO ? 1 : nt;
+
+        if ((d.nt != nts) or (d.ni != row.size) or (d.nj != col.size))
         {
-            const std::string fn = sliceFilename(par.file, t);
-            H5NS::H5File      file(fn, H5F_ACC_RDONLY);
-            auto              data = file.openGroup(par.dataset).openDataSet(HADRONS_A2AM_NAME);
-            const SliceDims   d    = readDims(data, fn);
-
-            if ((d.nt != 1) or ((t > 0) and ((d.ni != dims.ni) or (d.nj != dims.nj))))
-            {
-                HADRONS_ERROR(Size, fn + ": slice is " + std::to_string(d.nt) + "x"
-                              + std::to_string(d.ni) + "x" + std::to_string(d.nj)
-                              + ", expected 1x" + std::to_string(dims.ni) + "x"
-                              + std::to_string(dims.nj));
-            }
-            dims      = d;
-            realBytes = checkComplexType(data, fn);
-            readSlice(f.slice[t], data, 0, d.ni, d.nj, fn);
+            HADRONS_ERROR(Size, fn + ": matrix is " + std::to_string(d.nt) + "x"
+                          + std::to_string(d.ni) + "x" + std::to_string(d.nj)
+                          + ", expected " + std::to_string(nts) + "x"
+                          + std::to_string(row.size) + "x" + std::to_string(col.size));
         }
-        f.isProduct = checkProductMetadata(sliceFilename(par.file, 0), par);
+        checkComplexType(data, fn);
+        readSlice(m, data, par.timeSliceIO ? 0 : t, d.ni, d.nj, fn);
     }
-    else
+};
+
+// par.file must already be trajectory substituted.
+inline SliceReader openSliceReader(const MatrixPar &par, const unsigned int nt)
+{
+    const std::string fn = par.timeSliceIO ? sliceFilename(par.file, 0) : par.file;
+    const hsize_t     nts = par.timeSliceIO ? 1 : nt;
+    SliceReader       s;
+    SliceDims         d;
+    std::size_t       realBytes;
+
     {
-        H5NS::H5File file(par.file, H5F_ACC_RDONLY);
+        H5NS::H5File file(fn, H5F_ACC_RDONLY);
         auto         data = file.openGroup(par.dataset).openDataSet(HADRONS_A2AM_NAME);
 
-        dims = readDims(data, par.file);
-        if (dims.nt != nt)
+        d = readDims(data, fn);
+        if (d.nt != nts)
         {
-            HADRONS_ERROR(Size, par.file + ": " + std::to_string(dims.nt)
-                          + " timeslices, expected " + std::to_string(nt));
+            HADRONS_ERROR(Size, fn + ": " + std::to_string(d.nt) + " timeslices, expected "
+                          + std::to_string(nts));
         }
-        realBytes = checkComplexType(data, par.file);
-        for (unsigned int t = 0; t < nt; ++t)
-        {
-            readSlice(f.slice[t], data, t, dims.ni, dims.nj, par.file);
-        }
-        f.isProduct = checkProductMetadata(par.file, par);
+        realBytes = checkComplexType(data, fn);
     }
-    f.row = makeAxis(par.row, dims.ni, nt, "'" + par.name + "' rows");
-    f.col = makeAxis(par.col, dims.nj, nt, "'" + par.name + "' cols");
-    std::cout << "  '" << par.name << "' " << nt << "x" << dims.ni << "x" << dims.nj
+    s.par       = par;
+    s.nt        = nt;
+    s.isProduct = checkProductMetadata(fn, par);
+    s.row       = makeAxis(par.row, d.ni, nt, "'" + par.name + "' rows");
+    s.col       = makeAxis(par.col, d.nj, nt, "'" + par.name + "' cols");
+    std::cout << "  '" << par.name << "' " << nt << "x" << d.ni << "x" << d.nj
               << " Complex" << ((realBytes == 4) ? "F" : "D")
-              << (f.isProduct ? " (product)" : "") << std::endl;
+              << (s.isProduct ? " (product)" : "") << std::endl;
+
+    return s;
+}
+
+// Loads every slice of one field.
+inline Field loadField(const MatrixPar &par, const unsigned int nt)
+{
+    const SliceReader reader = openSliceReader(par, nt);
+    Field             f;
+
+    f.par       = par;
+    f.row       = reader.row;
+    f.col       = reader.col;
+    f.isProduct = reader.isProduct;
+    f.slice.resize(nt);
+    for (unsigned int t = 0; t < nt; ++t)
+    {
+        reader.read(f.slice[t], t);
+    }
 
     return f;
 }

@@ -193,14 +193,19 @@ void writeResult(ResultWriter &writer, const std::string &name, CorrelatorResult
     write(writer, name, result);
 }
 
+// At each (dt, s) every term's expanded axes meet one W time, so all terms are
+// gathered against their neighbours first and the chain multiplies dense-sized
+// blocks only.
 void runContraction(const ContractionPlan &plan, const unsigned int nt)
 {
-    const std::size_t        n = plan.terms.size();
-    Matrix                   prod, tmp, buf;
-    TraceBuffers             tbuf;
-    std::vector<std::size_t> ts(n);
-    CorrelatorResult         result;
-    double                   tMul = 0., tTrace = 0.;
+    const std::size_t          n = plan.terms.size();
+    std::vector<Matrix>        g(n - 1);
+    std::vector<const Matrix*> gp(n - 1);
+    MatrixTr                   last;
+    Matrix                     prod, tmp, gtmp;
+    std::vector<std::size_t>   ts(n);
+    CorrelatorResult           result;
+    double                     tGather = 0., tMul = 0., tTrace = 0.;
 
     result.a2aMatrix = plan.inputs;
     result.contraction = plan.par;
@@ -229,22 +234,30 @@ void runContraction(const ContractionPlan &plan, const unsigned int nt)
             {
                 ts[j] = ((plan.terms[j].sink ? tLast : dt) + plan.terms[j].offset) % nt;
             }
-            p = &plan.terms[0].field->slice[ts[0]];
 
             auto start = std::chrono::steady_clock::now();
 
+            for (std::size_t j = 0; j + 1 < n; ++j)
+            {
+                const std::size_t l = (j + n - 1) % n;
+
+                gp[j] = &gathered(g[j], plan.terms[j].field->slice[ts[j]],
+                                  plan.edges[l], ts[l], plan.edges[j], ts[j + 1], gtmp);
+            }
+            select(last, plan.terms[n - 1].field->slice[ts[n - 1]], plan.edges[n - 2],
+                   ts[n - 2], plan.edges[n - 1], ts[0], gtmp);
+            tGather += seconds(start);
+            start    = std::chrono::steady_clock::now();
+            p        = gp[0];
             for (std::size_t j = 1; j + 1 < n; ++j)
             {
-                multiply(tmp, *p, ts[j - 1], plan.terms[j].field->slice[ts[j]], ts[j],
-                         plan.edges[j - 1], buf);
+                tmp.noalias() = (*p)*(*gp[j]);
                 prod.swap(tmp);
                 p = &prod;
             }
-            tMul  += seconds(start);
-            start  = std::chrono::steady_clock::now();
-            accTrace(result.correlator[s], *p, ts[0], ts[n - 2],
-                     plan.terms[n - 1].field->slice[ts[n - 1]], ts[n - 1],
-                     plan.edges[n - 2], plan.edges[n - 1], tbuf);
+            tMul   += seconds(start);
+            start   = std::chrono::steady_clock::now();
+            A2AContraction::accTrMul(result.correlator[s], *p, last);
             tTrace += seconds(start);
         }
         if (!plan.par.translationAverage)
@@ -261,7 +274,8 @@ void runContraction(const ContractionPlan &plan, const unsigned int nt)
         }
         writeResult(writer, plan.par.name, result);
     }
-    std::cout << "  products " << tMul << " s, traces " << tTrace << " s" << std::endl;
+    std::cout << "  gathers " << tGather << " s, products " << tMul << " s, traces "
+              << tTrace << " s" << std::endl;
 }
 
 int main(int argc, char *argv[])
