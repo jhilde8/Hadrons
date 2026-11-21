@@ -23,10 +23,24 @@
  * (--first defaults to 0), the same range for every stem, so the low modes and
  * the hits are separate runs. The exit code is nonzero if any file is bad.
  *
+ * Replica comparison (--compare a,b): on a machine that can return wrong
+ * answers every vector job runs twice, each replica writing its own tree
+ * (PyXmlGen config.vw_base, vw.<tag>). Every stem then holds the placeholder
+ * @replica@, replaced by each tag in turn, and every replica's files are
+ * scanned as above. A wrong solve writes a file that agrees with its own
+ * checksum, so the scan alone cannot see it; but its data differs from the
+ * other replica's, and so does the SciDAC checksum pair computed from it. An
+ * element whose files are good in every replica is compared on that pair
+ * against the first replica: equal pairs are bitwise agreement up to a
+ * 2^-64 collision. Any difference is a MISMATCH, also a nonzero exit; an
+ * element bad in some replica cannot be compared and is reported as such.
+ *
  * Usage:
  *   srun ... ./Test_a2a_checksum_scan --grid 64.64.64.128 --mpi 4.4.4.8 \
  *       --io-split 2.2.2.1 --traj 1540 --first 1024 --size 512 \
  *       --stems /path/vw/sloppy/s8_v,/path/vw/exact/s8_exact
+ *   mpiexec ... ./Test_a2a_checksum_scan ... --traj 1200 --size 1536 \
+ *       --stems /path/vw.@replica@/sloppy/s3_v --compare a,b
  */
 
 #include <Hadrons/Global.hpp>
@@ -49,15 +63,17 @@ enum ScanStatus
 class ScanReader: public ScidacReader
 {
 public:
+    // suma / sumb are the checksums computed from the data read, which equal
+    // the stored ones when the status is Good.
     template <class vobj>
-    int verify(Lattice<vobj> &field, RealD &rdiff)
+    int verify(Lattice<vobj> &field, RealD &rdiff, uint32_t &suma, uint32_t &sumb)
     {
         typedef typename vobj::scalar_object sobj;
 
         std::string       record(ILDG_BINARY_DATA);
         scidacChecksum    checksum;
         FieldNormMetaData normMeta;
-        uint32_t          nersc, suma, sumb;
+        uint32_t          nersc;
         int               status = Good;
 
         while (limeReaderNextRecord(LimeR) == LIME_SUCCESS)
@@ -104,6 +120,53 @@ static std::string elementFilename(const std::string &stem, const int traj,
     return stem + t + "/elem" + std::to_string(index) + ".bin";
 }
 
+static const std::string replicaKey = "@replica@";
+
+static std::string replicaStem(const std::string &stem, const std::string &tag)
+{
+    std::string s   = stem;
+    size_t      pos = s.find(replicaKey);
+
+    if (pos != std::string::npos)
+    {
+        s.replace(pos, replicaKey.size(), tag);
+    }
+
+    return s;
+}
+
+// One replica's scan of one stem, indexed by file. Each entry is set by the
+// boss of the partition that read the file and zero elsewhere, so one
+// GlobalSumVector per array gathers them; checksums are exact in a RealD.
+struct StemScan
+{
+    std::vector<RealD> status, rdiff, suma, sumb;
+
+    explicit StemScan(const unsigned int size)
+    : status(size, 0.), rdiff(size, 0.), suma(size, 0.), sumb(size, 0.)
+    {}
+
+    void gather(GridBase *grid)
+    {
+        unsigned int size = status.size();
+
+        grid->GlobalSumVector(status.data(), size);
+        grid->GlobalSumVector(rdiff.data(), size);
+        grid->GlobalSumVector(suma.data(), size);
+        grid->GlobalSumVector(sumb.data(), size);
+    }
+};
+
+static std::string checksumString(const StemScan &scan, const unsigned int i)
+{
+    std::ostringstream s;
+
+    s << std::hex << static_cast<uint32_t>(scan.suma[i]) << " "
+      << static_cast<uint32_t>(scan.sumb[i]);
+
+    return s.str();
+}
+
 static std::string statusString(const int status)
 {
     std::string s;
@@ -129,7 +192,7 @@ int main(int argc, char *argv[])
     // ------------------------------------------------------------------
     int          traj = 0;
     unsigned int first = 0, size = 0;
-    std::string  stemList, ioSplit;
+    std::string  stemList, ioSplit, compareList;
 
     if (GridCmdOptionExists(argv, argv + argc, "--traj"))
         traj     = std::stoi(GridCmdOptionPayload(argv, argv + argc, "--traj"));
@@ -141,8 +204,11 @@ int main(int argc, char *argv[])
         stemList = GridCmdOptionPayload(argv, argv + argc, "--stems");
     if (GridCmdOptionExists(argv, argv + argc, "--io-split"))
         ioSplit  = GridCmdOptionPayload(argv, argv + argc, "--io-split");
+    if (GridCmdOptionExists(argv, argv + argc, "--compare"))
+        compareList = GridCmdOptionPayload(argv, argv + argc, "--compare");
 
-    std::vector<std::string> stems = strToVec<std::string>(cliListToPar(stemList));
+    std::vector<std::string> stems    = strToVec<std::string>(cliListToPar(stemList));
+    std::vector<std::string> replicas = strToVec<std::string>(cliListToPar(compareList));
 
     if (stems.empty())
     {
@@ -151,6 +217,23 @@ int main(int argc, char *argv[])
     if (size == 0)
     {
         HADRONS_ERROR(Argument, "--size is required");
+    }
+    if (!compareList.empty() && replicas.size() < 2)
+    {
+        HADRONS_ERROR(Argument, "--compare needs at least two replica tags");
+    }
+    for (auto &stem: stems)
+    {
+        if ((stem.find(replicaKey) != std::string::npos) != !replicas.empty())
+        {
+            HADRONS_ERROR(Argument, "stem '" + stem + "': " + replicaKey
+                          + " is required with --compare and not allowed without");
+        }
+    }
+    // A plain scan is a comparison of one unnamed replica with nothing
+    if (replicas.empty())
+    {
+        replicas.push_back("");
     }
 
     // ------------------------------------------------------------------
@@ -172,71 +255,125 @@ int main(int argc, char *argv[])
         part   = GridSplitVectorIndex(grid, splitGrid.get());
     }
 
-    unsigned int nPart     = grid->ProcessorCount()/ioGrid->ProcessorCount();
-    unsigned int nBadTotal = 0;
+    unsigned int nPart          = grid->ProcessorCount()/ioGrid->ProcessorCount();
+    unsigned int nRep           = replicas.size();
+    unsigned int nBadTotal      = 0;
+    unsigned int nMismatchTotal = 0;
     Field        field(ioGrid);
 
     LOG(Message) << "Scanning " << stems.size() << " stem(s), files " << first
                  << " - " << first + size - 1 << ", on " << nPart
-                 << " partition(s)" << std::endl;
+                 << " partition(s)"
+                 << ((nRep > 1) ? ", replicas " + compareList + " compared" : "")
+                 << std::endl;
 
     // ------------------------------------------------------------------
-    // Scan.
+    // Scan every replica of every stem.
     // ------------------------------------------------------------------
     for (auto &stem: stems)
     {
-        std::vector<RealD> status(size, 0.), rdiff(size, 0.);
+        std::vector<StemScan> scans(nRep, StemScan(size));
 
-        for (unsigned int b = 0; b < size; b += nPart)
+        for (unsigned int r = 0; r < nRep; ++r)
         {
-            unsigned int i = b + part;
+            std::string repStem = replicaStem(stem, replicas[r]);
+            StemScan    &scan   = scans[r];
 
-            if (i < size)
+            for (unsigned int b = 0; b < size; b += nPart)
             {
-                std::string filename = elementFilename(stem, traj, first + i);
-                int         s        = Missing;
-                RealD       r        = 0.;
+                unsigned int i = b + part;
 
-                if (std::ifstream(filename).good())
+                if (i < size)
                 {
-                    ScanReader reader;
+                    std::string filename = elementFilename(repStem, traj, first + i);
+                    int         s        = Missing;
+                    RealD       rd       = 0.;
+                    uint32_t    suma     = 0, sumb = 0;
 
-                    reader.open(filename);
-                    s = reader.verify(field, r);
-                    reader.close();
+                    if (std::ifstream(filename).good())
+                    {
+                        ScanReader reader;
+
+                        reader.open(filename);
+                        s = reader.verify(field, rd, suma, sumb);
+                        reader.close();
+                    }
+                    if (ioGrid->IsBoss())
+                    {
+                        scan.status[i] = s;
+                        scan.rdiff[i]  = rd;
+                        scan.suma[i]   = suma;
+                        scan.sumb[i]   = sumb;
+                    }
                 }
-                if (ioGrid->IsBoss())
+                LOG(Message) << repStem << ": files " << first + b << " - "
+                             << first + std::min(b + nPart, size) - 1 << " read" << std::endl;
+            }
+            scan.gather(grid);
+
+            unsigned int nBad = 0;
+
+            for (unsigned int i = 0; i < size; ++i)
+            {
+                int s = static_cast<int>(scan.status[i]);
+
+                if (s != Good)
                 {
-                    status[i] = s;
-                    rdiff[i]  = r;
+                    LOG(Message) << "BAD " << elementFilename(repStem, traj, first + i)
+                                 << ":" << statusString(s) << " (norm rdiff "
+                                 << scan.rdiff[i] << ")" << std::endl;
+                    nBad++;
                 }
             }
-            LOG(Message) << stem << ": files " << first + b << " - "
-                         << first + std::min(b + nPart, size) - 1 << " read" << std::endl;
+            LOG(Message) << repStem << ": " << nBad << " bad of " << size << std::endl;
+            nBadTotal += nBad;
         }
-        grid->GlobalSumVector(status.data(), size);
-        grid->GlobalSumVector(rdiff.data(), size);
 
-        unsigned int nBad = 0;
-
-        for (unsigned int i = 0; i < size; ++i)
+        // --------------------------------------------------------------
+        // Compare the replicas' checksums, element by element.
+        // --------------------------------------------------------------
+        if (nRep > 1)
         {
-            int s = static_cast<int>(status[i]);
+            unsigned int nMismatch = 0, nUncompared = 0;
 
-            if (s != Good)
+            for (unsigned int i = 0; i < size; ++i)
             {
-                LOG(Message) << "BAD " << elementFilename(stem, traj, first + i)
-                             << ":" << statusString(s) << " (norm rdiff "
-                             << rdiff[i] << ")" << std::endl;
-                nBad++;
+                bool allGood = true, agree = true;
+
+                for (unsigned int r = 0; r < nRep; ++r)
+                {
+                    allGood = allGood && (static_cast<int>(scans[r].status[i]) == Good);
+                    agree   = agree && (scans[r].suma[i] == scans[0].suma[i])
+                                    && (scans[r].sumb[i] == scans[0].sumb[i]);
+                }
+                if (!allGood)
+                {
+                    nUncompared++;
+                }
+                else if (!agree)
+                {
+                    std::ostringstream line;
+
+                    for (unsigned int r = 0; r < nRep; ++r)
+                    {
+                        line << " " << replicas[r] << " " << checksumString(scans[r], i);
+                    }
+                    LOG(Message) << "MISMATCH " << stem << " elem " << first + i
+                                 << ":" << line.str() << std::endl;
+                    nMismatch++;
+                }
             }
+            LOG(Message) << stem << ": " << nMismatch << " mismatch(es), "
+                         << nUncompared << " not compared (bad in a replica), of "
+                         << size << std::endl;
+            nMismatchTotal += nMismatch;
         }
-        LOG(Message) << stem << ": " << nBad << " bad of " << size << std::endl;
-        nBadTotal += nBad;
     }
-    LOG(Message) << "Total: " << nBadTotal << " bad" << std::endl;
+    LOG(Message) << "Total: " << nBadTotal << " bad"
+                 << ((nRep > 1) ? ", " + std::to_string(nMismatchTotal) + " mismatch(es)" : "")
+                 << std::endl;
 
     Grid_finalize();
 
-    return (nBadTotal == 0) ? EXIT_SUCCESS : EXIT_FAILURE;
+    return (nBadTotal == 0 && nMismatchTotal == 0) ? EXIT_SUCCESS : EXIT_FAILURE;
 }
