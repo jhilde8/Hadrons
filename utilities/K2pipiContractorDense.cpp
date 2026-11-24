@@ -181,10 +181,6 @@ ContractionPlan makePlan(const ContractionPar &p, const std::map<std::string, Fi
                                              + p.terms[0].name)});
     }
     plan.filename = global.output + "/" + ModuleBase::resultFilename(p.name, traj);
-    if (fileExists(plan.filename))
-    {
-        HADRONS_ERROR(Io, what + ": output '" + plan.filename + "' already exists");
-    }
 
     return plan;
 }
@@ -379,20 +375,29 @@ int main(int argc, char *argv[])
             std::cout << ":::::::: Trajectory " << traj << std::endl;
 
             const auto                         byName = matricesByName(par, traj);
+            const auto                         &cs    = par.contraction;
             std::map<std::string, Field>       fixed;
             std::map<std::string, SliceReader> swept;
-            auto                               start = std::chrono::steady_clock::now();
+            std::map<std::string, std::size_t> lastUse;
+            std::vector<ContractionPlan>       plans;
+            std::size_t                        nLoad = 0, peak = 0;
+            double                             tLoad = 0., tFixed = 0.;
 
-            for (auto &c: par.contraction)
+            for (std::size_t i = 0; i < cs.size(); ++i)
             {
-                for (auto &t: c.terms)
+                const auto filename = par.global.output + "/"
+                                      + ModuleBase::resultFilename(cs[i].name, traj);
+
+                if (fileExists(filename))
                 {
-                    if (!fixed.count(t.name))
-                    {
-                        fixed.emplace(t.name, loadField(matrix(byName, t.name), nt));
-                    }
+                    HADRONS_ERROR(Io, "contraction '" + cs[i].name + "': output '"
+                                      + filename + "' already exists");
                 }
-                for (auto &name: c.swept)
+                for (auto &t: cs[i].terms)
+                {
+                    lastUse[t.name] = i;
+                }
+                for (auto &name: cs[i].swept)
                 {
                     if (!swept.count(name))
                     {
@@ -400,23 +405,35 @@ int main(int argc, char *argv[])
                     }
                 }
             }
-            std::cout << "Loaded " << fixed.size() << " fixed field(s), opened "
-                      << swept.size() << " swept field(s) in " << seconds(start) << " s"
-                      << std::endl;
-
-            std::vector<ContractionPlan> plans;
-
-            for (auto &c: par.contraction)
+            for (std::size_t i = 0; i < cs.size(); ++i)
             {
-                plans.push_back(makePlan(c, fixed, swept, par.global, traj));
+                auto start = std::chrono::steady_clock::now();
+
+                for (auto &t: cs[i].terms)
+                {
+                    if (!fixed.count(t.name))
+                    {
+                        fixed.emplace(t.name, loadField(matrix(byName, t.name), nt));
+                        ++nLoad;
+                    }
+                }
+                peak   = std::max(peak, fixed.size());
+                tLoad += seconds(start);
+                start  = std::chrono::steady_clock::now();
+                plans.push_back(makePlan(cs[i], fixed, swept, par.global, traj));
+                computeFixed(plans.back(), nt);
+                tFixed += seconds(start);
+                for (auto &t: cs[i].terms)
+                {
+                    if (lastUse.at(t.name) == i)
+                    {
+                        fixed.erase(t.name);
+                    }
+                }
             }
-            start = std::chrono::steady_clock::now();
-            for (auto &plan: plans)
-            {
-                computeFixed(plan, nt);
-            }
-            fixed.clear();
-            std::cout << "Fixed chains in " << seconds(start) << " s" << std::endl;
+            std::cout << "Loaded " << nLoad << " fixed field(s), at most " << peak
+                      << " resident, in " << tLoad << " s; opened " << swept.size()
+                      << " swept field(s); fixed chains in " << tFixed << " s" << std::endl;
             for (auto &s: swept)
             {
                 sweep(s.second, plans, nt);
